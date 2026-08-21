@@ -1430,23 +1430,32 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             struct playlist_track_info track;
             struct mp3entry id3;
 
-            unsigned long start_index = get_u32(&buf[4]);
-            unsigned long read_count = get_u32(&buf[8]);
-            unsigned long counter = 0;
+            CHECKLEN(12);
+            uint32_t start_index = get_u32(&buf[4]);
+            uint32_t read_count = get_u32(&buf[8]);
+            uint32_t counter = 0;
             unsigned int number_of_playlists = nbr_total_playlists();
             uint32_t trackcount;
+            uint32_t total_records;
             trackcount = playlist_amount();
 
-            if ((buf[3] == 0x05) && ((start_index + read_count ) > trackcount))
+            if (buf[3] == 0x01)
+                total_records = number_of_playlists + 1;
+            else if (buf[3] >= 0x02 && buf[3] <= 0x06)
+                total_records = trackcount;
+            else
+            {
+                cmd_ack(cmd, IAP_ACK_UNKNOWN_DB);
+                break;
+            }
+
+            if (start_index >= total_records)
             {
                 cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                 break;
             }
-            if ((buf[3] == 0x01) && ((start_index + read_count) > (number_of_playlists + 1)))
-            {
-                cmd_ack(cmd, IAP_ACK_BAD_PARAM);
-                break;
-            }
+            if (read_count > total_records - start_index)
+                read_count = total_records - start_index;
             for (counter=0;counter<read_count;counter++)
             {
                 switch(buf[3]) /* type number */
