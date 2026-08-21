@@ -3936,28 +3936,52 @@ static void reverse_animation(void)
 }
 
 /**
-   Draw a blue gradient at y with height h
+   Draw the configured list selector at y with height h
  */
-static inline void draw_gradient(int y, int h)
+static inline void draw_selector(int y, int h)
 {
+#ifdef HAVE_LCD_COLOR
+    struct line_desc line = LINE_DESC_DEFINIT;
+    line.height = h;
+
+    switch (rb->global_settings->cursor_style)
+    {
+        case SYNCLIST_CURSOR_COLOR:
+            line.style = STYLE_COLORBAR;
+            line.text_color = rb->global_settings->lst_color;
+            line.line_color = rb->global_settings->lss_color;
+            break;
+        case SYNCLIST_CURSOR_GRADIENT:
+            line.style = STYLE_GRADIENT;
+            line.text_color = rb->global_settings->lst_color;
+            line.line_color = rb->global_settings->lss_color;
+            line.line_end_color = rb->global_settings->lse_color;
+            break;
+        default:
+            /* PictureFlow has no icon column for pointer mode, so use the
+             * same readable foreground/background inversion as inverse. */
+            mylcd_set_foreground(G_BRIGHT(255));
+            mylcd_set_background(G_BRIGHT(0));
+            line.style = STYLE_INVERT;
+            break;
+    }
+
+    rb->screens[SCREEN_MAIN]->put_line(0, y, &line, "");
+#else
     int r, inc, c;
     inc = (100 << 8) / h;
     c = 0;
     pf_tracks.sel_pulse = (pf_tracks.sel_pulse+1) % 10;
     int c2 = pf_tracks.sel_pulse - 5;
     for (r=0; r<h; r++) {
-#ifdef HAVE_LCD_COLOR
-        mylcd_set_foreground(G_PIX(c2+80-(c >> 9), c2+100-(c >> 9),
-                                           c2+250-(c >> 8)));
-#else
         mylcd_set_foreground(G_BRIGHT(c2+160-(c >> 8)));
-#endif
         mylcd_hline(0, LCD_WIDTH, r+y);
         if ( r > h/2 )
             c-=inc;
         else
             c+=inc;
     }
+#endif
 }
 
 
@@ -4068,18 +4092,36 @@ static bool show_track_list(void)
                 set_scroll_line(trackname, PF_SCROLL_TRACK);
                 pf_tracks.last_sel = pf_tracks.sel;
             }
-            draw_gradient(titletxt_y, titletxt_h);
+            draw_selector(titletxt_y, titletxt_h);
             titletxt_x = get_scroll_line_offset(PF_SCROLL_TRACK);
+#ifdef HAVE_LCD_COLOR
+            if (rb->global_settings->cursor_style > SYNCLIST_CURSOR_INVERT)
+            {
+                mylcd_set_foreground(rb->global_settings->lst_color);
+                mylcd_set_drawmode(DRMODE_FG);
+            }
+            else
+                mylcd_set_drawmode(DRMODE_SOLID|DRMODE_INVERSEVID);
+#else
             color = 255;
+#endif
         }
         else {
             titletxt_w = mylcd_getstringsize(trackname, NULL, NULL);
             titletxt_x = (LCD_WIDTH-titletxt_w)/2;
             fade = (abs(pf_tracks.sel - track_i) * 200 / pf_tracks.count);
             color = 250 - fade;
+#ifdef HAVE_LCD_COLOR
+            mylcd_set_foreground(G_BRIGHT(color));
+#endif
         }
+#ifndef HAVE_LCD_COLOR
         mylcd_set_foreground(G_BRIGHT(color));
+#endif
         mylcd_putsxy(titletxt_x,titletxt_y,trackname);
+#ifdef HAVE_LCD_COLOR
+        mylcd_set_drawmode(DRMODE_FG);
+#endif
         titletxt_y += titletxt_h;
     }
 
