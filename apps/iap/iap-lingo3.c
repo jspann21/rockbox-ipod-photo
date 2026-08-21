@@ -33,6 +33,7 @@
 #include "iap-lingo.h"
 #include "system.h"
 #include "audio.h"
+#include "sound.h"
 #include "powermgmt.h"
 #include "settings.h"
 #include "metadata.h"
@@ -765,7 +766,10 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                     CHECKLEN(5);
                     if (buf[0x03]==0x00){
                         /* Not Muted */
-                        global_status.volume = (int) (buf[0x04]/2.65625)-90;
+                        int volume = (int)(buf[0x04] / 2.65625) - 90;
+                        global_status.volume =
+                            MAX(sound_min(SOUND_VOLUME),
+                                MIN(volume, sound_max(SOUND_VOLUME)));
                         device.mute = false;
                     }
                     else {
@@ -939,7 +943,10 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                     CHECKLEN(7);
                     if (buf[0x03]==0x00){
                         /* Not Muted */
-                        global_status.volume = (int) (buf[0x04]/2.65625)-90;
+                        int volume = (int)(buf[0x04] / 2.65625) - 90;
+                        global_status.volume =
+                            MAX(sound_min(SOUND_VOLUME),
+                                MIN(volume, sound_max(SOUND_VOLUME)));
                         device.mute = false;
                     }
                     else {
