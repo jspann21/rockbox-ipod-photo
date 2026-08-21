@@ -41,9 +41,23 @@
 #include "statusbar-skinned.h"
 
 /* The minimum number of pending button events in queue before starting
- * to limit list drawing interval.
+ * to limit list drawing interval on non-accelerated targets.
  */
 #define FRAMEDROP_TRIGGER 6
+
+static bool list_redraw_allowed(void)
+{
+#if defined(HAVE_WHEEL_ACCELERATION) && defined(IPOD_COLOR)
+    /* The iPod driver queues at most one wheel event. If it is already
+     * waiting, this frame is stale; the queued action will draw the latest
+     * selection, including the final position when the queue becomes empty. */
+    return button_queue_empty();
+#elif defined(HAVE_WHEEL_ACCELERATION)
+    return true;
+#else
+    return button_queue_count() < FRAMEDROP_TRIGGER;
+#endif
+}
 
 void list_draw(struct screen *display, struct gui_synclist *list);
 
@@ -696,9 +710,7 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
         case ACTION_STD_PREV:
 
             gui_list_select_at_offset(lists, -next_item_modifier, allow_wrap);
-#ifndef HAVE_WHEEL_ACCELERATION
-            if (button_queue_count() < FRAMEDROP_TRIGGER)
-#endif
+            if (list_redraw_allowed())
                 gui_synclist_draw(lists);
             yield();
             *actionptr = ACTION_STD_PREV;
@@ -709,9 +721,7 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
             /*Fallthrough*/
         case ACTION_STD_NEXT:
             gui_list_select_at_offset(lists, next_item_modifier, allow_wrap);
-#ifndef HAVE_WHEEL_ACCELERATION
-            if (button_queue_count() < FRAMEDROP_TRIGGER)
-#endif
+            if (list_redraw_allowed())
                 gui_synclist_draw(lists);
             yield();
             *actionptr = ACTION_STD_NEXT;
