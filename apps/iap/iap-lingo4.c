@@ -1222,6 +1222,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              * the value of cur_dbrecord[0]
              */
         {
+            CHECKLEN(8);
             memcpy(cur_dbrecord, buf + 3, 5);
 
             int paused = !!(audio_status() & AUDIO_STATUS_PAUSE);
@@ -1229,12 +1230,19 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             uint32_t trackcount;
             index = get_u32(&cur_dbrecord[1]);
             trackcount = playlist_amount();
-            if ((cur_dbrecord[0] == 5) && (index > trackcount))
+            if ((cur_dbrecord[0] >= 2) && (cur_dbrecord[0] <= 6) &&
+                (index >= trackcount))
             {
                 cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                 break;
             }
-            if ((cur_dbrecord[0] == 1) && (index > (nbr_total_playlists() + 1)))
+            if ((cur_dbrecord[0] == 1) &&
+                (index >= (uint32_t)nbr_total_playlists() + 1))
+            {
+                cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                break;
+            }
+            if ((cur_dbrecord[0] < 1) || (cur_dbrecord[0] > 6))
             {
                 cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                 break;
@@ -1259,7 +1267,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                 case 0x05: /* Track    */
                 case 0x06: /* Composer */
                 {
-                    audio_skip(index - playlist_next(0));
+                    audio_skip((long)index - playlist_next(0));
                     break;
                 }
                 default:
@@ -2844,11 +2852,18 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              *
              */
         {
+            CHECKLEN(7);
             int paused = !!(audio_status() & AUDIO_STATUS_PAUSE);
-            long tracknum = get_u32(&buf[3]);
+            uint32_t tracknum = get_u32(&buf[3]);
+
+            if (tracknum >= (uint32_t)playlist_amount())
+            {
+                cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                break;
+            }
 
             audio_pause();
-            audio_skip(tracknum - playlist_next(0));
+            audio_skip((long)tracknum - playlist_next(0));
             if (!paused)
                 audio_resume();
 
