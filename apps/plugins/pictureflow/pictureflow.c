@@ -3273,10 +3273,22 @@ static bool sort_albums(int new_sorting, bool from_settings)
 /**
   Start the animation for changing slides
  */
+/* Keep the perceived transition duration independent of rendering cost. */
+#define PF_NOMINAL_FPS 30
+
+static unsigned long pf_anim_last_tick;
+static int pf_anim_frac;
+
 static void start_animation(void)
 {
     step = (target < center_slide.slide_index) ? -1 : 1;
+    /* The negative direction maps (index - 1)<<16 .. index<<16 - 1
+     * to index. Start inside that interval instead of on its upper edge. */
+    if (step < 0)
+        slide_frame = (center_index << 16) - 1;
     pf_state = pf_scrolling;
+    pf_anim_last_tick = (unsigned long)*rb->current_tick;
+    pf_anim_frac = 0;
 }
 
 static void update_scroll_animation(void);
@@ -3403,7 +3415,37 @@ static void update_scroll_animation(void)
         speed = 512 + 16384 * (PFREAL_ONE + fsin(ia)) / PFREAL_ONE;
     }
 
-    slide_frame += speed * step;
+    /* Advance by elapsed time rather than once per rendered frame. Slow
+     * frames may reduce visual smoothness, but they no longer stretch the
+     * transition itself. Carry the remainder to avoid tick quantization. */
+    {
+        unsigned long now = (unsigned long)*rb->current_tick;
+        unsigned long dt = now - pf_anim_last_tick;
+        int num, advance;
+
+        pf_anim_last_tick = now;
+        if (dt > HZ / 5)
+            dt = HZ / 5;
+
+        num = speed * (int)dt * PF_NOMINAL_FPS + pf_anim_frac;
+        advance = num / HZ;
+        pf_anim_frac = num - advance * HZ;
+
+        /* Never cross the requested target. A delayed frame can otherwise
+         * skip several albums and expose an invalid center index before the
+         * direction-reversal logic runs. */
+        {
+            int remaining = (step < 0)
+                          ? slide_frame - (target << 16) + 1
+                          : (target << 16) - slide_frame;
+            if (remaining < 0)
+                remaining = 0;
+            if (advance > remaining)
+                advance = remaining;
+        }
+
+        slide_frame += advance * step;
+    }
 
     int index = slide_frame >> 16;
     int pos = slide_frame & 0xffff;
@@ -3419,7 +3461,15 @@ static void update_scroll_animation(void)
     if (center_index != index) {
         center_index = index;
         rb->queue_post(&thread_q, EV_WAKEUP, 0);
-        slide_frame = index << 16;
+        /* Keep a negative-direction snap inside the interval for index. */
+        slide_frame = (index << 16) - (step < 0 ? 1 : 0);
+        /* The snap changes the interpolation point, so refresh every value
+         * derived from it before rendering the next frame. */
+        pos = slide_frame & 0xffff;
+        neg = 65536 - pos;
+        tick = (step < 0) ? neg : pos;
+        ftick = (tick * PFREAL_ONE) >> 16;
+        fade = pos / 256;
         center_slide.slide_index = center_index;
         for (i = 0; i < pf_cfg.num_slides; i++)
             left_slides[i].slide_index = center_index - 1 - i;
