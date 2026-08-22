@@ -505,8 +505,13 @@ static void usb_storage_transfer_complete(int ep,int dir,int status,int length)
 
     switch(state) {
         case RECEIVING_BLOCKS:
-            if(dir==USB_DIR_IN) {
+            if(dir != USB_DIR_OUT) {
                 logf("IN received in RECEIVING");
+                send_csw(UMS_STATUS_FAIL);
+                cur_sense_data.sense_key=SENSE_ILLEGAL_REQUEST;
+                cur_sense_data.asc=ASC_INVALID_FIELD_IN_CBD;
+                cur_sense_data.ascq=0;
+                break;
             }
             logf("scsi write %llu %d", cur_cmd.sector, cur_cmd.count);
             if(status==0) {
