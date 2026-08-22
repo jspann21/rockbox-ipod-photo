@@ -48,11 +48,12 @@ static void rmt_tuner_signal_power(unsigned char value)
 
 void rmt_tuner_freq(unsigned int len, const unsigned char *buf)
 {
-    /* length currently unused */
-    (void)len;
+    if (len < 7)
+        return;
 
-    unsigned int khz = (buf[2] << 24) | (buf[3] << 16) |
-                       (buf[4] << 8) | buf[5];
+    unsigned int khz = ((uint32_t)buf[2] << 24) |
+                       ((uint32_t)buf[3] << 16) |
+                       ((uint32_t)buf[4] << 8) | (uint32_t)buf[5];
     tuner_frequency = khz *1000 ;
     radio_tuned = true;
     rmt_tuner_signal_power(buf[6]);
@@ -288,11 +289,14 @@ static bool reply_timeout(void)
 
 void rmt_tuner_rds_data(unsigned int len, const unsigned char *buf)
 {
-    if (buf[2] == 0x1E)
+    if (len < 3)
+        return;
+
+    if (buf[2] == 0x1E && len >= 12)
     {
         rds_push_info(RDS_INFO_PS, (uintptr_t)(buf+4), 8);
     }
-    else if(buf[2] == 0x04)
+    else if (buf[2] == 0x04 && len > 4)
     {
         rds_push_info(RDS_INFO_RT, (uintptr_t)(buf+4), len-4);
     }
