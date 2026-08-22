@@ -5120,7 +5120,10 @@ static bool load_tagcache(void)
      * may become corrupt. */
 
     bool ok = false;
-    ssize_t bytesleft = tc_stat.ramcache_allocated - sizeof(struct ramcache_header);
+    if (tc_stat.ramcache_allocated < (int)sizeof(struct ramcache_header))
+        return false;
+    size_t bytesleft = tc_stat.ramcache_allocated -
+                       sizeof(struct ramcache_header);
     int fd;
 
 #ifdef HAVE_DIRCACHE
@@ -5160,12 +5163,12 @@ static bool load_tagcache(void)
 
     size_t index_size = (size_t)tcmh.tch.entry_count *
                         sizeof(struct index_entry);
-    bytesleft -= index_size;
-    if (bytesleft < 0)
+    if (index_size > bytesleft)
     {
         logf("too big tagcache.");
         goto failure;
     }
+    bytesleft -= index_size;
 
     if (read_index_entries_exact(fd, tcramcache.hdr->indices,
                                  tcmh.tch.entry_count) != (ssize_t)index_size)
@@ -5189,12 +5192,13 @@ static bool load_tagcache(void)
             continue;
 
         p = TC_ALIGN_PTR(p, struct tagcache_header, &rc);
-        bytesleft -= rc;
-        if (bytesleft < (ssize_t)sizeof(struct tagcache_header))
+        if ((size_t)rc > bytesleft ||
+            sizeof(struct tagcache_header) > bytesleft - (size_t)rc)
         {
             logf("Too big tagcache #10.5");
             goto failure;
         }
+        bytesleft -= rc;
 
         tcramcache.hdr->tags[tag] = p;
 
@@ -5231,12 +5235,13 @@ static bool load_tagcache(void)
                 goto failure;
 
             p = TC_ALIGN_PTR(p, struct tagfile_entry, &rc);
-            bytesleft -= rc;
-            if (bytesleft < (ssize_t)sizeof(struct tagfile_entry))
+            if ((size_t)rc > bytesleft ||
+                sizeof(struct tagfile_entry) > bytesleft - (size_t)rc)
             {
                 logf("Too big tagcache #10.75");
                 goto failure;
             }
+            bytesleft -= rc;
 
             struct tagfile_entry *fe = (struct tagfile_entry *)p;
             off_t pos = reader.file_position;
@@ -5288,6 +5293,11 @@ static bool load_tagcache(void)
                     goto failure;
                 }
 
+                if (sizeof(struct dircache_fileref) > bytesleft)
+                {
+                    logf("too big filename cache");
+                    goto failure;
+                }
                 p += sizeof (struct dircache_fileref);
                 bytesleft -= sizeof (struct dircache_fileref);
             #endif /* HAVE_DIRCACHE */
@@ -5336,14 +5346,16 @@ static bool load_tagcache(void)
                 continue;
             }
 
-            bytesleft -= sizeof(struct tagfile_entry) + fe->tag_length;
-            if (bytesleft < 0)
+            size_t record_size = sizeof(struct tagfile_entry) +
+                                 (size_t)fe->tag_length;
+            if (record_size > bytesleft)
             {
                 logf("too big tagcache #2");
                 logf("tl: %" PRId32, fe->tag_length);
-                logf("bl: %ld", (long) bytesleft);
+                logf("bl: %lu", (unsigned long)bytesleft);
                 goto failure;
             }
+            bytesleft -= record_size;
 
             p = fe->tag_data;
             rc = tagcache_reader_read(&reader, p, fe->tag_length);
