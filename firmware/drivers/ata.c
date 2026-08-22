@@ -295,7 +295,8 @@ static ICODE_ATTR int wait_for_start_of_transfer(void)
     if (!wait_for_bsy())
         return 0;
 
-    return (ATA_IN8(ATA_ALT_STATUS) & (STATUS_BSY|STATUS_DRQ)) == STATUS_DRQ;
+    return (ATA_IN8(ATA_ALT_STATUS) &
+            (STATUS_BSY|STATUS_DRQ|STATUS_ERR|STATUS_DF)) == STATUS_DRQ;
 }
 
 static ICODE_ATTR int wait_for_end_of_transfer(void)
