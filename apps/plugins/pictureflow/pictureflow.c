@@ -3328,6 +3328,8 @@ static bool sort_albums(int new_sorting, bool from_settings)
         (!create_empty_slide(true) ||
          (empty_slide_hid = read_pfraw(EMPTY_SLIDE, 0)) < 0))
     {
+        initialize_slide_cache();
+        wants_to_quit = true;
         error_wait("Unable to rebuild empty slide image");
         return false;
     }
