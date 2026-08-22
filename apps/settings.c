@@ -658,8 +658,12 @@ static bool settings_write_config(const char* filename, int options)
         open_plugin_export(fd);
     }
 #endif
+    if (ok && fsync(fd) < 0)
+        ok = false;
     if (close(fd) < 0)
         ok = false;
+    if (!ok)
+        remove(filename);
     return ok;
 }
 
