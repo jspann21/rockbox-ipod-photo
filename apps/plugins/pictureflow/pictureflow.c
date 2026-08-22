@@ -4587,13 +4587,16 @@ static void draw_album_text(void)
 {
     char album_and_year[MAX_PATH];
 
-    if (pf_cfg.show_album_name == ALBUM_NAME_HIDE)
-        return;
-
     static int prev_albumtxt_index = -1;
     static int prev_artisttxt_index = -1;
     static int prev_artist_mode = -1;
     static bool prev_show_year = false;
+
+    if (pf_cfg.show_album_name == ALBUM_NAME_HIDE)
+    {
+        prev_artist_mode = ALBUM_NAME_HIDE;
+        return;
+    }
     int albumtxt_index;
     int char_height;
     int albumtxt_x, albumtxt_y, artisttxt_x;
