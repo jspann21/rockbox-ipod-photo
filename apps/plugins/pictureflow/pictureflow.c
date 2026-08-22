@@ -1580,24 +1580,34 @@ static int load_album_index(void){
     void* buf = pf_idx.buf;
     size_t buf_size = pf_idx.buf_sz;
 
-    unsigned int name_sz, album_idx_sz;
+    size_t album_idx_sz;
     int album_idx, artist_idx;
 
     if (fr >= 0){
         const unsigned long filesize = rb->filesize(fr);
-        if (filesize > sizeof(data))
+        if (filesize >= sizeof(data))
         {
             if (rb->read(fr, &data, sizeof(data)) == sizeof(data) &&
                 rb->memcmp(&(data.header), INDEX_HDR, sizeof(data.header)) == 0)
             {
-                name_sz = data.artist_len + data.album_len;
                 album_idx_sz = data.album_ct * sizeof(struct album_data);
+                size_t file_remaining = filesize - sizeof(data);
 
-                if (name_sz + album_idx_sz > bufstart_sz)
+                /* Treat the saved index as untrusted input. Validate every
+                 * component by subtraction so corrupt lengths cannot wrap. */
+                if (data.artist_len > file_remaining)
+                    goto failure;
+                file_remaining -= data.artist_len;
+                if (data.album_len > file_remaining)
+                    goto failure;
+                file_remaining -= data.album_len;
+                if (file_remaining != album_idx_sz)
                     goto failure;
 
                 //rb->lseek(fr, sizeof(data) + 1, SEEK_SET);
                 /* artist names */
+                if (data.artist_len > buf_size)
+                    goto failure;
                 if (read2buf(fr, buf, data.artist_len) == 0)
                     goto failure;
 
@@ -1606,6 +1616,8 @@ static int load_album_index(void){
                 buf_size -= data.artist_len;
 
                 /* album names */
+                if (data.album_len > buf_size)
+                    goto failure;
                 if (read2buf(fr, buf, data.album_len) == 0)
                     goto failure;
 
@@ -1615,6 +1627,8 @@ static int load_album_index(void){
 
                 /* index of album names */
                 ALIGN_BUFFER(buf, buf_size, alignof(struct album_data));
+                if (album_idx_sz > buf_size)
+                    goto failure;
                 if (read2buf(fr, buf, album_idx_sz) == 0)
                     goto failure;
 
@@ -1629,8 +1643,15 @@ static int load_album_index(void){
                 {
                     album_idx = data.album_index[i].name_idx;
                     artist_idx = data.album_index[i].artist_idx;
-                    if (album_idx >= (int) data.album_len ||
-                        artist_idx >= (int) data.artist_len)
+                    if (album_idx < 0 || (size_t)album_idx >= data.album_len ||
+                        !rb->memchr(data.album_names + album_idx, '\0',
+                                   data.album_len - album_idx) ||
+                        artist_idx < -1 ||
+                        (artist_idx >= 0 &&
+                         (size_t)artist_idx >= data.artist_len) ||
+                        (artist_idx >= 0 &&
+                         !rb->memchr(data.artist_names + artist_idx, '\0',
+                                    data.artist_len - artist_idx)))
                     {
                         goto failure;
                     }
