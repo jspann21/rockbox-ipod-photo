@@ -867,7 +867,7 @@ static size_t filebuflen;
 
 size_t audio_buffer_size(void)
 {
-    if (audiobuf_handle > 0)
+    if (audiobuf_handle > 0 && filebuflen > AUDIO_BUFFER_RESERVE)
         return filebuflen - AUDIO_BUFFER_RESERVE;
     return 0;
 }
@@ -876,7 +876,8 @@ size_t audio_buffer_available(void)
 {
     size_t size = 0;
     size_t core_size = core_available();
-    if (audiobuf_handle > 0) /* if allocated return what we can give */
+    if (audiobuf_handle > 0 &&
+        filebuflen > AUDIO_BUFFER_RESERVE + 128)
         size = filebuflen - AUDIO_BUFFER_RESERVE - 128;
     return MAX(core_size, size);
 }
