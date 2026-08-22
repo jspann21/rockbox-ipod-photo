@@ -361,7 +361,6 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
          */
         case 0x0C:
         {
-            struct mp3entry* id3;
             struct playlist_info* playlist;
             int play_status;
             struct tm* tm;
@@ -379,8 +378,7 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x00:
                 {
-                    id3 = audio_current_track();
-                    IAP_TX_PUT_U32(id3->elapsed);
+                    IAP_TX_PUT_U32(iap_get_trackpos());
 
                     iap_send_tx();
                     break;
@@ -615,8 +613,7 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                 {
                     unsigned int pos;
 
-                    id3 = audio_current_track();
-                    pos = id3->elapsed/1000;
+                    pos = iap_get_trackpos()/1000;
 
                     IAP_TX_PUT_U16(pos);
 
@@ -1008,7 +1005,8 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
 
             play_status = audio_status();
 
-            if (play_status & AUDIO_STATUS_PLAY) {
+            id3 = audio_current_track();
+            if ((play_status & AUDIO_STATUS_PLAY) && id3 != NULL) {
                 /* Playing or paused */
                 if (play_status & AUDIO_STATUS_PAUSE) {
                     /* Paused */
@@ -1019,7 +1017,6 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                 }
                 playlist = playlist_get_current();
                 IAP_TX_PUT_U32(playlist->index - playlist->first_index);
-                id3 = audio_current_track();
                 IAP_TX_PUT_U32(id3->length);
                 IAP_TX_PUT_U32(id3->elapsed);
             } else {

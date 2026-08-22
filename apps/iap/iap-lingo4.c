@@ -613,6 +613,11 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                 break;
             }
             struct mp3entry *id3 = audio_current_track();
+            if (id3 == NULL)
+            {
+                cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                break;
+            }
 
             switch(buf[3])
             {
@@ -1591,15 +1596,13 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                                     0x00, 0x00, 0x00, 0x00,
                                     0x00};
             struct mp3entry *id3 = audio_current_track();
-            unsigned long time_total = id3->length;
-            unsigned long time_elapsed = id3->elapsed;
             int status = audio_status();
-            put_u32(&data[3], time_total);
-            put_u32(&data[7], time_elapsed);
-            if (status == AUDIO_STATUS_PLAY)
-                data[11] = 0x01; /* play */
-            else if (status & AUDIO_STATUS_PAUSE)
-                data[11] = 0x02; /* pause */
+            if (id3 != NULL && (status & AUDIO_STATUS_PLAY))
+            {
+                put_u32(&data[3], id3->length);
+                put_u32(&data[7], id3->elapsed);
+                data[11] = (status & AUDIO_STATUS_PAUSE) ? 0x02 : 0x01;
+            }
             iap_send_pkt(data, sizeof(data));
             break;
         }
@@ -1843,22 +1846,8 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                 cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                 break;
             }
-            long tracknum = requested_track;
-
             data[2] = cmd + 1;
-            memcpy(&id3, audio_current_track(), sizeof(id3));
-            tracknum += playlist_get_first_index(NULL);
-            if(tracknum >= playlist_amount())
-                tracknum -= playlist_amount();
-            /* If the tracknumber is not the current one,
-               read id3 from disk */
-            if(playlist_next(0) != tracknum)
-            {
-                struct playlist_track_info info;
-                playlist_get_track_info(NULL, tracknum, &info);
-                /* memset(&id3, 0, sizeof(struct mp3entry)); --get_metadata does this for us */
-                get_metadata(&id3, -1, info.filename);
-            }
+            iap_get_trackinfo(requested_track, &id3);
             /* Return the requested track data. strlcpy() returns the full
              * source length, not the number of bytes copied. Clamp the packet
              * length to the 63 characters that fit in the destination and

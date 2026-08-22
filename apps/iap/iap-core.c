@@ -754,7 +754,7 @@ uint32_t iap_get_trackpos(void)
 {
     struct mp3entry *id3 = audio_current_track();
 
-    return id3->elapsed;
+    return id3 != NULL ? id3->elapsed : 0;
 }
 
 uint32_t iap_get_trackindex(void)
@@ -944,11 +944,9 @@ void iap_periodic(void)
     /* Are we in Extended Mode */
     if (interface_state == IST_EXTENDED) {
         /* Return Track Position */
-        struct mp3entry *id3 = audio_current_track();
-        unsigned long time_elapsed = id3->elapsed;
         IAP_TX_INIT4(0x04, 0x0027);
         IAP_TX_PUT(0x04);
-        IAP_TX_PUT_U32(time_elapsed);
+        IAP_TX_PUT_U32(iap_get_trackpos());
 
         iap_send_tx();
     }
