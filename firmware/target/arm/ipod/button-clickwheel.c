@@ -251,6 +251,7 @@ static inline int ipod_4g_button_read(void)
                 {
                     /* scrollwheel was touched for the first time after finger lifting */
                     old_wheel_value = new_wheel_value;
+                    last_wheel_usec = usec;
                     wheel_is_touched = true;
                 }
             }
