@@ -163,6 +163,11 @@
 /* We're able to shut off power to the HDD */
 #define HAVE_ATA_POWER_OFF
 
+/* Ask ATA/iFlash media to commit internal translation metadata before
+ * shutdown and firmware reload. Unsupported flush commands are skipped by
+ * the ATA capability checks. */
+#define HAVE_STORAGE_FLUSH
+
 /* Turn on SMART support */
 #define HAVE_ATA_SMART
 
