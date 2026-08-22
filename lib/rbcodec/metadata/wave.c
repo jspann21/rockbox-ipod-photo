@@ -238,35 +238,51 @@ static void parse_riff_format(unsigned char* buf, int fmtsize, struct wave_fmt *
     }
 }
 
-static void parse_list_chunk(int fd, struct mp3entry* id3, int chunksize, bool is_64)
+static bool parse_list_chunk(int fd, struct mp3entry* id3, uint64_t chunksize,
+                             bool is_64)
 {
     unsigned char tmpbuf[ID3V2_BUF_SIZE];
     unsigned char *bp = tmpbuf;
     unsigned char *endp;
     unsigned char *data_pos;
     unsigned char *tag_pos  = id3->id3v2buf;
-    int datasize;
+    uint32_t datasize;
     int infosize;
     int remain;
     int i;
 
+    if (chunksize < 4)
+        return false;
     if (is_64)
-        lseek(fd, 4, SEEK_CUR);
-    else if (read(fd, bp, 4) < 4 || memcmp(bp, "INFO", 4))
-        return;
+    {
+        if (lseek(fd, 4, SEEK_CUR) < 0)
+            return false;
+    }
+    else
+    {
+        if (read(fd, bp, 4) != 4)
+            return false;
+        if (memcmp(bp, "INFO", 4))
+            return true;
+    }
 
     /* decrease skip bytes */
     chunksize -= 4;
 
-    infosize = read(fd, bp, (ID3V2_BUF_SIZE > chunksize)? chunksize : ID3V2_BUF_SIZE);
+    size_t to_read = MIN(chunksize, (uint64_t)ID3V2_BUF_SIZE);
+    infosize = read(fd, bp, to_read);
+    if (infosize != (ssize_t)to_read)
+        return false;
     if (infosize <= 8)
-        return;
+        return true;
 
     endp = bp + infosize;
-    while (bp < endp)
+    while ((size_t)(endp - bp) >= 8)
     {
         datasize = get_long_le(bp + 4);
         data_pos = bp + 8;
+        if (datasize > (uint32_t)(endp - data_pos))
+            return false;
         remain = ID3V2_BUF_SIZE - (tag_pos - (unsigned char*)id3->id3v2buf);
         if (remain < 1)
             break;
@@ -276,15 +292,20 @@ static void parse_list_chunk(int fd, struct mp3entry* id3, int chunksize, bool i
             if (memcmp(bp, info_chunks[i].tag, 4) == 0)
             {
                 *((char **)(((char*)id3) + info_chunks[i].offset)) = tag_pos;
+                size_t convert_size = MIN((size_t)datasize,
+                                          (size_t)remain - 1);
                 tag_pos = convert_utf8(data_pos, tag_pos,
-                                       (datasize + 1 >= remain )? remain - 1 : datasize,
-                                       is_64);
+                                       convert_size, is_64);
                 *tag_pos++ = 0;
                 break;
             }
         }
-        bp = data_pos + datasize + (datasize & 1);
+        size_t padded_size = (size_t)datasize + (datasize & 1);
+        if (padded_size > (size_t)(endp - data_pos))
+            return false;
+        bp = data_pos + padded_size;
     };
+    return true;
 }
 
 static bool read_header(int fd, struct mp3entry* id3, const unsigned char *chunknames,
@@ -305,11 +326,16 @@ static bool read_header(int fd, struct mp3entry* id3, const unsigned char *chunk
     memset(&fmt, 0, sizeof(struct wave_fmt));
  
     id3->vbr = false;   /* All Wave/Wave64 files are CBR */
-    id3->filesize = filesize(fd);
+    off_t file_size = filesize(fd);
+    if (file_size < 0 || (uint64_t)file_size > UINT32_MAX ||
+        (uint64_t)file_size < offset)
+        return false;
+    id3->filesize = file_size;
 
     /* get RIFF chunk header */
-    lseek(fd, 0, SEEK_SET);
-    read(fd, buf, offset);
+    if (lseek(fd, 0, SEEK_SET) != 0 ||
+        read(fd, buf, offset) != (ssize_t)offset)
+        return false;
 
     if ((memcmp(buf,       chunknames + RIFF_CHUNK * namelen, namelen) != 0) ||
         (memcmp(buf + len, chunknames + WAVE_CHUNK * namelen, namelen) != 0))
@@ -319,13 +345,24 @@ static bool read_header(int fd, struct mp3entry* id3, const unsigned char *chunk
     }
 
     /* iterate over WAVE chunks until 'data' chunk */
-    while (read(fd, buf, len) > 0)
+    while (read(fd, buf, len) == (ssize_t)len)
     {
         offset += len;
 
         /* get chunk size (when the header is wave64, chunksize includes GUID and data length) */
-        chunksize = (is_64) ? get_uint64_le(buf + namelen) - len :
-                              get_long_le(buf + namelen);
+        if (is_64)
+        {
+            uint64_t raw_size = get_uint64_le(buf + namelen);
+            if (raw_size < len)
+                return false;
+            chunksize = raw_size - len;
+        }
+        else
+            chunksize = get_long_le(buf + namelen);
+
+        if (offset > id3->filesize ||
+            chunksize > (uint64_t)id3->filesize - offset)
+            return false;
 
         read_data = 0;
         if (memcmp(buf, chunknames + FMT_CHUNK * namelen, namelen) == 0)
@@ -341,7 +378,8 @@ static bool read_header(int fd, struct mp3entry* id3, const unsigned char *chunk
             /* get and parse format */
             read_data = (chunksize > 25)? 26 : chunksize;
 
-            read(fd, buf, read_data);
+            if (read(fd, buf, read_data) != read_data)
+                return false;
             parse_riff_format(buf, read_data, &fmt, id3);
         }
         else if (memcmp(buf, chunknames + FACT_CHUNK * namelen, namelen) == 0)
@@ -353,7 +391,8 @@ static bool read_header(int fd, struct mp3entry* id3, const unsigned char *chunk
             {
                 /* get totalsamples */
                 read_data = sizelen;
-                read(fd, buf, read_data);
+                if (read(fd, buf, read_data) != read_data)
+                    return false;
                 fmt.totalsamples = (is_64)? get_uint64_le(buf) : get_long_le(buf);
             }
         }
@@ -367,18 +406,26 @@ static bool read_header(int fd, struct mp3entry* id3, const unsigned char *chunk
         else if (memcmp(buf, chunknames + LIST_CHUNK * namelen, namelen) == 0)
         {
             DEBUGF("find 'LIST' chunk\n");
-            parse_list_chunk(fd, id3, chunksize, is_64);
-            lseek(fd, offset, SEEK_SET);
+            if (!parse_list_chunk(fd, id3, chunksize, is_64) ||
+                lseek(fd, offset, SEEK_SET) != (off_t)offset)
+                return false;
         }
 
         /* padded to next chunk */
-        chunksize += ((is_64)? ((1 + ~chunksize) & 0x07) : (chunksize & 1));
+        uint64_t padding = is_64 ? ((1 + ~chunksize) & 0x07) :
+                                   (chunksize & 1);
+        if (chunksize > UINT64_MAX - padding)
+            return false;
+        chunksize += padding;
 
+        if (chunksize > (uint64_t)id3->filesize - offset)
+            return false;
         offset += chunksize;
         if (offset >= id3->filesize)
             break;
 
-        lseek(fd, chunksize - read_data, SEEK_CUR);
+        if (lseek(fd, chunksize - read_data, SEEK_CUR) < 0)
+            return false;
     }
 
     if (fmt.numbytes == 0)
