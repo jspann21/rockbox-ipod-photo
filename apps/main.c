@@ -383,7 +383,9 @@ static void init_tagcache(void)
             }
             clear = true;
         }
-        sleep(HZ/4);
+        /* Keep startup responsive when the database worker completes between
+         * progress updates; the old quarter-second poll was visible on flash. */
+        sleep(MAX(1, HZ/10));
     }
     tagtree_init();
 
