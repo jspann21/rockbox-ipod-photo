@@ -947,6 +947,8 @@ int bufopen(const char *file, off_t offset, enum data_type type,
     }
     else if (type == TYPE_UNKNOWN)
         return ERR_UNSUPPORTED_TYPE;
+    else if (offset < 0)
+        return ERR_FILE_ERROR;
 #ifdef APPLICATION
     /* Loading code from memory is not supported in application builds */
     else if (type == TYPE_CODEC)
@@ -982,7 +984,15 @@ int bufopen(const char *file, off_t offset, enum data_type type,
 #endif /* HAVE_ALBUMART */
 
     if (size == 0)
-        size = filesize(fd);
+    {
+        off_t file_size = filesize(fd);
+        if (file_size < 0 || (uint64_t)file_size > SIZE_MAX)
+        {
+            close(fd);
+            return ERR_FILE_ERROR;
+        }
+        size = file_size;
+    }
 
     unsigned int hflags = 0;
     if (type == TYPE_PACKET_AUDIO || type == TYPE_CODEC)
