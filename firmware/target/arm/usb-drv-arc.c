@@ -573,8 +573,10 @@ void usb_drv_int(void)
 
     /* error interrupt */
     if (status & USBSTS_ERR) {
+        logf("usb err sts=%08x prime=%08x", REG_USBSTS, REG_ENDPTPRIME);
+        logf("usb err active=%08x done=%08x",
+             REG_ENDPTSTATUS, REG_ENDPTCOMPLETE);
         REG_USBSTS = USBSTS_ERR;
-        logf("usb error int");
     }
 
     /* reset interrupt */
