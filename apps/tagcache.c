@@ -5951,9 +5951,22 @@ void tagcache_build(void)
 #endif /* __PCTOOL__ */
 
 #ifdef HAVE_TC_RAMCACHE
+static void discard_ramcache_allocation(void)
+{
+    tc_stat.ramcache = false;
+    tcramcache.hdr = NULL;
+    if (tcramcache.handle > 0)
+        core_free(tcramcache.handle);
+    tcramcache.handle = 0;
+    tc_stat.ramcache_allocated = 0;
+}
+
 static void load_ramcache(void)
 {
-    if (!tcramcache.hdr)
+    if (!global_settings.tagcache_ram)
+        return;
+
+    if (!tcramcache.hdr && !allocate_tagcache())
         return ;
 
     cpu_boost(true);
@@ -5966,10 +5979,7 @@ static void load_ramcache(void)
         /* If loading failed, it must indicate some problem with the db
          * so disable it entirely to prevent further issues. */
         tc_stat.ready = false;
-        tcramcache.hdr = NULL;
-        int handle = tcramcache.handle;
-        tcramcache.handle = 0;
-        core_free(handle);
+        discard_ramcache_allocation();
     }
 
     cpu_boost(false);
@@ -6124,6 +6134,7 @@ static void tagcache_thread(void)
             case Q_UPDATE:
                 tagcache_build();
 #ifdef HAVE_TC_RAMCACHE
+                discard_ramcache_allocation();
                 load_ramcache();
 #endif
                 check_deleted_files();
@@ -6144,13 +6155,25 @@ static void tagcache_thread(void)
                         global_settings.tagcache_autoupdate)
                         check_file_refs(true);
                     if (tc_stat.ramcache && global_settings.tagcache_autoupdate)
+                    {
                         tagcache_build();
+                        discard_ramcache_allocation();
+                        load_ramcache();
+                    }
                 }
                 else
 #endif /* HAVE_RC_RAMCACHE */
                 if (global_settings.tagcache_autoupdate)
                 {
                     tagcache_build();
+
+#ifdef HAVE_TC_RAMCACHE
+                    if (global_settings.tagcache_ram)
+                    {
+                        discard_ramcache_allocation();
+                        load_ramcache();
+                    }
+#endif
 
                     /* This will be very slow unless dircache is enabled
                        or target is flash based, but do it anyway for
