@@ -1993,8 +1993,10 @@ static int pf_tcs_retrieve_file_name(int fn_idx)
     if (!track_buffer_avail(MAX_PATH))
         return 0;
 
-    rb->tagcache_retrieve(&tcs, tcs.idx_id, tag_filename,
-            pf_tracks.names + fn_idx, MAX_PATH);
+    pf_tracks.names[fn_idx] = '\0';
+    if (!rb->tagcache_retrieve(&tcs, tcs.idx_id, tag_filename,
+                               pf_tracks.names + fn_idx, MAX_PATH))
+        return 0;
 
     return rb->strlen(pf_tracks.names + fn_idx);
 }
