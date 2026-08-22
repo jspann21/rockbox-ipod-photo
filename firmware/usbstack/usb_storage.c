@@ -514,6 +514,10 @@ static void usb_storage_transfer_complete(int ep,int dir,int status,int length)
                    MIN(WRITE_BUFFER_SIZE / cur_cmd.block_size,
                        cur_cmd.count) * cur_cmd.block_size) {
                     logf("unexpected length :%d",length);
+                    send_csw(UMS_STATUS_FAIL);
+                    cur_sense_data.sense_key=SENSE_ILLEGAL_REQUEST;
+                    cur_sense_data.asc=ASC_INVALID_FIELD_IN_CBD;
+                    cur_sense_data.ascq=0;
                     break;
                 }
 
