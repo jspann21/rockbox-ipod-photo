@@ -2949,7 +2949,7 @@ fatal_fail:
  */
 static inline struct dim *get_slide(const int hid)
 {
-    if (!hid)
+    if (hid <= 0)
         return NULL;
 
     struct dim *bmp;
