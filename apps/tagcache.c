@@ -425,6 +425,7 @@ static int total_entry_count = 0;
 static int data_size = 0;
 static int processed_dir_count;
 static bool build_write_error;
+static int checkpointed_entry_count;
 
 /* Thread safe locking */
 static volatile int write_lock;
@@ -2382,6 +2383,7 @@ bool tagcache_fill_tags(struct mp3entry *id3, const char *filename)
 #endif /* defined(HAVE_TC_RAMCACHE) && defined(HAVE_DIRCACHE) */
 
 #define TEMPDB_WRITE_BUFSZ 4096
+#define TEMPDB_CHECKPOINT_INTERVAL 128
 static unsigned char tempdb_write_buf[TEMPDB_WRITE_BUFSZ];
 static size_t tempdb_write_used;
 
@@ -2415,6 +2417,29 @@ static bool tempdb_write(const void *data, size_t size)
 
         if (tempdb_write_used == sizeof(tempdb_write_buf) && !tempdb_flush())
             return false;
+    }
+
+    return true;
+}
+
+static bool tempdb_checkpoint(void)
+{
+    if (!tempdb_flush())
+        return false;
+
+    off_t end = lseek(cachefd, 0, SEEK_CUR);
+    struct tagcache_header header = {
+        .magic = TAGCACHE_MAGIC,
+        .datasize = data_size,
+        .entry_count = total_entry_count,
+    };
+
+    if (end < 0 || lseek(cachefd, 0, SEEK_SET) < 0 ||
+        write_tagcache_header(cachefd, &header) != sizeof(header) ||
+        sync_file(cachefd) < 0 || lseek(cachefd, end, SEEK_SET) < 0)
+    {
+        build_write_error = true;
+        return false;
     }
 
     return true;
@@ -5291,6 +5316,12 @@ static bool check_dir(const char *dirname, int add_files)
             /* Add a new entry to the temporary db file. */
             add_tagcache(curpath, info.mtime);
 
+            if (!build_write_error && total_entry_count > 0 &&
+                total_entry_count != checkpointed_entry_count &&
+                total_entry_count % TEMPDB_CHECKPOINT_INTERVAL == 0 &&
+                tempdb_checkpoint())
+                checkpointed_entry_count = total_entry_count;
+
             if (build_write_error)
             {
                 tc_stat.curentry = NULL;
@@ -5336,6 +5367,7 @@ void do_tagcache_build(const char *path[])
     total_entry_count = 0;
     processed_dir_count = 0;
     build_write_error = false;
+    checkpointed_entry_count = 0;
     tempdb_write_used = 0;
 
 #ifdef HAVE_DIRCACHE
@@ -5366,6 +5398,7 @@ void do_tagcache_build(const char *path[])
     logf("Scanning files...");
     /* Scan for new files. */
     memset(&header, 0, sizeof(struct tagcache_header));
+    header.magic = TAGCACHE_MAGIC;
     if (write_tagcache_header(cachefd, &header) != sizeof(header))
     {
         logf("temporary header write failed");
