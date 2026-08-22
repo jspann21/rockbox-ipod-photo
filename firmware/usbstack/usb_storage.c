@@ -1198,6 +1198,9 @@ static void handle_scsi(struct command_block_wrapper* cbw)
                 cur_sense_data.asc=ASC_LBA_OUT_OF_RANGE;
                 cur_sense_data.ascq=0;
             }
+            else if (cur_cmd.count == 0) {
+                send_csw(UMS_STATUS_GOOD);
+            }
             else {
 #ifdef USB_USE_RAMDISK
                 memcpy(cur_cmd.data[cur_cmd.data_select],
@@ -1250,6 +1253,9 @@ static void handle_scsi(struct command_block_wrapper* cbw)
                 cur_sense_data.asc=ASC_LBA_OUT_OF_RANGE;
                 cur_sense_data.ascq=0;
             }
+            else if (cur_cmd.count == 0) {
+                send_csw(UMS_STATUS_GOOD);
+            }
             else {
 #ifdef USB_USE_RAMDISK
                 memcpy(cur_cmd.data[cur_cmd.data_select],
@@ -1295,6 +1301,9 @@ static void handle_scsi(struct command_block_wrapper* cbw)
                 cur_sense_data.asc=ASC_LBA_OUT_OF_RANGE;
                 cur_sense_data.ascq=0;
             }
+            else if (cur_cmd.count == 0) {
+                send_csw(UMS_STATUS_GOOD);
+            }
             else {
                 receive_block_data(cur_cmd.data[0],
                         MIN(WRITE_BUFFER_SIZE / cur_cmd.block_size,
@@ -1337,6 +1346,9 @@ static void handle_scsi(struct command_block_wrapper* cbw)
                 cur_sense_data.sense_key=SENSE_ILLEGAL_REQUEST;
                 cur_sense_data.asc=ASC_LBA_OUT_OF_RANGE;
                 cur_sense_data.ascq=0;
+            }
+            else if (cur_cmd.count == 0) {
+                send_csw(UMS_STATUS_GOOD);
             }
             else {
                 receive_block_data(cur_cmd.data[0],
