@@ -544,7 +544,7 @@ static struct pf_slide_cache pf_sldcache;
 unsigned long thread_stack[THREAD_STACK_SIZE / sizeof(long)];
 /* queue (as array) for scheduling load_surface */
 
-static int empty_slide_hid;
+static int empty_slide_hid = -1;
 
 unsigned int thread_id;
 struct event_queue thread_q;
@@ -2646,20 +2646,28 @@ static void free_all_slide_prio(int prio)
 static int read_pfraw(char* filename, int prio)
 {
     struct pfraw_header bmph;
+    size_t pixel_bytes;
+    size_t alloc_size;
     int fh = rb->open(filename, O_RDONLY);
     if( fh < 0 ) {
         /* pf_cfg.cache_version = CACHE_UPDATE; -- don't invalidate on missing pfraw */
         return empty_slide_hid;
     }
-    else
-        rb->read(fh, &bmph, sizeof(struct pfraw_header));
+    if (rb->read(fh, &bmph, sizeof(bmph)) != (ssize_t)sizeof(bmph))
+        goto invalid_file;
 
-    int size =  sizeof(struct dim) +
-                sizeof( pix_t ) * bmph.width * bmph.height;
+    if (bmph.width <= 0 || bmph.height <= 0 ||
+        bmph.width > DISPLAY_WIDTH || bmph.height > DISPLAY_HEIGHT)
+        goto invalid_file;
+
+    pixel_bytes = sizeof(pix_t) * (size_t)bmph.width * (size_t)bmph.height;
+    alloc_size = sizeof(struct dim) + pixel_bytes;
+    if (rb->filesize(fh) != (off_t)(sizeof(bmph) + pixel_bytes))
+        goto invalid_file;
 
     int hid;
     do {
-        hid = rb->buflib_alloc(&buf_ctx, size);
+        hid = rb->buflib_alloc(&buf_ctx, alloc_size);
     } while (hid < 0 && free_slide_prio(prio));
 
     if (hid < 0) {
@@ -2674,9 +2682,18 @@ static int read_pfraw(char* filename, int prio)
     bm->height = bmph.height;
     pix_t *data = (pix_t*)(sizeof(struct dim) + (char *)bm);
 
-    rb->read( fh, data , sizeof( pix_t ) * bm->width * bm->height );
+    if (rb->read(fh, data, pixel_bytes) != (ssize_t)pixel_bytes)
+    {
+        rb->buflib_free(&buf_ctx, hid);
+        goto invalid_file;
+    }
     rb->close( fh );
     return hid;
+
+invalid_file:
+    rb->close(fh);
+    rb->remove(filename);
+    return empty_slide_hid;
 }
 
 
