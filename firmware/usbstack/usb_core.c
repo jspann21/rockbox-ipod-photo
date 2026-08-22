@@ -909,9 +909,12 @@ static int usb_core_do_set_config(uint8_t new_config)
     if(usb_config != 0) {
         init_deinit_endpoints(usb_config, true);
         for(int i = 0; i < USB_NUM_DRIVERS; i++) {
-            if(!is_active(drivers[i])) {
+            if(!drivers[i]->enabled || drivers[i]->config != usb_config) {
                 continue;
             }
+            /* A failed connection attempt must not permanently latch the
+             * class driver off. A new SET_CONFIGURATION is a fresh attempt. */
+            drivers[i]->error = false;
             if(drivers[i]->init_connection != NULL && drivers[i]->init_connection() < 0) {
                 drivers[i]->error = true;
                 continue;
