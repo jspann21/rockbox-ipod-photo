@@ -837,6 +837,9 @@ static void handle_scsi(struct command_block_wrapper* cbw)
     block_count=info.num_sectors;
 #endif
 
+    if (block_size == 0 || block_count == 0)
+        lun_present = false;
+
     if(storage_removable(lun) && !storage_present(lun))
         ejected[lun] = true;
 
@@ -847,6 +850,11 @@ static void handle_scsi(struct command_block_wrapper* cbw)
 #ifdef MAX_VIRT_SECTOR_SIZE
     block_size_mult = disk_get_sector_multiplier(IF_MD(lun));
 #endif
+    if (block_size_mult == 0)
+    {
+        block_size_mult = 1;
+        lun_present = false;
+    }
 
     uint32_t bsize = block_size*block_size_mult;
     sector_t bcount = block_count/block_size_mult;
