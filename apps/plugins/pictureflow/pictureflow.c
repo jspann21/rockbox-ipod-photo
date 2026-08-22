@@ -559,6 +559,7 @@ static struct pf_index_t pf_idx;
 
 static struct pf_track_t pf_tracks;
 static unsigned long aa_cache_next_tick;
+static volatile unsigned int render_generation;
 
 static struct mp3entry id3;
 
@@ -1017,12 +1018,13 @@ static int get_scroll_line_offset(enum pf_scroll_line_type type)
     return scroll_lines[type].offset;
 }
 
-static void update_scroll_lines(void)
+static bool update_scroll_lines(void)
 {
     int i;
+    bool changed = false;
 
     if (TIME_BEFORE(*rb->current_tick, scroll_line_info.next_scroll))
-        return;
+        return false;
 
     scroll_line_info.next_scroll = *rb->current_tick + scroll_line_info.ticks;
 
@@ -1032,6 +1034,7 @@ static void update_scroll_lines(void)
         if (s->step && TIME_BEFORE(s->start_tick, *rb->current_tick))
         {
             s->offset -= s->step;
+            changed = true;
 
             if (s->offset >= 0) {
                 /* at beginning of line */
@@ -1047,6 +1050,7 @@ static void update_scroll_lines(void)
             }
         }
     }
+    return changed;
 }
 
 /* Create the lookup table with the scaling values for the reflections */
@@ -2482,6 +2486,7 @@ static void thread(void)
                 buf_ctx_unlock();
                 if (!slide_loaded)
                     break;
+                render_generation++;
                 rb->yield();
             }
         }
@@ -3277,6 +3282,7 @@ static inline void set_current_slide(const int slide_index)
     target = center_index;
     slide_frame = center_index << 16;
     reset_slides();
+    render_generation++;
 }
 
 
@@ -5001,6 +5007,7 @@ static int pictureflow_main(void)
     int fps = 0;
     int fpstxt_y;
     bool instant_update;
+    unsigned int rendered_generation = ~0u;
 
     while (true) {
         current_update = *rb->current_tick;
@@ -5008,8 +5015,10 @@ static int pictureflow_main(void)
 
         /* Initial rendering */
         instant_update = false;
+        bool display_dirty = true;
+        unsigned int current_generation = render_generation;
 
-        update_scroll_lines();
+        bool scroll_changed = update_scroll_lines();
 
         /* Handle states */
         switch ( pf_state ) {
@@ -5035,7 +5044,8 @@ static int pictureflow_main(void)
                 break;
             case pf_idle:
                 show_tracks_while_browsing = false;
-                render_all_slides();
+                display_dirty = scroll_changed || pf_cfg.show_fps ||
+                                current_generation != rendered_generation;
                 if (aa_cache.inspected < pf_idx.album_ct &&
                     !TIME_BEFORE(*rb->current_tick, aa_cache_next_tick))
                 {
@@ -5043,9 +5053,15 @@ static int pictureflow_main(void)
                     incremental_albumart_cache(false);
                     buf_ctx_unlock();
                     aa_cache_next_tick = (unsigned long)*rb->current_tick + HZ/10;
+                    display_dirty = true;
                 }
+                if (display_dirty)
+                    render_all_slides();
                 break;
         }
+
+        if (display_dirty)
+            rendered_generation = current_generation;
 
         /* Calculate FPS */
         unsigned long update_elapsed = (unsigned long)current_update -
@@ -5056,7 +5072,8 @@ static int pictureflow_main(void)
             frames = 0;
         }
         /* Draw FPS or draw percentage of already built album cache */
-        if (pf_cfg.show_fps || aa_cache.inspected < pf_idx.album_ct)
+        if (display_dirty &&
+            (pf_cfg.show_fps || aa_cache.inspected < pf_idx.album_ct))
         {
 #ifdef USEGSLIB
             mylcd_set_foreground(G_BRIGHT(255));
@@ -5079,11 +5096,12 @@ static int pictureflow_main(void)
                 fpstxt_y = 0;
             mylcd_putsxy(0, fpstxt_y, fpstxt);
         }
-        draw_album_text();
+        if (display_dirty)
+            draw_album_text();
 
 
         /* Copy offscreen buffer to LCD and give time to other threads */
-        if (is_initial_slide == false)
+        if (display_dirty && is_initial_slide == false)
             mylcd_update();
         rb->yield();
 
@@ -5143,6 +5161,7 @@ static int pictureflow_main(void)
 #endif
                 mylcd_set_drawmode(DRMODE_FG);
             }
+            render_generation++;
             break;
 
         case PF_NEXT:
