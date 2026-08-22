@@ -1687,8 +1687,13 @@ failure:
  */
 static char* get_album_name(const int slide_index)
 {
-    char *name = pf_idx.album_names + pf_idx.album_index[slide_index].name_idx;
-    return name;
+    if (slide_index >= 0 && slide_index < pf_idx.album_ct)
+    {
+        int idx = pf_idx.album_index[slide_index].name_idx;
+        if (idx >= 0 && (size_t)idx < pf_idx.album_len)
+            return pf_idx.album_names + idx;
+    }
+    return "?";
 }
 
 /**
@@ -1696,9 +1701,14 @@ static char* get_album_name(const int slide_index)
  */
 static char* get_album_name_idx(const int slide_index, int *idx)
 {
-    *idx = pf_idx.album_index[slide_index].name_idx;
-    char *name = pf_idx.album_names + pf_idx.album_index[slide_index].name_idx;
-    return name;
+    if (slide_index >= 0 && slide_index < pf_idx.album_ct)
+    {
+        *idx = pf_idx.album_index[slide_index].name_idx;
+        if (*idx >= 0 && (size_t)*idx < pf_idx.album_len)
+            return pf_idx.album_names + *idx;
+    }
+    *idx = -1;
+    return "?";
 }
 
 /**
@@ -1861,8 +1871,16 @@ static int id3_get_index(struct mp3entry *id3)
             album_idx = pf_idx.album_index[i].name_idx;
             artist_idx = pf_idx.album_index[i].artist_idx;
 
-            if(!rb->strcmp(pf_idx.album_names + album_idx, current_album) &&
-                !rb->strcasecmp(pf_idx.artist_names + artist_idx, current_artist))
+            if (album_idx < 0 || (size_t)album_idx >= pf_idx.album_len ||
+                artist_idx < -1 ||
+                (artist_idx >= 0 && (size_t)artist_idx >= pf_idx.artist_len))
+                continue;
+
+            const char *album = pf_idx.album_names + album_idx;
+            const char *artist = artist_idx < 0 ? UNTAGGED :
+                                                   pf_idx.artist_names + artist_idx;
+            if(!rb->strcmp(album, current_album) &&
+                !rb->strcasecmp(artist, current_artist))
                 return i;
         }
 
@@ -4539,6 +4557,7 @@ static void draw_album_text(void)
         albumtxt_index = center_index;
         c= 255;
     }
+    albumtxt_index = fbound(0, albumtxt_index, pf_idx.album_ct - 1);
     albumtxt = get_album_name_idx(albumtxt_index, &album_idx);
 
     if (pf_cfg.show_year && pf_idx.album_index[albumtxt_index].year > 0)
