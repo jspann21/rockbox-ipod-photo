@@ -172,7 +172,8 @@ static int zero_sectors(struct ipod_t* ipod, uint64_t sector, int count)
         else
             n = count;
 
-        if (ipod_write(ipod,n * ipod->sector_size) < 0) {
+        int bytes = n * ipod->sector_size;
+        if (ipod_write(ipod, bytes) != bytes) {
             perror("[ERR]  Write failed in zero_sectors\n");
             return -1;
         }
@@ -317,7 +318,7 @@ static void create_boot_sector(unsigned char* buf,
     pFAT32BootSect->wFATSz16 = rb_htole16(0);
     pFAT32BootSect->wSecPerTrk = rb_htole16(ipod->sectors_per_track);
     pFAT32BootSect->wNumHeads = rb_htole16(ipod->num_heads);
-    pFAT32BootSect->dHiddSec = rb_htole16(ipod->pinfo[partition].start);
+    pFAT32BootSect->dHiddSec = rb_htole32(ipod->pinfo[partition].start);
     pFAT32BootSect->dTotSec32 = rb_htole32(TotalSectors);
     pFAT32BootSect->dFATSz32 = rb_htole32(FatSize);
     pFAT32BootSect->wExtFlags = rb_htole16(0);
@@ -477,7 +478,9 @@ int format_partition(struct ipod_t* ipod, int partition)
     /* Once zero_sectors has run, any data on the drive is basically lost... */
     fprintf(stderr,"[INFO] Clearing out %d sectors for Reserved sectors, fats and root cluster...\n", SystemAreaSize );
 
-    zero_sectors(ipod, ipod->pinfo[partition].start, SystemAreaSize);
+    if (zero_sectors(ipod, ipod->pinfo[partition].start,
+                     SystemAreaSize) < 0)
+        return -1;
 
     fprintf(stderr,"[INFO] Initialising reserved sectors and FATs...\n" );
 
@@ -490,7 +493,7 @@ int format_partition(struct ipod_t* ipod, int partition)
         fprintf(stderr,"[ERR]  Seek failed\n");
         return -1;
     }
-    if (ipod_write(ipod,512 * 2) < 0) {
+    if (ipod_write(ipod, 512 * 2) != 512 * 2) {
         perror("[ERR]  Write failed (first copy of bootsect/fsinfo)\n");
         return -1;
     }
@@ -500,7 +503,7 @@ int format_partition(struct ipod_t* ipod, int partition)
         fprintf(stderr,"[ERR]  Seek failed\n");
         return -1;
     }
-    if (ipod_write(ipod,512 * 2) < 0) {
+    if (ipod_write(ipod, 512 * 2) != 512 * 2) {
         perror("[ERR]  Write failed (first copy of bootsect/fsinfo)\n");
         return -1;
     }
@@ -517,7 +520,7 @@ int format_partition(struct ipod_t* ipod, int partition)
             return -1;
         }
 
-        if (ipod_write(ipod,512) < 0) {
+        if (ipod_write(ipod, 512) != 512) {
             perror("[ERR]  Write failed (first copy of bootsect/fsinfo)\n");
             return -1;
         }

@@ -1891,7 +1891,7 @@ int write_dos_partition_table(struct ipod_t* ipod)
     }
 
     /* Write MBR */
-    if ((n = ipod_write(ipod, ipod->sector_size)) < 0) {
+    if ((n = ipod_write(ipod, ipod->sector_size)) != ipod->sector_size) {
         perror("[ERR]  Write failed\n");
         return -1;
     }
