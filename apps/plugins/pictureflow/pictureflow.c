@@ -2690,7 +2690,7 @@ static int read_pfraw(char* filename, int prio)
     int fh = rb->open(filename, O_RDONLY);
     if( fh < 0 ) {
         /* pf_cfg.cache_version = CACHE_UPDATE; -- don't invalidate on missing pfraw */
-        return empty_slide_hid;
+        return rb->strcmp(filename, EMPTY_SLIDE) == 0 ? -1 : empty_slide_hid;
     }
     if (rb->read(fh, &bmph, sizeof(bmph)) != (ssize_t)sizeof(bmph))
         goto invalid_file;
@@ -2732,7 +2732,7 @@ static int read_pfraw(char* filename, int prio)
 invalid_file:
     rb->close(fh);
     rb->remove(filename);
-    return empty_slide_hid;
+    return rb->strcmp(filename, EMPTY_SLIDE) == 0 ? -1 : empty_slide_hid;
 }
 
 
@@ -3324,6 +3324,13 @@ static bool sort_albums(int new_sorting, bool from_settings)
     /* Empty cache and restart cover loading thread */
     rb->buflib_init(&buf_ctx, (void *)pf_idx.buf, pf_idx.buf_sz);
     empty_slide_hid = read_pfraw(EMPTY_SLIDE, 0);
+    if (empty_slide_hid < 0 &&
+        (!create_empty_slide(true) ||
+         (empty_slide_hid = read_pfraw(EMPTY_SLIDE, 0)) < 0))
+    {
+        error_wait("Unable to rebuild empty slide image");
+        return false;
+    }
     initialize_slide_cache();
     is_initial_slide = true;
     create_pf_thread();
