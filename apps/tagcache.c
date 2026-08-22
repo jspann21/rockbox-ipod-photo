@@ -62,9 +62,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <limits.h>
 #ifdef APPLICATION
 #include <unistd.h> /* readlink() */
-#include <limits.h> /* PATH_MAX */
 #endif
 #include "config.h"
 #include "ata_idle_notify.h"
@@ -5000,6 +5000,11 @@ static bool allocate_tagcache(void)
     }
     alloc_size += ref_count*sizeof(struct dircache_fileref);
 #endif
+    if (alloc_size > (size_t)INT_MAX)
+    {
+        logf("tagcache: RAM cache exceeds status capacity");
+        return false;
+    }
 
     int handle = core_alloc_ex(alloc_size, &ops);
     if (handle <= 0)
