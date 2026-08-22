@@ -685,6 +685,22 @@ static ssize_t read_index_entries(int fd, struct index_entry *buf, size_t count)
     return ret;
 }
 
+static ssize_t read_index_entries_exact(int fd, struct index_entry *buf,
+                                        size_t count)
+{
+    if (count > SIZE_MAX / sizeof(*buf))
+        return -1;
+
+    size_t size = sizeof(*buf) * count;
+    if (read_exact(fd, buf, size) != (ssize_t)size)
+        return -1;
+
+    for (size_t i = 0; i < count; i++)
+        swap_index_entry(&buf[i]);
+
+    return size;
+}
+
 static ssize_t write_index_entries(int fd, struct index_entry *buf, size_t count)
 {
 #ifdef TAGCACHE_SUPPORT_FOREIGN_ENDIAN
@@ -4820,22 +4836,28 @@ static bool load_tagcache(void)
     /* Master header copy should already match, this can be redundant to do. */
     current_tcmh = tcmh;
 
-    /* Load the master index table. */
-    for (int i = 0; i < tcmh.tch.entry_count; i++)
+    /* Load the contiguous master index table in one sequential transfer. */
+    if (tcmh.tch.entry_count < 0 ||
+        (size_t)tcmh.tch.entry_count > SIZE_MAX / sizeof(struct index_entry))
     {
-        bytesleft -= sizeof(struct index_entry);
-        if (bytesleft < 0)
-        {
-            logf("too big tagcache.");
-            goto failure;
-        }
+        logf("invalid tagcache entry count");
+        goto failure;
+    }
 
-        int rc = read_index_entries(fd, &tcramcache.hdr->indices[i], 1);
-        if (rc != sizeof (struct index_entry))
-        {
-            logf("read error #10");
-            goto failure;
-        }
+    size_t index_size = (size_t)tcmh.tch.entry_count *
+                        sizeof(struct index_entry);
+    bytesleft -= index_size;
+    if (bytesleft < 0)
+    {
+        logf("too big tagcache.");
+        goto failure;
+    }
+
+    if (read_index_entries_exact(fd, tcramcache.hdr->indices,
+                                 tcmh.tch.entry_count) != (ssize_t)index_size)
+    {
+        logf("read error #10");
+        goto failure;
     }
 
     close(fd);
