@@ -464,10 +464,21 @@ void gui_synclist_set_title(struct gui_synclist * gui_list,
 
 void gui_synclist_set_nb_items(struct gui_synclist * lists, int nb_items)
 {
+    if (nb_items < 0)
+        nb_items = 0;
+
     lists->nb_items = nb_items;
+    int max_selection = MAX(0, nb_items - MAX(1, lists->selected_size));
+
+    if (lists->selected_item < 0)
+        lists->selected_item = 0;
+    else if (lists->selected_item > max_selection)
+        lists->selected_item = max_selection;
+
     FOR_NB_SCREENS(i)
     {
         lists->offset_position[i] = 0;
+        gui_list_put_selection_on_screen(lists, i);
     }
 }
 int gui_synclist_get_nb_items(struct gui_synclist * lists)
