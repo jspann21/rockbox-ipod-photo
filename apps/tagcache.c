@@ -1225,11 +1225,12 @@ static void free_tempbuf(void)
 }
 
 #if defined(HAVE_TC_RAMCACHE) && defined(HAVE_DIRCACHE)
+static long ramcache_last_pos;
+
 /* find the ramcache entry corresponding to the file indicated by
  * filename and dc (it's corresponding dircache id). */
 static long find_entry_ram(const char *filename)
 {
-    static long last_pos = 0;
     struct dircache_fileref dcfref;
 
     /* Check if tagcache is loaded into ram. */
@@ -1246,31 +1247,34 @@ static long find_entry_ram(const char *filename)
 
     /* Search references */
     int end_pos = current_tcmh.tch.entry_count;
+    if (ramcache_last_pos < 0 || ramcache_last_pos >= end_pos)
+        ramcache_last_pos = 0;
     while (1)
     {
-        for (int i = last_pos; i < end_pos; i++)
+        for (int i = ramcache_last_pos; i < end_pos; i++)
         {
             do_timed_yield();
 
-            if (!(tcramcache.hdr->indices[i].flag & FLAG_DIRCACHE))
+            if ((tcramcache.hdr->indices[i].flag &
+                 (FLAG_DIRCACHE | FLAG_DELETED)) != FLAG_DIRCACHE)
                 continue;
 
             int cmp = dircache_fileref_cmp(&tcrc_dcfrefs[i], &dcfref);
             if (cmp < 3)
                 continue;
 
-            last_pos = MAX(0, i - 3);
+            ramcache_last_pos = MAX(0, i - 3);
             return i;
         }
 
-        if (last_pos == 0)
+        if (ramcache_last_pos == 0)
         {
-            last_pos = MAX(0, end_pos - 3);
+            ramcache_last_pos = MAX(0, end_pos - 3);
             break;
         }
 
-        end_pos = last_pos;
-        last_pos = 0;
+        end_pos = ramcache_last_pos;
+        ramcache_last_pos = 0;
     }
 
     return -1;
