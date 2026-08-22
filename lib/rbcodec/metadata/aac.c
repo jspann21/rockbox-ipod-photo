@@ -42,8 +42,8 @@ static bool check_adts_syncword(int fd)
 {
     uint16_t syncword = 0;
 
-    read_uint16be(fd, &syncword);
-    return (syncword & 0xFFF6) == 0xFFF0;
+    return read_uint16be(fd, &syncword) == (int)sizeof(syncword) &&
+           (syncword & 0xFFF6) == 0xFFF0;
 }
 
 static bool find_adts_keyword(int fd, struct mp3entry *entry)
@@ -67,12 +67,17 @@ static bool find_adts_keyword(int fd, struct mp3entry *entry)
 bool get_aac_metadata(int fd, struct mp3entry *entry)
 {
     unsigned char buf[5];
+    off_t file_size;
 
     entry->title = NULL;
     entry->id3v1len = 0;
     entry->id3v2len = getid3v2len(fd);
     entry->first_frame_offset = entry->id3v2len;
-    entry->filesize = filesize(fd) - entry->first_frame_offset;
+    file_size = filesize(fd);
+    if (file_size < 0 ||
+        (uint64_t)entry->first_frame_offset > (uint64_t)file_size)
+        return false;
+    entry->filesize = file_size - entry->first_frame_offset;
     entry->needs_upsampling_correction = false;
 
     if (entry->id3v2len)
@@ -88,10 +93,14 @@ bool get_aac_metadata(int fd, struct mp3entry *entry)
             return false;
 
         uint32_t bitrate;
-        read_uint32be(fd, &bitrate);
+        uint32_t frequency;
+        if (read_uint32be(fd, &bitrate) != (int)sizeof(bitrate))
+            return false;
         entry->vbr = (bitrate & 0x10000000) != 0;
         entry->bitrate = ((bitrate & 0xFFFFFE0) + 16000) / 32000;
-        read_uint32be(fd, (uint32_t*)(&(entry->frequency)));
+        if (read_uint32be(fd, &frequency) != (int)sizeof(frequency))
+            return false;
+        entry->frequency = frequency;
         entry->frequency = sample_rates[(entry->frequency >> (entry->vbr ? 23 : 3)) & 0x0F];
     }
     else if (find_adts_keyword(fd, entry))
@@ -131,10 +140,13 @@ bool get_aac_metadata(int fd, struct mp3entry *entry)
     }
     else
     {
-        lseek(fd, 0, SEEK_SET);
+        if (lseek(fd, 0, SEEK_SET) < 0)
+            return false;
         return get_mp4_metadata(fd, entry);
     }
 
+    if (entry->frequency == 0 || entry->bitrate == 0)
+        return false;
     entry->length = (unsigned long)((entry->filesize * 8LL + (entry->bitrate >> 1)) / entry->bitrate);
 
     return true;
