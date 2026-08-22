@@ -3747,7 +3747,6 @@ static int display_settings_menu(void)
 
                 pf_cfg.update_albumart = false;
                 pf_cfg.cache_version = CACHE_REBUILD;
-                rb->remove(EMPTY_SLIDE);
                 configfile_save(CONFIG_FILE, config,
                                 CONFIG_NUM_ITEMS, CONFIG_VERSION);
                 return -3; /* re-init */
@@ -3924,7 +3923,6 @@ static int main_menu(void)
                     break;
                 pf_cfg.update_albumart = false;
                 pf_cfg.cache_version = CACHE_REBUILD;
-                rb->remove(EMPTY_SLIDE);
                 configfile_save(CONFIG_FILE, config,
                                 CONFIG_NUM_ITEMS, CONFIG_VERSION);
                 return -3; /* re-init */
@@ -3933,7 +3931,6 @@ static int main_menu(void)
                     break;
                 pf_cfg.update_albumart = true;
                 pf_cfg.cache_version = CACHE_REBUILD;
-                rb->remove(EMPTY_SLIDE);
                 configfile_save(CONFIG_FILE, config,
                                 CONFIG_NUM_ITEMS, CONFIG_VERSION);
                 return -3; /* re-init */
@@ -4893,7 +4890,6 @@ static bool prompt_reinit(void)
     {
         pf_cfg.update_albumart = true;
         pf_cfg.cache_version = CACHE_REBUILD;
-        rb->remove(EMPTY_SLIDE);
         configfile_save(CONFIG_FILE, config, CONFIG_NUM_ITEMS, CONFIG_VERSION);
         if (!reinit())
             return false;
