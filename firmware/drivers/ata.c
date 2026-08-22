@@ -687,6 +687,8 @@ static int freeze_lock(void)
 
         if (!wait_for_rdy())
             return -2;
+        if (ATA_IN8(ATA_ALT_STATUS) & (STATUS_ERR | STATUS_DF))
+            return -3;
     }
 
     return 0;
