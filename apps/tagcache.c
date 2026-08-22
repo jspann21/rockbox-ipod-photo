@@ -6097,6 +6097,24 @@ static bool NO_INLINE db_file_exists(const char* filename)
 
 static bool sealed_database_needs_rebuild(void)
 {
+    int tempfd = open_db_fd(TAGCACHE_FILE_TEMP, O_RDONLY);
+    if (tempfd >= 0)
+    {
+        struct tagcache_header temp_header;
+        ssize_t rc = read_exact(tempfd, &temp_header, sizeof(temp_header));
+        close(tempfd);
+
+        bool complete = rc == sizeof(temp_header) &&
+            (temp_header.magic == TAGCACHE_MAGIC ||
+             temp_header.magic == swap32(TAGCACHE_MAGIC));
+        if (!complete)
+        {
+            logf("discarding incomplete database scan");
+            remove_db_file(TAGCACHE_FILE_TEMP);
+            return true;
+        }
+    }
+
     bool initial = db_file_exists(TAGCACHE_FILE_TEMP_DONE);
     bool update = db_file_exists(TAGCACHE_FILE_TEMP_UPDATE);
     if (!initial && !update)
