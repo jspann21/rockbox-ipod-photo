@@ -500,8 +500,16 @@ struct tempbuf_searchidx {
     long idx_id;
     char *str;
     int seek;
+#if MEMORYSIZE >= 32
+    int hash_next;
+#endif
     struct tempbuf_id_list idlist;
 };
+
+#if MEMORYSIZE >= 32
+#define TEMPBUF_HASH_BUCKETS 1024
+static int tempbuf_hash_heads[TEMPBUF_HASH_BUCKETS];
+#endif
 
 /* Lookup buffer for fixing messed up index while after sorting. */
 static long commit_entry_count;
@@ -2831,7 +2839,12 @@ static bool tempbuf_insert(char *str, int id, int idx_id, bool unique)
     if (unique)
     {
         /* Check if the crc does not exist -> entry does not exist for sure. */
+#if MEMORYSIZE >= 32
+        for (i = tempbuf_hash_heads[crc32 % TEMPBUF_HASH_BUCKETS];
+             i >= 0; i = index[i].hash_next)
+#else
         for (i = 0; i < tempbufidx; i++)
+#endif
         {
             if (crcbuf[-i] != crc32)
                 continue;
@@ -2879,6 +2892,15 @@ static bool tempbuf_insert(char *str, int id, int idx_id, bool unique)
     index[tempbufidx].idlist.next = NULL;
     index[tempbufidx].idx_id = idx_id;
     index[tempbufidx].seek = -1;
+#if MEMORYSIZE >= 32
+    index[tempbufidx].hash_next = -1;
+    if (unique)
+    {
+        unsigned bucket = crc32 % TEMPBUF_HASH_BUCKETS;
+        index[tempbufidx].hash_next = tempbuf_hash_heads[bucket];
+        tempbuf_hash_heads[bucket] = tempbufidx;
+    }
+#endif
     index[tempbufidx].str = &tempbuf[tempbuf_pos];
     memcpy(index[tempbufidx].str, str, len);
     tempbuf_pos += len;
@@ -3335,6 +3357,9 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
     lookup = (struct tempbuf_searchidx **)&tempbuf[tempbuf_pos];
     tempbuf_pos += lookup_buffer_depth * sizeof(void **);
     memset(lookup, 0, lookup_buffer_depth * sizeof(void **));
+#if MEMORYSIZE >= 32
+    memset(tempbuf_hash_heads, 0xff, sizeof(tempbuf_hash_heads));
+#endif
 
     /* And calculate the remaining data space used mainly for storing
      * tag data (strings). */
