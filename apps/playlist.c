@@ -909,12 +909,17 @@ static int get_next_dir(char *dir, int direction)
         {
             int folder_count = 0;
             ssize_t nread = read(fd,&folder_count,sizeof(int));
-            if ((nread == sizeof(int)) && folder_count)
+            off_t list_size = filesize(fd);
+            off_t list_data_size = list_size - (off_t)sizeof(int);
+            if ((nread == sizeof(int)) && folder_count > 0 &&
+                list_data_size >= 0 &&
+                (off_t)folder_count <= list_data_size / MAX_PATH)
             {
                 char buffer[MAX_PATH];
                 /* give up looking for a directory after we've had four
                    times as many tries as there are directories. */
-                unsigned long allowed_tries = folder_count * 4;
+                unsigned long allowed_tries = MIN((unsigned long)folder_count * 4,
+                                                  65536UL);
                 int i;
                 srand(current_tick);
                 *(tc->dirfilter) = SHOW_MUSIC;
@@ -922,8 +927,11 @@ static int get_next_dir(char *dir, int direction)
                 while (!exit && allowed_tries--)
                 {
                     i = rand() % folder_count;
-                    lseek(fd, sizeof(int) + (MAX_PATH * i), SEEK_SET);
-                    read(fd, buffer, MAX_PATH);
+                    off_t entry_offset = sizeof(int) + (off_t)MAX_PATH * i;
+                    if (lseek(fd, entry_offset, SEEK_SET) != entry_offset ||
+                        read(fd, buffer, MAX_PATH) != MAX_PATH ||
+                        memchr(buffer, '\0', MAX_PATH) == NULL)
+                        continue;
                     /* is the current dir within our base dir and has music? */
                     if ((base_len == 0 || !strncmp(buffer, dir, base_len))
                         && check_subdir_for_music(buffer, "", false) == 0)

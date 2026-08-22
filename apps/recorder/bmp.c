@@ -40,6 +40,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include "inttypes.h"
 #include "system.h"
 #ifndef PLUGIN
@@ -514,7 +515,8 @@ int read_bmp_fd(int fd,
     int padded_width;
     int read_width;
     int depth, numcolors, compression, totalsize;
-    int ret, hdr_size;
+    int ret;
+    uint32_t hdr_size;
     bool return_size = format & FORMAT_RETURN_SIZE;
     bool read_alpha = format & FORMAT_TRANSPARENT;
     enum color_order order = BGRA;
@@ -567,16 +569,40 @@ int read_bmp_fd(int fd,
         return -3;
     }
 
-    src_dim.width = letoh32(bmph.width);
-    src_dim.height = letoh32(bmph.height);
-    if (src_dim.height < 0) {     /* Top-down BMP file */
-        src_dim.height = -src_dim.height;
+    int32_t source_width = (int32_t)letoh32(bmph.width);
+    int32_t source_height = (int32_t)letoh32(bmph.height);
+    hdr_size = letoh32(bmph.struct_size);
+    compression = letoh32(bmph.compression);
+    uint32_t off_bits = letoh32(bmph.off_bits);
+    off_t file_size = filesize(fd);
+
+    if (letoh16(bmph.type) != 0x4d42 || letoh16(bmph.planes) != 1 ||
+        source_width <= 0 || source_width > SHRT_MAX ||
+        source_height == 0 || source_height == INT32_MIN ||
+        source_height > SHRT_MAX || source_height < -SHRT_MAX ||
+        hdr_size < 40 || (uint64_t)off_bits < 14u + (uint64_t)hdr_size ||
+        file_size < 0 || (uint64_t)off_bits > (uint64_t)file_size)
+    {
+        DEBUGF("read_bmp_fd: invalid BMP geometry or header\n");
+        return -4;
+    }
+
+    src_dim.width = source_width;
+    src_dim.height = source_height;
+    if (source_height < 0) {     /* Top-down BMP file */
+        src_dim.height = -source_height;
         rset.rowstep = 1;
     } else {              /* normal BMP */
         rset.rowstep = -1;
     }
 
     depth = letoh16(bmph.bit_count);
+    if (depth != 1 && depth != 4 && depth != 8 && depth != 16 &&
+        depth != 24 && depth != 32)
+    {
+        DEBUGF("read_bmp_fd: unsupported depth %d\n", depth);
+        return -4;
+    }
     /* 4-byte boundary aligned */
     read_width = ((src_dim.width * (depth == 15 ? 16 : depth) + 7) >> 3);
     padded_width = (read_width + 3) & ~3;
@@ -635,6 +661,10 @@ int read_bmp_fd(int fd,
 #if LCD_DEPTH > 1 || (defined(HAVE_REMOTE_LCD) && LCD_REMOTE_DEPTH > 1)
     format &= 1;
 #endif
+    if (bm->width <= 0 || bm->height <= 0 ||
+        (size_t)bm->width * (size_t)bm->height > INT_MAX / 8)
+        return -6;
+
     if (rset.rowstep > 0) {     /* Top-down BMP file */
         rset.rowstart = 0;
         rset.rowstop = bm->height;
@@ -673,14 +703,18 @@ int read_bmp_fd(int fd,
         return -6;
     }
 
-    hdr_size = letoh32(bmph.struct_size);
-    compression = letoh32(bmph.compression);
     if (depth <= 8) {
         numcolors = letoh32(bmph.clr_used);
         if (numcolors == 0)
             numcolors = BIT_N(depth);
+        if (numcolors < 1 || numcolors > BIT_N(depth) || numcolors > 256 ||
+            14u + (uint64_t)hdr_size +
+                (uint64_t)numcolors * sizeof(struct uint8_rgb) > off_bits)
+            return -7;
         /* forward to the color table */
-        lseek(fd, 14+hdr_size, SEEK_SET);
+        off_t palette_offset = 14 + (off_t)hdr_size;
+        if (lseek(fd, palette_offset, SEEK_SET) != palette_offset)
+            return -7;
     } else {
         numcolors = 0;
         if (compression == 3) {
@@ -758,7 +792,10 @@ int read_bmp_fd(int fd,
 #endif
 
     /* Search to the beginning of the image data */
-    lseek(fd, (off_t)letoh32(bmph.off_bits), SEEK_SET);
+    if ((uint64_t)off_bits + (uint64_t)padded_width * src_dim.height >
+        (uint64_t)file_size ||
+        lseek(fd, (off_t)off_bits, SEEK_SET) != (off_t)off_bits)
+        return -9;
 
     memset(bitmap, 0, totalsize);
 
