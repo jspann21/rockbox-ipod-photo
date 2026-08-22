@@ -395,24 +395,28 @@ void gui_synclist_select_item(struct gui_synclist * gui_list, int item_number)
 static void gui_list_select_at_offset(struct gui_synclist * gui_list,
                                       int offset, bool allow_wrap)
 {
+    long long scaled_offset = offset;
     if (gui_list->selected_size > 1)
-    {
-        offset *= gui_list->selected_size;
-    }
+        scaled_offset *= gui_list->selected_size;
 
-    int new_selection = gui_list->selected_item + offset;
+    /* Accelerated wheel input can request a very large jump. Keep the
+     * addition wide until it has been clamped to the actual list. */
+    long long requested = gui_list->selected_item + scaled_offset;
+    int new_selection;
     int remain = (gui_list->nb_items - gui_list->selected_size);
 
-    if (new_selection >= gui_list->nb_items)
+    if (requested >= gui_list->nb_items)
     {
         new_selection = allow_wrap ? 0 : remain;
         edge_beep(gui_list, allow_wrap);
     }
-    else if (new_selection < 0)
+    else if (requested < 0)
     {
         new_selection = allow_wrap ? remain : 0;
         edge_beep(gui_list, allow_wrap);
     }
+    else
+        new_selection = (int)requested;
 
     gui_synclist_select_item(gui_list, new_selection);
 }
