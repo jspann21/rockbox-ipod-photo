@@ -686,9 +686,10 @@ static void usb_storage_send_ata_identify(void)
 #ifdef HAVE_ATA_SMART
 static void usb_storage_send_smart(uint8_t cmd)
 {
-    ata_read_smart((struct ata_smart_values*) tb.transfer_buffer, cmd);
+    int result = ata_read_smart((struct ata_smart_values*) tb.transfer_buffer,
+                                cmd);
     cur_cmd.count = 0;
-    cur_cmd.last_result = 0;
+    cur_cmd.last_result = result;
     cur_cmd.data[0] = tb.transfer_buffer;
     send_block_data(cur_cmd.data[0], 512);
 }
