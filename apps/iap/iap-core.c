@@ -1345,12 +1345,29 @@ void iap_handlepkt(void)
          * This needs to be done with interrupts disabled, to make
          * sure the buffer and the pointers into it are handled
          * cleanly
-         */
+        */
         level = disable_irq_save();
-        memmove(iap_rxstart, iap_rxstart+(length+2), (RX_BUFLEN+2)-(length+2));
-        iap_rxnext -= (length+2);
-        iap_rxpayload -= (length+2);
-        iap_rxlen += (length+2);
+        {
+            size_t consumed = (size_t)length + 2;
+            ptrdiff_t buffered = iap_rxnext - iap_rxstart;
+            ptrdiff_t complete = iap_rxpayload - iap_rxstart;
+
+            if (buffered < 0 || complete < 0 ||
+                (size_t)buffered < consumed || (size_t)complete < consumed)
+            {
+                /* A concurrent buffer reset or corrupt length invalidated
+                 * this packet. Drop queued data and resume framing cleanly. */
+                iap_reset_buffers();
+                restore_irq(level);
+                return;
+            }
+
+            memmove(iap_rxstart, iap_rxstart + consumed,
+                    (size_t)buffered - consumed);
+            iap_rxnext -= consumed;
+            iap_rxpayload -= consumed;
+            iap_rxlen += consumed;
+        }
         restore_irq(level);
 
         /* poke the poweroff timer */
