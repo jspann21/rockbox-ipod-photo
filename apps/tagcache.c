@@ -5631,8 +5631,14 @@ static bool check_dir(const char *dirname, int add_files)
 
         struct dirinfo info = dir_get_info(dir, entry);
         size_t len = strlen(curpath);
-        path_append(&curpath[len-1], PA_SEP_HARD, entry->d_name,
-                    sizeof (curpath) - len);
+        size_t append_size = sizeof(curpath) - len;
+        if (path_append(&curpath[len-1], PA_SEP_HARD, entry->d_name,
+                        append_size) >= append_size)
+        {
+            str_setlen(curpath, len);
+            logf("tagcache: path too long in %s", dirname);
+            continue;
+        }
 
         processed_dir_count++;
         if (info.attribute & ATTR_DIRECTORY)
