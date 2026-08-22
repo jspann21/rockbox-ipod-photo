@@ -39,7 +39,7 @@ static struct adc_struct adcdata[NUM_ADC_CHANNELS] IDATA_ATTR;
 static unsigned short _adc_read(struct adc_struct *adc)
 {
     if (TIME_AFTER(current_tick, adc->timeout)) {
-        unsigned char data[2];
+        unsigned char data[2] = {0};
         unsigned short value;
 
         i2c_lock();
@@ -49,7 +49,11 @@ static unsigned short _adc_read(struct adc_struct *adc)
 
         /* ADCC1, 10 bit, start */
         pcf50605_write(0x2f, (adc->channelnum << 1) | 0x1);
-        pcf50605_read_multiple(0x30, data, 2); /* ADCS1, ADCS2 */
+        if (pcf50605_read_multiple(0x30, data, 2) != 0)
+        {
+            i2c_unlock();
+            return adc->data;
+        }
         value   = data[0];
         value <<= 2;
         value  |= data[1] & 0x3;
