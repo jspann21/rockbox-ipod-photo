@@ -256,7 +256,9 @@ bool disk_init(IF_MD_NONVOID(int drive))
 #endif
 
             for (unsigned int i = 0 ; i < (sizeof(try_gpt) / sizeof(try_gpt[0])) ; i++) {
-                storage_read_sectors(IF_MD(drive,) try_gpt[i], 1, sector);
+                if (try_gpt[i] >= num_sectors ||
+                    storage_read_sectors(IF_MD(drive,) try_gpt[i], 1, sector) < 0)
+                    continue;
                 part_lba = BYTES2INT64(ptr, 0);
                 if (part_lba == 0x5452415020494645ULL) {
                     part_entries = 1;
@@ -293,9 +295,33 @@ bool disk_init(IF_MD_NONVOID(int drive))
 	    part_entries = BYTES2INT32(ptr, 80);
 	    part_entry_size = BYTES2INT32(ptr, 84);
 
+            if (part_entry_size < 56 ||
+                part_entry_size > LOG_SECTOR_SIZE(drive) ||
+                LOG_SECTOR_SIZE(drive) % part_entry_size != 0 ||
+                part_entries == 0 || part_entries > 4096 ||
+                part_lba >= num_sectors)
+            {
+                DEBUGF("GPT: Invalid partition table geometry\n");
+                break;
+            }
+
+            uint64_t table_bytes = (uint64_t)part_entries * part_entry_size;
+            uint64_t table_sectors =
+                (table_bytes + LOG_SECTOR_SIZE(drive) - 1) /
+                LOG_SECTOR_SIZE(drive);
+            if (table_sectors > num_sectors - part_lba)
+            {
+                DEBUGF("GPT: Partition table extends beyond device\n");
+                break;
+            }
+
 	    int part = 0;
 reload:
-	    storage_read_sectors(IF_MD(drive,) part_lba, 1, sector);
+	    if (storage_read_sectors(IF_MD(drive,) part_lba, 1, sector) < 0)
+            {
+                DEBUGF("GPT: Failed reading partition table\n");
+                break;
+            }
             uint8_t *pptr = ptr;
             while (part < MAX_PARTITIONS_PER_DRIVE && part_entries) {
                 if (pptr - ptr >= LOG_SECTOR_SIZE(drive)) {
@@ -347,7 +373,7 @@ reload:
                     goto skip;
                 }
 #endif
-                if (tmp <= pinfo[part].start) {
+                if (tmp < pinfo[part].start || tmp >= num_sectors) {
                     DEBUGF("GPT: Invalid end LBA\n");
                     goto skip;
                 }
@@ -410,6 +436,10 @@ int disk_mount(int drive)
         return 0;
     }
 
+    struct storage_info storage_info;
+    storage_get_info(IF_MD_DRV(drive), &storage_info);
+    sector_t drive_sectors = storage_info.num_sectors;
+
     struct partinfo *pinfo = &part[IF_MD_DRV(drive)*MAX_PARTITIONS_PER_DRIVE];
 #ifdef MAX_VIRT_SECTOR_SIZE
     disk_sector_multiplier[IF_MD_DRV(drive)] = 1;
@@ -418,7 +448,7 @@ int disk_mount(int drive)
     /* try "superfloppy" mode */
     DEBUGF("Trying to mount sector 0.\n");
 
-    if (!fat_mount(IF_MV(volume,) IF_MD(drive,) 0))
+    if (!fat_mount(IF_MV(volume,) IF_MD(drive,) 0, drive_sectors))
     {
 #ifdef MAX_VIRT_SECTOR_SIZE
         disk_sector_multiplier[drive] = fat_get_bytes_per_sector(IF_MV(volume)) / LOG_SECTOR_SIZE(drive);
@@ -451,7 +481,11 @@ int disk_mount(int drive)
 #ifdef MAX_VIRT_SECTOR_SIZE
             for (int j = 1; j <= (MAX_VIRT_SECTOR_SIZE/LOG_SECTOR_SIZE(drive)); j <<= 1)
             {
-                if (!fat_mount(IF_MV(volume,) IF_MD(drive,) pinfo[i].start * j))
+                if (pinfo[i].start > drive_sectors / j ||
+                    pinfo[i].size > drive_sectors / j - pinfo[i].start)
+                    continue;
+                if (!fat_mount(IF_MV(volume,) IF_MD(drive,)
+                               pinfo[i].start * j, pinfo[i].size * j))
                 {
                     pinfo[i].start *= j;
                     pinfo[i].size *= j;
@@ -468,7 +502,14 @@ int disk_mount(int drive)
                 }
             }
 #else /* ndef MAX_VIRT_SECTOR_SIZE */
-            if (!fat_mount(IF_MV(volume,) IF_MD(drive,) pinfo[i].start))
+            if (pinfo[i].start >= drive_sectors || pinfo[i].size == 0 ||
+                pinfo[i].size > drive_sectors - pinfo[i].start)
+            {
+                DEBUGF("Partition %d extends beyond the device\n", i);
+                continue;
+            }
+            if (!fat_mount(IF_MV(volume,) IF_MD(drive,) pinfo[i].start,
+                           pinfo[i].size))
             {
                 mounted++;
                 init_volume(&volumes[volume], drive, i);

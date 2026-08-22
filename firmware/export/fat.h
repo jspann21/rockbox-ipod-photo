@@ -173,7 +173,8 @@ void fat_rewinddir(struct fat_dirscan_info *scan);
 
 /** Mounting and unmounting functions **/
 bool fat_ismounted(IF_MV_NONVOID(int volume));
-int fat_mount(IF_MV(int volume,) IF_MD(int drive,) unsigned long startsector);
+int fat_mount(IF_MV(int volume,) IF_MD(int drive,) sector_t startsector,
+              sector_t sector_count);
 int fat_unmount(IF_MV_NONVOID(int volume));
 
 /** Debug screen stuff **/

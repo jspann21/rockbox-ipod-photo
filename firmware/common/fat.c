@@ -242,6 +242,7 @@ static struct bpb
     unsigned long rootdirsector;
     unsigned long firstdatasector;
     sector_t startsector;
+    sector_t sector_count;
     unsigned long dataclusters;
     unsigned long fatrgnstart;
     unsigned long fatrgnend;
@@ -837,7 +838,7 @@ static unsigned long cluster2sec(struct bpb *fat_bpb, long cluster)
     }
     else
 #endif /* HAVE_FAT16SUPPORT */
-    if ((unsigned long)cluster > fat_bpb->dataclusters + 1)
+    if (cluster < 2 || (unsigned long)cluster > fat_bpb->dataclusters + 1)
     {
         DEBUGF( "%s() - Bad cluster number (%ld)\n", __func__, cluster);
         return 0;
@@ -853,6 +854,9 @@ static long get_next_cluster16(struct bpb *fat_bpb, long startcluster)
     /* if FAT16 root dir, dont use the FAT */
     if (startcluster < 0)
         return startcluster + 1;
+    if (startcluster < 2 ||
+        (unsigned long)startcluster > fat_bpb->dataclusters + 1)
+        return -1;
 
     unsigned long entry = startcluster;
     unsigned long sector = entry / CLUSTERS_PER_FAT16_SECTOR;
@@ -873,6 +877,8 @@ static long get_next_cluster16(struct bpb *fat_bpb, long startcluster)
     /* is this last cluster in chain? */
     if (next >= FAT16_EOF_MARK)
         next = 0;
+    else if (next < 2 || (unsigned long)next > fat_bpb->dataclusters + 1)
+        next = -1;
 
     dc_unlock_cache();
     return next;
@@ -999,6 +1005,9 @@ static void fat_recalc_free_internal16(struct bpb *fat_bpb)
 
 static void update_fsinfo32(struct bpb *fat_bpb)
 {
+    if (fat_bpb->bpb_fsinfo == 0)
+        return;
+
     uint8_t *fsinfo = cache_sector(fat_bpb, fat_bpb->bpb_fsinfo);
     if (!fsinfo)
     {
@@ -1013,6 +1022,10 @@ static void update_fsinfo32(struct bpb *fat_bpb)
 
 static long get_next_cluster32(struct bpb *fat_bpb, long startcluster)
 {
+    if (startcluster < 2 ||
+        (unsigned long)startcluster > fat_bpb->dataclusters + 1)
+        return -1;
+
     unsigned long entry = startcluster;
     unsigned long sector = entry / CLUSTERS_PER_FAT_SECTOR;
     unsigned long offset = entry % CLUSTERS_PER_FAT_SECTOR;
@@ -1032,6 +1045,8 @@ static long get_next_cluster32(struct bpb *fat_bpb, long startcluster)
     /* is this last cluster in chain? */
     if (next >= FAT_EOF_MARK)
         next = 0;
+    else if (next < 2 || (unsigned long)next > fat_bpb->dataclusters + 1)
+        next = -1;
 
     dc_unlock_cache();
     return next;
@@ -1175,17 +1190,24 @@ static int fat_mount_internal(struct bpb *fat_bpb)
     }
 
     fat_bpb->bpb_bytspersec = BYTES2INT16(buf, BPB_BYTSPERSEC);
+    if (fat_bpb->bpb_bytspersec < LOG_SECTOR_SIZE(fat_bpb) ||
+        fat_bpb->bpb_bytspersec % LOG_SECTOR_SIZE(fat_bpb))
+        FAT_ERROR(-3);
     unsigned long secmult = fat_bpb->bpb_bytspersec / LOG_SECTOR_SIZE(fat_bpb);
-    /* Sanity check is performed later */
+
+    uint32_t fatsz32 = BYTES2INT32(buf, BPB_FATSZ32);
+    uint32_t totsec32 = BYTES2INT32(buf, BPB_TOTSEC32);
+    if (fatsz32 > ULONG_MAX / secmult || totsec32 > ULONG_MAX / secmult)
+        FAT_ERROR(-4);
 
     fat_bpb->bpb_secperclus = secmult * buf[BPB_SECPERCLUS];
     fat_bpb->bpb_rsvdseccnt = secmult * BYTES2INT16(buf, BPB_RSVDSECCNT);
     fat_bpb->bpb_numfats    = buf[BPB_NUMFATS];
     fat_bpb->bpb_media      = buf[BPB_MEDIA];
     fat_bpb->bpb_fatsz16    = secmult * BYTES2INT16(buf, BPB_FATSZ16);
-    fat_bpb->bpb_fatsz32    = secmult * BYTES2INT32(buf, BPB_FATSZ32);
+    fat_bpb->bpb_fatsz32    = secmult * fatsz32;
     fat_bpb->bpb_totsec16   = secmult * BYTES2INT16(buf, BPB_TOTSEC16);
-    fat_bpb->bpb_totsec32   = secmult * BYTES2INT32(buf, BPB_TOTSEC32);
+    fat_bpb->bpb_totsec32   = secmult * totsec32;
     fat_bpb->last_word      = BYTES2INT16(buf, BPB_LAST_WORD);
 
     /* calculate a few commonly used values */
@@ -1202,6 +1224,11 @@ static int fat_mount_internal(struct bpb *fat_bpb)
     else
         fat_bpb->totalsectors = fat_bpb->bpb_totsec32;
 
+    if (fat_bpb->totalsectors == 0 ||
+        (fat_bpb->sector_count != 0 &&
+         fat_bpb->totalsectors > fat_bpb->sector_count))
+        FAT_ERROR(-5);
+
     unsigned int rootdirsectors = 0;
 #ifdef HAVE_FAT16SUPPORT
     fat_bpb->bpb_rootentcnt = BYTES2INT16(buf, BPB_ROOTENTCNT);
@@ -1213,9 +1240,14 @@ static int fat_mount_internal(struct bpb *fat_bpb)
                      + fat_bpb->bpb_bytspersec - 1) / fat_bpb->bpb_bytspersec);
 #endif /* HAVE_FAT16SUPPORT */
 
-    fat_bpb->firstdatasector = fat_bpb->bpb_rsvdseccnt
-        + fat_bpb->bpb_numfats * fat_bpb->fatsize
-        + rootdirsectors;
+    uint64_t firstdatasector = fat_bpb->bpb_rsvdseccnt +
+        (uint64_t)fat_bpb->bpb_numfats * fat_bpb->fatsize +
+        rootdirsectors;
+    if (fat_bpb->bpb_rsvdseccnt == 0 || fat_bpb->bpb_numfats == 0 ||
+        fat_bpb->fatsize == 0 || firstdatasector > ULONG_MAX ||
+        firstdatasector >= fat_bpb->totalsectors)
+        FAT_ERROR(-6);
+    fat_bpb->firstdatasector = firstdatasector;
 
     /* Determine FAT type */
     unsigned long datasec = fat_bpb->totalsectors - fat_bpb->firstdatasector;
@@ -1267,7 +1299,12 @@ static int fat_mount_internal(struct bpb *fat_bpb)
     {
         /* FAT32 specific part of BPB */
         fat_bpb->bpb_rootclus  = BYTES2INT32(buf, BPB_ROOTCLUS);
-        fat_bpb->bpb_fsinfo    = secmult * BYTES2INT16(buf, BPB_FSINFO);
+        unsigned long fsinfo_sector = BYTES2INT16(buf, BPB_FSINFO);
+        fat_bpb->bpb_fsinfo = fsinfo_sector <= ULONG_MAX / secmult ?
+                              secmult * fsinfo_sector : 0;
+        if (fat_bpb->bpb_rootclus < 2 ||
+            (unsigned long)fat_bpb->bpb_rootclus > fat_bpb->dataclusters + 1)
+            FAT_ERROR(-7);
         fat_bpb->rootdirsector = cluster2sec(fat_bpb, fat_bpb->bpb_rootclus);
     }
 
@@ -1287,27 +1324,36 @@ static int fat_mount_internal(struct bpb *fat_bpb)
     else
 #endif /* HAVE_FAT16SUPPORT */
     {
-        /* Read the fsinfo sector */
-        rc = storage_read_sectors(IF_MD(fat_bpb->drive,)
-                fat_bpb->startsector + fat_bpb->bpb_fsinfo, 1, buf);
+        fat_bpb->fsinfo.freecount = 0xffffffff;
+        fat_bpb->fsinfo.nextfree = 0xffffffff;
 
-        if (rc < 0)
+        /* FSInfo is an optional hint. Mount and recalculate if it is absent,
+         * outside the reserved region, unreadable, or stale. */
+        if (fat_bpb->bpb_fsinfo > 0 &&
+            fat_bpb->bpb_fsinfo < fat_bpb->bpb_rsvdseccnt)
         {
-            DEBUGF("%s() - Couldn't read FSInfo"
-                   " (error code %d)\n", __func__, rc);
-            FAT_ERROR(rc * 10 - 8);
+            rc = storage_read_sectors(IF_MD(fat_bpb->drive,)
+                    fat_bpb->startsector + fat_bpb->bpb_fsinfo, 1, buf);
+            if (rc >= 0 &&
+                BYTES2INT32(buf, FSINFO_SIGNATURE) == FSINFO_SIGNATURE_VAL)
+            {
+                uint32_t freecount = BYTES2INT32(buf, FSINFO_FREECOUNT);
+                uint32_t nextfree = BYTES2INT32(buf, FSINFO_NEXTFREE);
+                if (freecount <= fat_bpb->dataclusters)
+                    fat_bpb->fsinfo.freecount = freecount;
+                if (nextfree >= 2 && nextfree <= fat_bpb->dataclusters + 1)
+                    fat_bpb->fsinfo.nextfree = nextfree;
+            }
+            else
+            {
+                DEBUGF("%s() - Ignoring invalid FSInfo\n", __func__);
+                fat_bpb->bpb_fsinfo = 0;
+            }
         }
-
-	/* Sanity check FS info */
-	long info = BYTES2INT32(buf, FSINFO_SIGNATURE);
-	if (info != FSINFO_SIGNATURE_VAL) {
-		DEBUGF("%s() FSInfo signature mismatch (%lx)\n",
-		       __func__, info);
-		FAT_ERROR(-9);
-	}
-
-        fat_bpb->fsinfo.freecount = BYTES2INT32(buf, FSINFO_FREECOUNT);
-        fat_bpb->fsinfo.nextfree = BYTES2INT32(buf, FSINFO_NEXTFREE);
+        else
+        {
+            fat_bpb->bpb_fsinfo = 0;
+        }
     }
 
 #ifdef HAVE_FAT16SUPPORT
@@ -1382,6 +1428,9 @@ static long next_write_cluster(struct bpb *fat_bpb, long oldcluster)
     if (oldcluster)
         cluster = get_next_cluster(fat_bpb, oldcluster);
 
+    if (cluster < 0)
+        return -1;
+
     if (!cluster)
     {
         /* passed end of existing entries and now need to append */
@@ -1401,10 +1450,14 @@ static long next_write_cluster(struct bpb *fat_bpb, long oldcluster)
         if (cluster)
         {
             /* create the cluster chain */
-            if (oldcluster)
-                update_fat_entry(fat_bpb, oldcluster, cluster);
-
-            update_fat_entry(fat_bpb, cluster, FAT_EOF_MARK);
+            if (update_fat_entry(fat_bpb, cluster, FAT_EOF_MARK) < 0)
+                cluster = -1;
+            else if (oldcluster &&
+                     update_fat_entry(fat_bpb, oldcluster, cluster) < 0)
+            {
+                update_fat_entry(fat_bpb, cluster, 0);
+                cluster = -1;
+            }
         }
         else
         {
@@ -1433,10 +1486,12 @@ static int fat_extend_dir(struct bpb *fat_bpb, struct fat_filestr *dirstr)
     long cluster    = dirstr->lastcluster;
     long newcluster = next_write_cluster(fat_bpb, cluster);
 
-    if (!newcluster)
+    if (newcluster <= 0)
     {
         /* no more room or something went wrong */
         DEBUGF("Out of space\n");
+        if (newcluster < 0)
+            FAT_ERROR(-1);
         FAT_ERROR(FAT_RC_ENOSPC);
     }
 
@@ -2017,6 +2072,8 @@ static int free_cluster_chain(struct bpb *fat_bpb, long startcluster)
     for (long last = startcluster, next; last; last = next)
     {
         next = get_next_cluster(fat_bpb, last);
+        if (next < 0)
+            return -1;
         int rc = update_fat_entry(fat_bpb, last, 0);
         if (LIKELY(rc >= 0 && !startcluster))
             continue;
@@ -2569,13 +2626,20 @@ long fat_readwrite(struct fat_filestr *filestr, unsigned long sectorcount,
         {
             /* file is empty; try to allocate its first cluster */
             newcluster = next_write_cluster(fat_bpb, 0);
-            file->firstcluster = newcluster;
+            if (newcluster > 0)
+                file->firstcluster = newcluster;
         }
+
+        if (newcluster < 0)
+            FAT_ERROR(-1);
 
         if (newcluster)
         {
             cluster = newcluster;
-            sector = cluster2sec(fat_bpb, cluster) - 1;
+            unsigned long cluster_sector = cluster2sec(fat_bpb, cluster);
+            if (cluster_sector == 0)
+                FAT_ERROR(-1);
+            sector = cluster_sector - 1;
 
         #ifdef HAVE_FAT16SUPPORT
             if (fat_bpb->is_fat16 && file->firstcluster < 0)
@@ -2604,10 +2668,15 @@ long fat_readwrite(struct fat_filestr *filestr, unsigned long sectorcount,
             /* out of sectors in this cluster; get the next cluster */
             long newcluster = write ? next_write_cluster(fat_bpb, cluster) :
                                       get_next_cluster(fat_bpb, cluster);
-            if (newcluster)
+            if (newcluster < 0)
+                FAT_ERROR(-1);
+            if (newcluster > 0)
             {
                 cluster = newcluster;
-                sector = cluster2sec(fat_bpb, cluster) - 1;
+                unsigned long cluster_sector = cluster2sec(fat_bpb, cluster);
+                if (cluster_sector == 0)
+                    FAT_ERROR(-1);
+                sector = cluster_sector - 1;
                 clusternum++;
                 sectornum = 0;
 
@@ -2732,6 +2801,9 @@ int fat_seek(struct fat_filestr *filestr, unsigned long seeksector)
         {
             cluster = get_next_cluster(fat_bpb, cluster);
 
+            if (cluster < 0)
+                FAT_ERROR(-1);
+
             if (!cluster)
             {
                 DEBUGF("Seeking beyond the end of the file! "
@@ -2740,7 +2812,10 @@ int fat_seek(struct fat_filestr *filestr, unsigned long seeksector)
             }
         }
 
-        sector = cluster2sec(fat_bpb, cluster) + sectornum;
+        unsigned long cluster_sector = cluster2sec(fat_bpb, cluster);
+        if (cluster_sector == 0)
+            FAT_ERROR(-1);
+        sector = cluster_sector + sectornum;
     }
 
     DEBUGF("%s(%lx, %lx) == %lx, %lx, %lx\n", __func__,
@@ -2773,6 +2848,8 @@ int fat_truncate(const struct fat_filestr *filestr)
     if (last)
     {
         next = get_next_cluster(fat_bpb, last);
+        if (next < 0)
+            FAT_ERROR(-1);
         int rc2 = update_fat_entry(fat_bpb, last, FAT_EOF_MARK);
         if (rc2 < 0)
             FAT_ERROR(rc2 * 10 - 2);
@@ -2935,7 +3012,8 @@ bool fat_ismounted(IF_MV_NONVOID(int volume))
     return !!FAT_BPB(volume);
 }
 
-int fat_mount(IF_MV(int volume,) IF_MD(int drive,) unsigned long startsector)
+int fat_mount(IF_MV(int volume,) IF_MD(int drive,) sector_t startsector,
+              sector_t sector_count)
 {
     int rc;
 
@@ -2944,7 +3022,9 @@ int fat_mount(IF_MV(int volume,) IF_MD(int drive,) unsigned long startsector)
         FAT_ERROR(-1); /* double mount */
 
     /* fill-in basic info first */
+    memset(fat_bpb, 0, sizeof(*fat_bpb));
     fat_bpb->startsector = startsector;
+    fat_bpb->sector_count = sector_count;
 #ifdef HAVE_MULTIVOLUME
     fat_bpb->volume      = volume;
 #endif
