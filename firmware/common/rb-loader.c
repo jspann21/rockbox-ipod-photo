@@ -46,6 +46,7 @@ static int load_firmware_filename(unsigned char* buf,
                                   int buffer_size)
 {
     int len;
+    off_t file_size;
     unsigned long chksum;
     int ret;
     int fd = open(filename, O_RDONLY);
@@ -53,17 +54,23 @@ static int load_firmware_filename(unsigned char* buf,
     if (fd < 0)
         return EFILE_NOT_FOUND;
 
-    len = filesize(fd) - 8;
+    file_size = filesize(fd);
+    if (file_size < 8)
+    {
+        ret = EREAD_CHKSUM_FAILED;
+        goto end;
+    }
 
-    if (len > buffer_size)
+    if (file_size - 8 > buffer_size)
     {
         ret = EFILE_TOO_BIG;
         goto end;
     }
+    len = file_size - 8;
 
     /* read 32-bit checksum followed by 4-byte model name,
      * this is the "scramble -add" header written by tools/scramble */
-    if (read(fd, buf, 8) < 8)
+    if (read(fd, buf, 8) != 8)
     {
         ret = EREAD_CHKSUM_FAILED;
         goto end;
@@ -71,7 +78,7 @@ static int load_firmware_filename(unsigned char* buf,
 
     chksum = load_be32(buf); /* Rockbox checksums are big-endian */
 
-    if (read(fd, buf, len) < len)
+    if (read(fd, buf, len) != len)
     {
         ret = EREAD_IMAGE_FAILED;
         goto end;
