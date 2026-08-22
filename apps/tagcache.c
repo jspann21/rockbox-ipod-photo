@@ -5050,7 +5050,21 @@ static bool load_tagcache(void)
         bytesleft -= sizeof (struct tagcache_header);
 
         fd = open_tag_fd(tch, tag, false);
-        if (fd < 0 || !tagcache_reader_init(&reader, fd))
+        if (fd < 0)
+            goto failure;
+
+        off_t tag_file_size = filesize(fd);
+        if (tch->entry_count < 0 || tch->datasize < 0 ||
+            tag_file_size < (off_t)sizeof(*tch) ||
+            tch->datasize > tag_file_size - (off_t)sizeof(*tch) ||
+            (size_t)tch->entry_count >
+                (size_t)tch->datasize / sizeof(struct tagfile_entry))
+        {
+            logf("invalid tag index dimensions: %d", tag);
+            goto failure;
+        }
+
+        if (!tagcache_reader_init(&reader, fd))
             goto failure;
 
         /* Load the entries for this tag */
