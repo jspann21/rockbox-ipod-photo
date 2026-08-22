@@ -365,6 +365,11 @@ void set_cpu_frequency(long frequency)
 static void pp_set_cpu_frequency(long frequency)
 #endif
 {
+    /* Avoid a full PLL reprogramming sequence when the requested clock is
+     * already active.  PP5020 transitions include a 500 us relock delay. */
+    if (frequency == cpu_frequency)
+        return;
+
     switch (frequency)
     {
       /* Note1: The PP5022 PLL must be run at >= 96MHz
