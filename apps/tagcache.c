@@ -6000,7 +6000,15 @@ static bool sealed_database_needs_rebuild(void)
     bool initial = db_file_exists(TAGCACHE_FILE_TEMP_DONE);
     bool update = db_file_exists(TAGCACHE_FILE_TEMP_UPDATE);
     if (!initial && !update)
-        return false;
+    {
+        if (!master_file_exists() || check_all_headers())
+            return false;
+
+        logf("invalid unsealed database; rebuilding");
+        remove_files();
+        remove_db_file(TAGCACHE_FILE_TEMP);
+        return true;
+    }
 
     struct master_header header;
     int fd = open_master_fd(&header, false);
