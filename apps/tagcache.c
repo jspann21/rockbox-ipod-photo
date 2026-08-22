@@ -2227,11 +2227,50 @@ bool tagcache_fill_tags(struct mp3entry *id3, const char *filename)
 }
 #endif /* defined(HAVE_TC_RAMCACHE) && defined(HAVE_DIRCACHE) */
 
+#define TEMPDB_WRITE_BUFSZ 4096
+static unsigned char tempdb_write_buf[TEMPDB_WRITE_BUFSZ];
+static size_t tempdb_write_used;
+
+static bool tempdb_flush(void)
+{
+    if (tempdb_write_used == 0)
+        return true;
+
+    if (write_exact(cachefd, tempdb_write_buf, tempdb_write_used) !=
+        (ssize_t)tempdb_write_used)
+    {
+        build_write_error = true;
+        return false;
+    }
+
+    tempdb_write_used = 0;
+    return true;
+}
+
+static bool tempdb_write(const void *data, size_t size)
+{
+    const unsigned char *src = data;
+
+    while (size > 0)
+    {
+        size_t copy = MIN(size, sizeof(tempdb_write_buf) - tempdb_write_used);
+        memcpy(tempdb_write_buf + tempdb_write_used, src, copy);
+        tempdb_write_used += copy;
+        src += copy;
+        size -= copy;
+
+        if (tempdb_write_used == sizeof(tempdb_write_buf) && !tempdb_flush())
+            return false;
+    }
+
+    return true;
+}
+
 static inline bool write_item(const char *item)
 {
     int len = strlen(item) + 1;
 
-    if (write_exact(cachefd, item, len) != len)
+    if (!tempdb_write(item, len))
     {
         build_write_error = true;
         return false;
@@ -2421,8 +2460,7 @@ static void NO_INLINE add_tagcache(char *path, unsigned long mtime)
     entry.data_length = offset;
 
     /* Write the header. */
-    if (write_exact(cachefd, &entry, sizeof(struct temp_file_entry)) !=
-        sizeof(struct temp_file_entry))
+    if (!tempdb_write(&entry, sizeof(struct temp_file_entry)))
     {
         build_write_error = true;
         return;
@@ -5066,6 +5104,7 @@ void do_tagcache_build(const char *path[])
     total_entry_count = 0;
     processed_dir_count = 0;
     build_write_error = false;
+    tempdb_write_used = 0;
 
 #ifdef HAVE_DIRCACHE
     dircache_wait();
@@ -5184,7 +5223,8 @@ void do_tagcache_build(const char *path[])
     header.magic = TAGCACHE_MAGIC;
     header.datasize = data_size;
     header.entry_count = total_entry_count;
-    if (lseek(cachefd, 0, SEEK_SET) < 0 ||
+    if (!tempdb_flush() ||
+        lseek(cachefd, 0, SEEK_SET) < 0 ||
         write_tagcache_header(cachefd, &header) != sizeof(header) ||
         fsync(cachefd) < 0)
     {
