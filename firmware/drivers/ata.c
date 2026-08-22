@@ -1062,7 +1062,11 @@ static int set_features(void)
                 return -10 - i;
             }
 
-            if((ATA_IN8(ATA_ALT_STATUS) & STATUS_ERR) && (features[i].subcommand != 0x05)) {
+            uint8_t status = ATA_IN8(ATA_ALT_STATUS);
+            if (status & STATUS_DF)
+                return -20 - i;
+
+            if((status & STATUS_ERR) && (features[i].subcommand != 0x05)) {
                 /* some CF cards don't like advanced powermanagement
                    even if they mark it as supported - go figure... */
                 if(ATA_IN8(ATA_ERROR) & ERROR_ABRT) {
