@@ -1738,7 +1738,7 @@ static char* get_track_name(const int track_index)
 #if PF_PLAYBACK_CAPABLE
 static char* get_track_filename(const int track_index)
 {
-    if ( track_index < pf_tracks.count )
+    if (track_index >= 0 && track_index < pf_tracks.count)
         return pf_tracks.names + pf_tracks.index[track_index].filename_idx;
     return 0;
 }
