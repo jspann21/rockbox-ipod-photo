@@ -108,8 +108,14 @@
 /* Allow a little drift to the filename ordering (should not be too high/low). */
 #define POS_HISTORY_COUNT 4
 
-/* How much to pre-load entries while committing to prevent seeking. */
+/* How much to pre-load entries while committing to prevent seeking. Targets
+ * with more memory also give the tagcache worker an enlarged stack, so use it
+ * to cut master-index I/O in half without penalizing low-memory players. */
+#if MEMORYSIZE >= 32
+#define IDX_BUF_DEPTH 128
+#else
 #define IDX_BUF_DEPTH 64
+#endif
 
 /* Tag Cache Header version 'TCHxx'. Increment when changing internal structures. */
 #define TAGCACHE_MAGIC  0x54434810
