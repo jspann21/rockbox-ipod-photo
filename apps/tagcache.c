@@ -63,6 +63,9 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <limits.h>
+#ifdef __PCTOOL__
+#include <time.h>
+#endif
 #ifdef APPLICATION
 #include <unistd.h> /* readlink() */
 #endif
@@ -162,6 +165,10 @@
 
 /* ASCII dumpfile of the DB contents. */
 #define TAGCACHE_FILE_CHANGELOG  "database_changelog.txt"
+
+/* Compact performance summary written once after a database build. */
+#define TAGCACHE_FILE_PROFILE      "database-build.log"
+#define TAGCACHE_FILE_PROFILE_TEMP "database-build.tmp"
 
 /* Serialized DB. */
 #define TAGCACHE_STATEFILE       "database_state.tcd"
@@ -1247,6 +1254,167 @@ static bool do_timed_yield(void)
     return false;
 }
 #endif /* __PCTOOL__ */
+
+struct tagcache_build_profile
+{
+    bool active;
+    bool initial_build;
+    long started;
+    unsigned long scan_ticks;
+    unsigned long metadata_ticks;
+    unsigned long temp_write_ticks;
+    unsigned long checkpoint_ticks;
+    unsigned long commit_ticks;
+    unsigned long index_ticks[TAG_COUNT];
+    unsigned long numeric_ticks;
+    unsigned long filesystem_entries;
+    unsigned long directories_scanned;
+    unsigned long files_seen;
+    unsigned long files_supported;
+    unsigned long files_unsupported;
+    unsigned long files_unchanged;
+    unsigned long files_updated;
+    unsigned long files_indexed;
+    unsigned long files_ignored;
+    unsigned long metadata_errors;
+    unsigned long path_errors;
+    unsigned long file_errors;
+    unsigned long checkpoints;
+    unsigned long temp_bytes_written;
+};
+
+static struct tagcache_build_profile build_profile;
+static char build_profile_buffer[2048];
+
+static long build_profile_now(void)
+{
+#ifdef __PCTOOL__
+    return (long)(((uint64_t)clock() * HZ) / CLOCKS_PER_SEC);
+#else
+    return current_tick;
+#endif
+}
+
+static unsigned long build_profile_elapsed(long started)
+{
+    return (unsigned long)(build_profile_now() - started);
+}
+
+static unsigned long build_profile_milliseconds(unsigned long ticks)
+{
+    return (ticks / HZ) * 1000 + (ticks % HZ) * 1000 / HZ;
+}
+
+static void build_profile_start(void)
+{
+    memset(&build_profile, 0, sizeof(build_profile));
+    build_profile.active = true;
+    build_profile.started = build_profile_now();
+}
+
+static bool build_profile_write(const char *status)
+{
+    unsigned long total_ticks = build_profile_elapsed(build_profile.started);
+    char *p = build_profile_buffer;
+    size_t remaining = sizeof(build_profile_buffer);
+    bool error = false;
+
+#define PROFILE_APPEND(...) do { \
+        int length = snprintf(p, remaining, __VA_ARGS__); \
+        if (length < 0 || (size_t)length >= remaining) \
+            error = true; \
+        else { p += length; remaining -= length; } \
+    } while (0)
+
+    PROFILE_APPEND("format: 1\n");
+    PROFILE_APPEND("target: %s\n", MODEL_NAME);
+    PROFILE_APPEND("status: %s\n", status);
+    PROFILE_APPEND("build_type: %s\n",
+                   build_profile.initial_build ? "initial" : "update");
+    PROFILE_APPEND("total_ms: %lu\n",
+                   build_profile_milliseconds(total_ticks));
+    PROFILE_APPEND("scan_ms: %lu\n",
+                   build_profile_milliseconds(build_profile.scan_ticks));
+    PROFILE_APPEND("metadata_ms: %lu\n",
+                   build_profile_milliseconds(build_profile.metadata_ticks));
+    PROFILE_APPEND("temporary_write_ms: %lu\n",
+                   build_profile_milliseconds(build_profile.temp_write_ticks));
+    PROFILE_APPEND("checkpoint_ms: %lu\n",
+                   build_profile_milliseconds(build_profile.checkpoint_ticks));
+    PROFILE_APPEND("commit_ms: %lu\n",
+                   build_profile_milliseconds(build_profile.commit_ticks));
+    PROFILE_APPEND("numeric_index_ms: %lu\n",
+                   build_profile_milliseconds(build_profile.numeric_ticks));
+    PROFILE_APPEND("filesystem_entries: %lu\n",
+                   build_profile.filesystem_entries);
+    PROFILE_APPEND("directories_scanned: %lu\n",
+                   build_profile.directories_scanned);
+    PROFILE_APPEND("files_seen: %lu\n", build_profile.files_seen);
+    PROFILE_APPEND("files_supported: %lu\n", build_profile.files_supported);
+    PROFILE_APPEND("files_unsupported: %lu\n",
+                   build_profile.files_unsupported);
+    PROFILE_APPEND("files_unchanged: %lu\n", build_profile.files_unchanged);
+    PROFILE_APPEND("files_updated: %lu\n", build_profile.files_updated);
+    PROFILE_APPEND("files_indexed: %lu\n", build_profile.files_indexed);
+    PROFILE_APPEND("files_ignored: %lu\n", build_profile.files_ignored);
+    PROFILE_APPEND("metadata_errors: %lu\n", build_profile.metadata_errors);
+    PROFILE_APPEND("path_errors: %lu\n", build_profile.path_errors);
+    PROFILE_APPEND("file_errors: %lu\n", build_profile.file_errors);
+    PROFILE_APPEND("checkpoints: %lu\n", build_profile.checkpoints);
+    PROFILE_APPEND("temporary_bytes_written: %lu\n",
+                   build_profile.temp_bytes_written);
+    PROFILE_APPEND("temporary_entries: %d\n", total_entry_count);
+    PROFILE_APPEND("temporary_bytes: %d\n", data_size);
+    PROFILE_APPEND("database_entries: %" PRId32 "\n",
+                   current_tcmh.tch.entry_count);
+    PROFILE_APPEND("database_bytes: %" PRId32 "\n",
+                   current_tcmh.tch.datasize);
+
+    for (int tag = 0; tag < TAG_COUNT && !error; tag++)
+    {
+        if (!TAGCACHE_IS_NUMERIC(tag))
+            PROFILE_APPEND("index_%s_ms: %lu\n", tags_str[tag],
+                build_profile_milliseconds(build_profile.index_ticks[tag]));
+    }
+
+#undef PROFILE_APPEND
+
+    if (error)
+        return false;
+
+    int fd = open_db_fd(TAGCACHE_FILE_PROFILE_TEMP,
+                        O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd < 0)
+        return false;
+
+    size_t report_size = p - build_profile_buffer;
+    if (write_exact(fd, build_profile_buffer, report_size) !=
+        (ssize_t)report_size)
+        error = true;
+    if (sync_file(fd) < 0)
+        error = true;
+    if (close(fd) < 0)
+        error = true;
+
+    if (error || rename_db_file(TAGCACHE_FILE_PROFILE_TEMP,
+                                TAGCACHE_FILE_PROFILE) < 0)
+    {
+        remove_db_file(TAGCACHE_FILE_PROFILE_TEMP);
+        return false;
+    }
+
+    return true;
+}
+
+static void build_profile_finish(const char *status)
+{
+    if (!build_profile.active)
+        return;
+
+    build_profile.active = false;
+    if (!build_profile_write(status))
+        logf("database profile write failed");
+}
 
 static void allocate_tempbuf(void)
 {
@@ -2703,13 +2871,17 @@ static bool tempdb_flush(void)
     if (tempdb_write_used == 0)
         return true;
 
-    if (write_exact(cachefd, tempdb_write_buf, tempdb_write_used) !=
-        (ssize_t)tempdb_write_used)
+    size_t write_size = tempdb_write_used;
+    long write_started = build_profile_now();
+    ssize_t rc = write_exact(cachefd, tempdb_write_buf, write_size);
+    build_profile.temp_write_ticks += build_profile_elapsed(write_started);
+    if (rc != (ssize_t)write_size)
     {
         build_write_error = true;
         return false;
     }
 
+    build_profile.temp_bytes_written += write_size;
     tempdb_write_used = 0;
     return true;
 }
@@ -2735,8 +2907,13 @@ static bool tempdb_write(const void *data, size_t size)
 
 static bool tempdb_checkpoint(void)
 {
+    long checkpoint_started = build_profile_now();
     if (!tempdb_flush())
+    {
+        build_profile.checkpoint_ticks +=
+            build_profile_elapsed(checkpoint_started);
         return false;
+    }
 
     off_t end = lseek(cachefd, 0, SEEK_CUR);
     struct tagcache_header header = {
@@ -2750,9 +2927,12 @@ static bool tempdb_checkpoint(void)
         sync_file(cachefd) < 0 || lseek(cachefd, end, SEEK_SET) < 0)
     {
         build_write_error = true;
+        build_profile.checkpoint_ticks +=
+            build_profile_elapsed(checkpoint_started);
         return false;
     }
 
+    build_profile.checkpoint_ticks += build_profile_elapsed(checkpoint_started);
     return true;
 }
 
@@ -2839,13 +3019,18 @@ static void NO_INLINE add_tagcache(char *path, unsigned long mtime)
         /* Path can't be shortened. */
         logf("Too long path: %s", path);
         DB_LOG("error", "path too long");
+        build_profile.path_errors++;
         return ;
     }
 
     /* Check if the file is supported. */
     int afmt = probe_file_format(path);
     if (afmt == AFMT_UNKNOWN)
+    {
+        build_profile.files_unsupported++;
         return;
+    }
+    build_profile.files_supported++;
 
     /* Check if the file is already cached. */
 #if defined(HAVE_TC_RAMCACHE) && defined(HAVE_DIRCACHE)
@@ -2868,12 +3053,14 @@ static void NO_INLINE add_tagcache(char *path, unsigned long mtime)
         {
             logf("failed to retrieve index entry");
             DB_LOG("error", "failed to retrieve index entry");
+            build_profile.file_errors++;
             return ;
         }
 
         if ((unsigned long)idx.tag_seek[tag_mtime] == mtime)
         {
             /* No changes to file. */
+            build_profile.files_unchanged++;
             return ;
         }
 
@@ -2884,19 +3071,24 @@ static void NO_INLINE add_tagcache(char *path, unsigned long mtime)
         {
             logf("delete_entry failed: %d", idx_id);
             DB_LOG("error", "delete entry failed");
+            build_profile.file_errors++;
             return ;
         }
+        build_profile.files_updated++;
     }
 
     /*memset(&id3, 0, sizeof(struct mp3entry)); -- get_metadata does this for us */
     memset(&entry, 0, sizeof(struct temp_file_entry));
     memset(&tracknumfix, 0, sizeof(tracknumfix));
+    long metadata_started = build_profile_now();
     ret = get_metadata_afmt(&id3, -1, path, afmt, METADATA_EXCLUDE_ID3_PATH);
+    build_profile.metadata_ticks += build_profile_elapsed(metadata_started);
 
     if (!ret)
     {
         logf("get_metadata failed: %s", path);
         DB_LOG("error", "get_metadata failed");
+        build_profile.metadata_errors++;
         return ;
     }
 
@@ -2987,6 +3179,7 @@ static void NO_INLINE add_tagcache(char *path, unsigned long mtime)
     }
 
     total_entry_count++;
+    build_profile.files_indexed++;
 
     #undef ADD_TAG
 }
@@ -4167,7 +4360,15 @@ static bool commit(void)
             continue;
 
         tc_stat.commit_step++;
+#if !defined(PLUGIN)
+        long index_started = build_profile_now();
+#endif
         ret = build_index(i, &tch, tmpfd);
+#if !defined(PLUGIN)
+        if (build_profile.active)
+            build_profile.index_ticks[i] +=
+                build_profile_elapsed(index_started);
+#endif
         if (ret <= 0)
         {
             close(tmpfd);
@@ -4181,7 +4382,15 @@ static bool commit(void)
         do_timed_yield();
     }
 
-    if (!build_numeric_indices(&tch, tmpfd))
+#if !defined(PLUGIN)
+    long numeric_started = build_profile_now();
+#endif
+    bool numeric_ok = build_numeric_indices(&tch, tmpfd);
+#if !defined(PLUGIN)
+    if (build_profile.active)
+        build_profile.numeric_ticks += build_profile_elapsed(numeric_started);
+#endif
+    if (!numeric_ok)
     {
         logf("Failure to commit numeric indices");
         close(tmpfd);
@@ -5779,8 +5988,10 @@ static bool check_dir(const char *dirname, int add_files)
     if (!dir)
     {
         logf("tagcache: opendir(%s) failed", dirname);
+        build_profile.file_errors++;
         return false;
     }
+    build_profile.directories_scanned++;
 
     /* check for a database.ignore and database.unignore */
     int ignore, unignore;
@@ -5803,6 +6014,7 @@ static bool check_dir(const char *dirname, int add_files)
         if (is_dotdir_name(entry->d_name))
             continue;
 
+        build_profile.filesystem_entries++;
         struct dirinfo info = dir_get_info(dir, entry);
         size_t len = strlen(curpath);
         size_t append_size = sizeof(curpath) - len;
@@ -5811,6 +6023,7 @@ static bool check_dir(const char *dirname, int add_files)
         {
             str_setlen(curpath, len);
             logf("tagcache: path too long in %s", dirname);
+            build_profile.path_errors++;
             continue;
         }
 
@@ -5829,6 +6042,7 @@ static bool check_dir(const char *dirname, int add_files)
         }
         else if (add_files)
         {
+            build_profile.files_seen++;
             tc_stat.curentry = curpath;
 
             /* Add a new entry to the temporary db file. */
@@ -5847,6 +6061,7 @@ static bool check_dir(const char *dirname, int add_files)
             if (!build_write_error && checkpoint_due && tempdb_checkpoint())
             {
                 checkpointed_entry_count = total_entry_count;
+                build_profile.checkpoints++;
 #ifndef __PCTOOL__
                 tempdb_checkpoint_tick = current_tick;
 #endif
@@ -5863,6 +6078,11 @@ static bool check_dir(const char *dirname, int add_files)
                 yield();
 
             tc_stat.curentry = NULL;
+        }
+        else
+        {
+            build_profile.files_seen++;
+            build_profile.files_ignored++;
         }
 
         str_setlen(curpath, len);
@@ -5917,15 +6137,19 @@ void do_tagcache_build(const char *path[])
         return ;
     }
 
+    build_profile_start();
     cachefd = open_db_fd(TAGCACHE_FILE_TEMP, O_RDWR | O_CREAT | O_TRUNC);
     if (cachefd < 0)
     {
         logf("master file open failed: %s", TAGCACHE_FILE_TEMP);
+        build_profile_finish("open-failed");
         return ;
     }
 
     /* Never merge a scan into a partial database or orphaned tag indexes. */
-    if (!master_file_exists() || !check_all_headers())
+    bool existing_database = master_file_exists() && check_all_headers();
+    build_profile.initial_build = !existing_database;
+    if (!existing_database)
         remove_files();
 
     filenametag_fd = open_tag_fd(&header, tag_filename, false);
@@ -5933,6 +6157,7 @@ void do_tagcache_build(const char *path[])
     cpu_boost(true);
 
     logf("Scanning files...");
+    long scan_started = build_profile_now();
     /* Scan for new files. */
     memset(&header, 0, sizeof(struct tagcache_header));
     header.magic = TAGCACHE_TEMP_MAGIC;
@@ -6052,11 +6277,15 @@ void do_tagcache_build(const char *path[])
         filenametag_fd = -1;
     }
 
+    build_profile.scan_ticks = build_profile_elapsed(scan_started);
+
     if (!ret || build_write_error)
     {
         logf("Aborted.");
         remove_db_file(TAGCACHE_FILE_TEMP);
         cpu_boost(false);
+        build_profile_finish(build_write_error ? "write-failed" :
+                                                 "scan-failed");
         return ;
     }
 
@@ -6064,7 +6293,10 @@ void do_tagcache_build(const char *path[])
 #ifdef __PCTOOL__
     allocate_tempbuf();
 #endif
-    if (commit())
+    long commit_started = build_profile_now();
+    bool commit_ok = commit();
+    build_profile.commit_ticks = build_profile_elapsed(commit_started);
+    if (commit_ok)
     {
         logf("tagcache built!");
     }
@@ -6082,6 +6314,7 @@ void do_tagcache_build(const char *path[])
 #endif
 
     cpu_boost(false);
+    build_profile_finish(commit_ok ? "success" : "commit-failed");
 }
 
 #ifndef __PCTOOL__
