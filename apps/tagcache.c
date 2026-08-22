@@ -147,6 +147,11 @@
 /* Temporary database containing new tags to be committed to the main db. */
 #define TAGCACHE_FILE_TEMP       "database_tmp.tcd"
 
+/* Completed input retained outside the startup recovery path until the new
+ * master header has been durably published. */
+#define TAGCACHE_FILE_TEMP_DONE  "database_tmp.done"
+#define TAGCACHE_FILE_TEMP_UPDATE "database_tmp.update"
+
 /* The main database master index and numeric data. */
 #define TAGCACHE_FILE_MASTER     "database_idx.tcd"
 
@@ -308,6 +313,10 @@ struct index_entry {
     int32_t tag_seek[TAG_COUNT]; /* Location of tag data or numeric tag data */
     int32_t flag;                /* Status flags */
 };
+
+/* Shared by the single tagcache worker to keep large commit batches off its
+ * deliberately small embedded stack. */
+static struct index_entry commit_idxbuf[IDX_BUF_DEPTH];
 
 /* Header is the same in every file. */
 struct tagcache_header {
@@ -494,6 +503,8 @@ static ssize_t write_exact(int fd, const void *buf, size_t size)
     while (remaining > 0)
     {
         ssize_t rc = write(fd, p, remaining);
+        if (rc < 0 && errno == EINTR)
+            continue;
         if (rc <= 0)
             return -1;
 
@@ -502,6 +513,117 @@ static ssize_t write_exact(int fd, const void *buf, size_t size)
     }
 
     return size;
+}
+
+static ssize_t read_exact(int fd, void *buf, size_t size)
+{
+    unsigned char *p = buf;
+    size_t remaining = size;
+
+    while (remaining > 0)
+    {
+        ssize_t rc = read(fd, p, remaining);
+        if (rc < 0 && errno == EINTR)
+            continue;
+        if (rc <= 0)
+            return -1;
+
+        p += rc;
+        remaining -= rc;
+    }
+
+    return size;
+}
+
+static unsigned char *tmpdb_cache;
+static size_t tmpdb_cache_size;
+static size_t tmpdb_cache_pos;
+static size_t tmpdb_cache_reserved;
+
+static bool tmpdb_cache_load(int fd)
+{
+    off_t file_size = filesize(fd);
+    if (file_size <= 0)
+        return false;
+
+    size_t reserve = ALIGN_UP((size_t)file_size, sizeof(uint32_t));
+
+    /* Keep most of the commit workspace available for sorting and lookup
+     * tables. Small and medium databases can avoid every subsequent disk
+     * pass; large databases retain the established streaming path. */
+    if (reserve > tempbuf_size / 4)
+        return false;
+
+    unsigned char *cache = (unsigned char *)tempbuf + tempbuf_size - reserve;
+    if (lseek(fd, 0, SEEK_SET) < 0 ||
+        read_exact(fd, cache, file_size) != file_size)
+        return false;
+
+    tempbuf_size -= reserve;
+    tmpdb_cache = cache;
+    tmpdb_cache_size = file_size;
+    tmpdb_cache_pos = 0;
+    tmpdb_cache_reserved = reserve;
+    logf("cached %lu-byte temporary database", (unsigned long)file_size);
+    return true;
+}
+
+static void tmpdb_cache_release(void)
+{
+    if (!tmpdb_cache)
+        return;
+
+    tempbuf_size += tmpdb_cache_reserved;
+    tmpdb_cache = NULL;
+    tmpdb_cache_size = 0;
+    tmpdb_cache_pos = 0;
+    tmpdb_cache_reserved = 0;
+}
+
+static off_t tmpdb_lseek(int fd, off_t offset, int whence)
+{
+    if (!tmpdb_cache)
+        return lseek(fd, offset, whence);
+
+    off_t base;
+    if (whence == SEEK_SET)
+        base = 0;
+    else if (whence == SEEK_CUR)
+        base = tmpdb_cache_pos;
+    else if (whence == SEEK_END)
+        base = tmpdb_cache_size;
+    else
+        return -1;
+
+    off_t position = base + offset;
+    if (position < 0 || (size_t)position > tmpdb_cache_size)
+        return -1;
+
+    tmpdb_cache_pos = position;
+    return position;
+}
+
+static ssize_t tmpdb_read(int fd, void *buf, size_t size)
+{
+    if (!tmpdb_cache)
+        return read(fd, buf, size);
+
+    size_t remaining = tmpdb_cache_size - tmpdb_cache_pos;
+    size_t count = MIN(size, remaining);
+    memcpy(buf, tmpdb_cache + tmpdb_cache_pos, count);
+    tmpdb_cache_pos += count;
+    return count;
+}
+
+static int sync_file(int fd)
+{
+#if defined(PLUGIN)
+    /* The plugin API closes files synchronously but does not export fsync. */
+    (void)fd;
+    return 0;
+#else
+    return fsync(fd);
+#endif
 }
 
 static ssize_t write_tagfile_entry(int fd, struct tagfile_entry *buf)
@@ -626,6 +748,16 @@ static int NO_INLINE remove_db_file(const char* filename)
              tc_stat.db_path, filename);
 
     return remove(buf);
+}
+
+static int NO_INLINE rename_db_file(const char *oldname, const char *newname)
+{
+    char oldpath[MAX_PATH];
+    char newpath[MAX_PATH];
+
+    snprintf(oldpath, sizeof(oldpath), "%s/%s", tc_stat.db_path, oldname);
+    snprintf(newpath, sizeof(newpath), "%s/%s", tc_stat.db_path, newname);
+    return rename(oldpath, newpath);
 }
 
 static int open_tag_fd(struct tagcache_header *hdr, int tag, bool write)
@@ -773,12 +905,14 @@ static bool update_master_header(void)
     myhdr.commitid = current_tcmh.commitid;
     myhdr.dirty = current_tcmh.dirty;
 
-    /* Write it back */
-    lseek(fd, 0, SEEK_SET);
-    write_master_header(fd, &myhdr);
-    close(fd);
+    /* Write it back before any index mutation begins. */
+    bool error = lseek(fd, 0, SEEK_SET) < 0 ||
+        write_master_header(fd, &myhdr) != sizeof(myhdr) ||
+        sync_file(fd) < 0;
+    if (close(fd) < 0)
+        error = true;
 
-    return true;
+    return !error;
 }
 
 #if !defined(PLUGIN)
@@ -2675,15 +2809,20 @@ static int tempbuf_sort(int fd)
             return -1;
         }
 
-        if (write(fd, index[i].str, length) != length)
+        if (write_exact(fd, index[i].str, length) != length)
         {
             logf("tempbuf_sort: write error #2");
             return -2;
         }
 
         /* Write some padding. */
-        if (fe.tag_length - length > 0)
-            write(fd, "XXXXXXXX", fe.tag_length - length);
+        if (fe.tag_length - length > 0 &&
+            write_exact(fd, "XXXXXXXX", fe.tag_length - length) !=
+                fe.tag_length - length)
+        {
+            logf("tempbuf_sort: padding write error");
+            return -2;
+        }
     }
 
     return i;
@@ -2723,7 +2862,7 @@ static bool build_numeric_indices(struct tagcache_header *h, int tmpfd)
     max_entries = tempbuf_size / sizeof(struct temp_file_entry) - 1;
 
     logf("Building numeric indices...");
-    lseek(tmpfd, sizeof(struct tagcache_header), SEEK_SET);
+    tmpdb_lseek(tmpfd, sizeof(struct tagcache_header), SEEK_SET);
 
     if ( (masterfd = open_master_fd(&tcmh, true)) < 0)
         return false;
@@ -2748,7 +2887,7 @@ static bool build_numeric_indices(struct tagcache_header *h, int tmpfd)
             int datastart;
 
             /* Read in numeric data. */
-            if (read(tmpfd, tfe, sizeof(struct temp_file_entry)) !=
+            if (tmpdb_read(tmpfd, tfe, sizeof(struct temp_file_entry)) !=
                 sizeof(struct temp_file_entry))
             {
                 logf("read fail #1");
@@ -2756,7 +2895,7 @@ static bool build_numeric_indices(struct tagcache_header *h, int tmpfd)
                 return false;
             }
 
-            datastart = lseek(tmpfd, 0, SEEK_CUR);
+            datastart = tmpdb_lseek(tmpfd, 0, SEEK_CUR);
 
             /**
              * Read string data from the following tags:
@@ -2769,7 +2908,7 @@ static bool build_numeric_indices(struct tagcache_header *h, int tmpfd)
              * and stored back to the data offset field kept in memory.
              */
 #define tmpdb_read_string_tag(tag) \
-    lseek(tmpfd, tfe->tag_offset[tag], SEEK_CUR); \
+    tmpdb_lseek(tmpfd, tfe->tag_offset[tag], SEEK_CUR); \
     if ((unsigned long)tfe->tag_length[tag] > (unsigned long)build_idx_bufsz) \
     { \
         logf("read fail: buffer overflow"); \
@@ -2777,7 +2916,7 @@ static bool build_numeric_indices(struct tagcache_header *h, int tmpfd)
         return false; \
     } \
     \
-    if (read(tmpfd, build_idx_buf, tfe->tag_length[tag]) != \
+    if (tmpdb_read(tmpfd, build_idx_buf, tfe->tag_length[tag]) != \
         tfe->tag_length[tag]) \
     { \
         logf("read fail #2"); \
@@ -2787,7 +2926,7 @@ static bool build_numeric_indices(struct tagcache_header *h, int tmpfd)
     str_setlen(build_idx_buf, tfe->tag_length[tag]); \
     \
     tfe->tag_offset[tag] = crc_32(build_idx_buf, strlen(build_idx_buf), 0xffffffff); \
-    lseek(tmpfd, datastart, SEEK_SET)
+    tmpdb_lseek(tmpfd, datastart, SEEK_SET)
 
             tmpdb_read_string_tag(tag_filename);
             tmpdb_read_string_tag(tag_artist);
@@ -2795,7 +2934,7 @@ static bool build_numeric_indices(struct tagcache_header *h, int tmpfd)
             tmpdb_read_string_tag(tag_title);
 
             /* Seek to the end of the string data. */
-            lseek(tmpfd, tfe->data_length, SEEK_CUR);
+            tmpdb_lseek(tmpfd, tfe->data_length, SEEK_CUR);
         }
 
         /* Backup the master index position. */
@@ -2893,41 +3032,50 @@ static bool build_numeric_indices(struct tagcache_header *h, int tmpfd)
         /* Restore the master index position. */
         lseek(masterfd, masterfd_pos, SEEK_SET);
 
-        /* Commit the data to the index. */
-        for (i = 0; i < count && !USR_CANCEL; i++)
+        /* Commit the data to the index in storage-sized batches. */
+        for (i = 0; i < count && !USR_CANCEL; i += IDX_BUF_DEPTH)
         {
+            int batch_count = MIN(count - i, IDX_BUF_DEPTH);
             int loc = lseek(masterfd, 0, SEEK_CUR);
 
-            if (read_index_entries(masterfd, &idx, 1) != sizeof(struct index_entry))
+            if (read_index_entries(masterfd, commit_idxbuf, batch_count) !=
+                (ssize_t)sizeof(struct index_entry) * batch_count)
             {
                 logf("read fail #3");
                 close(masterfd);
                 return false;
             }
 
-            for (j = 0; j < TAG_COUNT; j++)
-            {
-                if (!TAGCACHE_IS_NUMERIC(j))
-                    continue;
-
-                idx.tag_seek[j] = entrybuf[i].tag_offset[j];
-            }
-            idx.flag = entrybuf[i].flag;
-
-            if (idx.tag_seek[tag_commitid])
-            {
-                /* Data has been resurrected. */
-                idx.flag |= FLAG_DIRTYNUM;
-            }
-            else if (tc_stat.ready && current_tcmh.commitid > 0)
-            {
-                idx.tag_seek[tag_commitid] = current_tcmh.commitid;
-                idx.flag |= FLAG_DIRTYNUM;
-            }
-
-            /* Write back the updated index. */
             lseek(masterfd, loc, SEEK_SET);
-            if (write_index_entries(masterfd, &idx, 1) != sizeof(struct index_entry))
+
+            for (int k = 0; k < batch_count; k++)
+            {
+                struct index_entry *batch_idx = &commit_idxbuf[k];
+                struct temp_file_entry *tfe = &entrybuf[i + k];
+
+                for (j = 0; j < TAG_COUNT; j++)
+                {
+                    if (!TAGCACHE_IS_NUMERIC(j))
+                        continue;
+
+                    batch_idx->tag_seek[j] = tfe->tag_offset[j];
+                }
+                batch_idx->flag = tfe->flag;
+
+                if (batch_idx->tag_seek[tag_commitid])
+                {
+                    /* Data has been resurrected. */
+                    batch_idx->flag |= FLAG_DIRTYNUM;
+                }
+                else if (tc_stat.ready && current_tcmh.commitid > 0)
+                {
+                    batch_idx->tag_seek[tag_commitid] = current_tcmh.commitid;
+                    batch_idx->flag |= FLAG_DIRTYNUM;
+                }
+            }
+
+            if (write_index_entries(masterfd, commit_idxbuf, batch_count) !=
+                (ssize_t)sizeof(struct index_entry) * batch_count)
             {
                 logf("write fail");
                 close(masterfd);
@@ -2939,9 +3087,11 @@ static bool build_numeric_indices(struct tagcache_header *h, int tmpfd)
         logf("%d/%" PRId32 " entries processed", entries_processed, h->entry_count);
     }
 
-    close(masterfd);
+    bool sync_error = sync_file(masterfd) < 0;
+    if (close(masterfd) < 0)
+        sync_error = true;
 
-    return true;
+    return !sync_error;
 }
 
 /**
@@ -2955,12 +3105,16 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
     int i;
     struct tagcache_header tch;
     struct master_header   tcmh;
-    struct index_entry idxbuf[IDX_BUF_DEPTH];
+    struct index_entry *idxbuf = commit_idxbuf;
     int idxbuf_pos;
     int fd = -1, masterfd;
     bool error = false;
     int init;
     int masterfd_pos;
+    int fd_close_rc;
+    int master_close_rc;
+    int fd_sync_rc;
+    int master_sync_rc;
 
     logf("Building index: %d", index_type);
 
@@ -3146,7 +3300,20 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
         tcmh.tch.entry_count = 0;
         tcmh.tch.datasize = 0;
         tcmh.dirty = true;
-        write_master_header(masterfd, &tcmh);
+        if (write_master_header(masterfd, &tcmh) != sizeof(tcmh))
+        {
+            logf("master header write failed");
+            close(fd);
+            close(masterfd);
+            return -2;
+        }
+        if (sync_file(masterfd) < 0)
+        {
+            logf("master header sync failed");
+            close(fd);
+            close(masterfd);
+            return -2;
+        }
         init = true;
         masterfd_pos = lseek(masterfd, 0, SEEK_CUR);
     }
@@ -3189,14 +3356,14 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
      */
     if (TAGCACHE_IS_SORTED(index_type))
     {
-        lseek(tmpfd, sizeof(struct tagcache_header), SEEK_SET);
+        tmpdb_lseek(tmpfd, sizeof(struct tagcache_header), SEEK_SET);
         /* h is the header of the temporary file containing new tags. */
         logf("inserting new tags...");
         for (i = 0; i < h->entry_count && !USR_CANCEL; i++)
         {
             struct temp_file_entry entry;
 
-            if (read(tmpfd, &entry, sizeof(struct temp_file_entry)) !=
+            if (tmpdb_read(tmpfd, &entry, sizeof(struct temp_file_entry)) !=
                 sizeof(struct temp_file_entry))
             {
                 logf("read fail #3");
@@ -3212,8 +3379,8 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
                 goto error_exit;
             }
 
-            lseek(tmpfd, entry.tag_offset[index_type], SEEK_CUR);
-            if (read(tmpfd, build_idx_buf, entry.tag_length[index_type]) !=
+            tmpdb_lseek(tmpfd, entry.tag_offset[index_type], SEEK_CUR);
+            if (tmpdb_read(tmpfd, build_idx_buf, entry.tag_length[index_type]) !=
                 entry.tag_length[index_type])
             {
                 logf("read fail #4");
@@ -3239,7 +3406,7 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
                 }
             }
             /* Skip to next. */
-            lseek(tmpfd, entry.data_length - entry.tag_offset[index_type] -
+            tmpdb_lseek(tmpfd, entry.data_length - entry.tag_offset[index_type] -
                     entry.tag_length[index_type], SEEK_CUR);
             do_timed_yield();
         }
@@ -3252,7 +3419,13 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
          * at the end of file (however, we _should_ always follow the
          * entry_count and don't crash with that).
          */
-        ftruncate(fd, lseek(fd, 0, SEEK_CUR));
+        off_t truncate_at = lseek(fd, 0, SEEK_CUR);
+        if (truncate_at < 0 || ftruncate(fd, truncate_at) < 0)
+        {
+            logf("tagcache: index truncate failed");
+            error = true;
+            goto error_exit;
+        }
 
         i = tempbuf_sort(fd);
         if (i < 0)
@@ -3322,7 +3495,7 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
     // build_normal_index(h, tmpfd, masterfd, idx);
     logf("updating new indices...");
     lseek(masterfd, masterfd_pos, SEEK_SET);
-    lseek(tmpfd, sizeof(struct tagcache_header), SEEK_SET);
+    tmpdb_lseek(tmpfd, sizeof(struct tagcache_header), SEEK_SET);
     lseek(fd, 0, SEEK_END);
     for (i = 0; i < h->entry_count && !USR_CANCEL; i += idxbuf_pos)
     {
@@ -3355,7 +3528,7 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
                 struct temp_file_entry entry;
                 struct tagfile_entry fe;
 
-                if (read(tmpfd, &entry, sizeof(struct temp_file_entry)) !=
+                if (tmpdb_read(tmpfd, &entry, sizeof(struct temp_file_entry)) !=
                     sizeof(struct temp_file_entry))
                 {
                     logf("read fail #7");
@@ -3368,13 +3541,13 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
                 {
                     logf("too long entry!");
                     logf("length=%d", entry.tag_length[index_type]);
-                    logf("pos=0x%02lx", (unsigned long) lseek(tmpfd, 0, SEEK_CUR));
+                    logf("pos=0x%02lx", (unsigned long) tmpdb_lseek(tmpfd, 0, SEEK_CUR));
                     error = true;
                     break ;
                 }
 
-                lseek(tmpfd, entry.tag_offset[index_type], SEEK_CUR);
-                if (read(tmpfd, build_idx_buf, entry.tag_length[index_type]) !=
+                tmpdb_lseek(tmpfd, entry.tag_offset[index_type], SEEK_CUR);
+                if (tmpdb_read(tmpfd, build_idx_buf, entry.tag_length[index_type]) !=
                     entry.tag_length[index_type])
                 {
                     logf("read fail #8");
@@ -3388,12 +3561,17 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
                 idxbuf[j].tag_seek[index_type] = lseek(fd, 0, SEEK_CUR);
                 fe.tag_length = entry.tag_length[index_type];
                 fe.idx_id = tcmh.tch.entry_count + i + j;
-                write_tagfile_entry(fd, &fe);
-                write(fd, build_idx_buf, fe.tag_length);
+                if (write_tagfile_entry(fd, &fe) != sizeof(fe) ||
+                    write_exact(fd, build_idx_buf, fe.tag_length) != fe.tag_length)
+                {
+                    logf("tagcache: tag write failed");
+                    error = true;
+                    break;
+                }
                 tempbufidx++;
 
                 /* Skip to next. */
-                lseek(tmpfd, entry.data_length - entry.tag_offset[index_type] -
+                tmpdb_lseek(tmpfd, entry.data_length - entry.tag_offset[index_type] -
                       entry.tag_length[index_type], SEEK_CUR);
             }
             else
@@ -3426,16 +3604,26 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
     tch.magic = TAGCACHE_MAGIC;
     tch.entry_count = tempbufidx;
     tch.datasize = lseek(fd, 0, SEEK_END) - sizeof(struct tagcache_header);
-    lseek(fd, 0, SEEK_SET);
-    write_tagcache_header(fd, &tch);
+    if (lseek(fd, 0, SEEK_SET) < 0 ||
+        write_tagcache_header(fd, &tch) != sizeof(tch))
+    {
+        logf("tagcache: final index header write failed");
+        error = true;
+    }
 
     if (index_type != tag_filename)
         h->datasize += tch.datasize;
     logf("s:%d/%" PRId32 "/%" PRId32, index_type, tch.datasize, h->datasize);
     error_exit:
 
-    close(fd);
-    close(masterfd);
+    fd_sync_rc = sync_file(fd);
+    master_sync_rc = sync_file(masterfd);
+    if (fd_sync_rc < 0 || master_sync_rc < 0)
+        error = true;
+    fd_close_rc = close(fd);
+    master_close_rc = close(masterfd);
+    if (fd_close_rc < 0 || master_close_rc < 0)
+        error = true;
 
     if (error)
         return -2;
@@ -3450,6 +3638,7 @@ static bool commit(void)
     int i, len, rc;
     int tmpfd;
     int masterfd;
+    const char *sealed_name = NULL;
 #ifdef HAVE_DIRCACHE
     bool dircache_buffer_stolen = false;
 #endif
@@ -3553,11 +3742,32 @@ static bool commit(void)
         goto commit_error;
     }
 
+    tmpdb_cache_load(tmpfd);
+
     logf("commit %" PRId32 " entries...", tch.entry_count);
 
+    /* Seal the input before the first index mutation. On restart this tells
+     * recovery whether an initial build can be replayed or an interrupted
+     * incremental update requires a clean full rebuild. */
+    sealed_name = tc_stat.ready ? TAGCACHE_FILE_TEMP_UPDATE
+                                : TAGCACHE_FILE_TEMP_DONE;
+    if (rename_db_file(TAGCACHE_FILE_TEMP, sealed_name) < 0)
+    {
+        close(tmpfd);
+        logf("failed to seal temporary database");
+        goto commit_error;
+    }
+
     /* Mark DB dirty so it will stay disabled if commit fails. */
+    bool old_dirty = current_tcmh.dirty;
     current_tcmh.dirty = true;
-    update_master_header();
+    if (tc_stat.ready && !update_master_header())
+    {
+        current_tcmh.dirty = old_dirty;
+        close(tmpfd);
+        logf("failed to mark tagcache dirty");
+        goto commit_error;
+    }
 
     /* Now create the index files. */
     tc_stat.commit_step = 0;
@@ -3594,7 +3804,11 @@ static bool commit(void)
         goto commit_error;
     }
 
-    close(tmpfd);
+    if (close(tmpfd) < 0)
+    {
+        logf("temporary database close failed");
+        goto commit_error;
+    }
 
     tc_stat.commit_step = 0;
 
@@ -3604,8 +3818,6 @@ static bool commit(void)
         if ( (masterfd = open_master_fd(&tcmh, true)) < 0)
             goto commit_error;
 
-        remove_db_file(TAGCACHE_FILE_TEMP);
-
         tcmh.tch.entry_count += tch.entry_count;
         tcmh.tch.datasize = sizeof(struct master_header)
             + sizeof(struct index_entry) * tcmh.tch.entry_count
@@ -3613,9 +3825,20 @@ static bool commit(void)
         tcmh.dirty = false;
         tcmh.commitid++;
 
-        lseek(masterfd, 0, SEEK_SET);
-        write_master_header(masterfd, &tcmh);
-        close(masterfd);
+        bool master_error = lseek(masterfd, 0, SEEK_SET) < 0 ||
+            write_master_header(masterfd, &tcmh) != sizeof(tcmh) ||
+            sync_file(masterfd) < 0;
+        if (close(masterfd) < 0)
+            master_error = true;
+
+        if (master_error)
+        {
+            logf("failed to publish tagcache master");
+            goto commit_error;
+        }
+
+        if (remove_db_file(sealed_name) < 0)
+            logf("failed to remove sealed temporary database");
 
         logf("tagcache committed");
         tagcache_commit_finalize();
@@ -3638,6 +3861,8 @@ static bool commit(void)
     } /*!USR_CANCEL*/
 
 commit_error:
+    tmpdb_cache_release();
+
 #ifdef HAVE_TC_RAMCACHE
     if (ramcache_buffer_stolen)
     {
@@ -5232,7 +5457,7 @@ void do_tagcache_build(const char *path[])
     if (!tempdb_flush() ||
         lseek(cachefd, 0, SEEK_SET) < 0 ||
         write_tagcache_header(cachefd, &header) != sizeof(header) ||
-        fsync(cachefd) < 0)
+        sync_file(cachefd) < 0)
     {
         logf("temporary database finalization failed");
         build_write_error = true;
@@ -5342,11 +5567,54 @@ static bool NO_INLINE db_file_exists(const char* filename)
     return file_exists(buf);
 }
 
+static bool sealed_database_needs_rebuild(void)
+{
+    bool initial = db_file_exists(TAGCACHE_FILE_TEMP_DONE);
+    bool update = db_file_exists(TAGCACHE_FILE_TEMP_UPDATE);
+    if (!initial && !update)
+        return false;
+
+    struct master_header header;
+    int fd = open_master_fd(&header, false);
+    bool clean = fd >= 0 && !header.dirty;
+    if (fd >= 0)
+        close(fd);
+
+    if (clean)
+    {
+        remove_db_file(TAGCACHE_FILE_TEMP_DONE);
+        remove_db_file(TAGCACHE_FILE_TEMP_UPDATE);
+        return false;
+    }
+
+    /* No clean generation exists. An initial build contains the complete
+     * input and can be replayed after removing partial output. An incremental
+     * input contains only changes, so rebuild the full library instead. */
+    remove_files();
+    remove_db_file(TAGCACHE_FILE_TEMP);
+
+    if (update)
+    {
+        remove_db_file(TAGCACHE_FILE_TEMP_UPDATE);
+        remove_db_file(TAGCACHE_FILE_TEMP_DONE);
+        return true;
+    }
+
+    if (rename_db_file(TAGCACHE_FILE_TEMP_DONE, TAGCACHE_FILE_TEMP) < 0)
+    {
+        remove_db_file(TAGCACHE_FILE_TEMP_DONE);
+        return true;
+    }
+
+    return false;
+}
+
 static void tagcache_thread(void)
 {
     struct queue_event ev;
     bool check_done = false;
     cpu_boost(true);
+    bool rebuild_database = sealed_database_needs_rebuild();
     /* If the previous cache build/update was interrupted, commit
      * the changes first in foreground. */
     if (db_file_exists(TAGCACHE_FILE_TEMP))
@@ -5365,6 +5633,9 @@ static void tagcache_thread(void)
             free_tempbuf();
         }
     }
+
+    if (rebuild_database)
+        tagcache_build();
 
 #ifdef HAVE_TC_RAMCACHE
 #ifdef HAVE_EEPROM_SETTINGS
@@ -5407,6 +5678,8 @@ static void tagcache_thread(void)
             case Q_REBUILD:
                 remove_files();
                 remove_db_file(TAGCACHE_FILE_TEMP);
+                remove_db_file(TAGCACHE_FILE_TEMP_DONE);
+                remove_db_file(TAGCACHE_FILE_TEMP_UPDATE);
                 tagcache_build();
                 break;
 
