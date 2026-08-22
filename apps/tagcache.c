@@ -907,7 +907,14 @@ static ssize_t read_index_entries_exact(int fd, struct index_entry *buf,
 
 static ssize_t write_index_entries(int fd, struct index_entry *buf, size_t count)
 {
+    if (count > SIZE_MAX / sizeof(*buf))
+        return -1;
+
+    size_t size = sizeof(*buf) * count;
 #ifdef TAGCACHE_SUPPORT_FOREIGN_ENDIAN
+    if (!tc_stat.econ)
+        return write_exact(fd, buf, size);
+
     ssize_t ret = 0;
     for (; count > 0; count--)
     {
@@ -922,7 +929,7 @@ static ssize_t write_index_entries(int fd, struct index_entry *buf, size_t count
 
     return ret;
 #else
-    return write_exact(fd, buf, sizeof(*buf) * count);
+    return write_exact(fd, buf, size);
 #endif
 }
 
