@@ -1928,7 +1928,7 @@ static int load_album_art_from_path(char *path, struct bufopen_bitmap_data *user
     if (!same_path && is_cacheable)
     {
         clear_last_folder_album_art();
-        strcpy(last_folder_aa_path, path);
+        strlcpy(last_folder_aa_path, path, sizeof(last_folder_aa_path));
     }
     int hid = bufopen(path, 0, TYPE_BITMAP, user_data);
     if (hid != ERR_BUFFER_FULL && (same_path || is_cacheable))
