@@ -576,6 +576,9 @@ static bool buf_ctx_locked;
 
 static int cover_animation_keyframe;
 static int extra_fade;
+static int cover_animation_timing_state = -1;
+static unsigned long cover_animation_last_tick;
+static int cover_animation_tick_fraction;
 
 static struct pf_scroll_line_info scroll_line_info;
 static struct pf_scroll_line scroll_lines[PF_MAX_SCROLL_LINES];
@@ -3987,25 +3990,56 @@ static int main_menu(void)
 
 #define KEYFRAME_COUNT ZOOMIN_FRAME_COUNT + ROTATE_FRAME_COUNT
 
+/* Return the number of nominal animation frames due since the last render.
+ * A newly started or reversed transition advances immediately, preserving the
+ * responsive first step of the old render-loop-driven implementation. */
+static int cover_animation_steps(void)
+{
+    unsigned long now = (unsigned long)*rb->current_tick;
+
+    if (cover_animation_timing_state != pf_state)
+    {
+        cover_animation_timing_state = pf_state;
+        cover_animation_last_tick = now;
+        cover_animation_tick_fraction = 0;
+        return 1;
+    }
+
+    unsigned long dt = now - cover_animation_last_tick;
+    cover_animation_last_tick = now;
+    if (dt > HZ / 5)
+        dt = HZ / 5;
+
+    int elapsed = (int)dt * PF_NOMINAL_FPS +
+                  cover_animation_tick_fraction;
+    int steps = elapsed / HZ;
+    cover_animation_tick_fraction = elapsed - steps * HZ;
+    return steps;
+}
+
 /**
    Animation step for zooming into the current cover
  */
 static void update_cover_in_animation(void)
 {
-    cover_animation_keyframe++;
+    int steps = cover_animation_steps();
+    while (steps-- > 0 && pf_state == pf_cover_in)
+    {
+        cover_animation_keyframe++;
 
-    if(cover_animation_keyframe <= ZOOMIN_FRAME_COUNT)
-    {
-        center_slide.distance += ZOOMIN_FRAME_DIST;
-        center_slide.angle +=    ZOOMIN_FRAME_ANGLE;
-        extra_fade +=            ZOOMIN_FRAME_FADE;
-    }
-    else if(cover_animation_keyframe <= KEYFRAME_COUNT)
-        center_slide.angle += ROTATE_FRAME_ANGLE;
-    else
-    {
-        cover_animation_keyframe = 0;
-        pf_state = pf_show_tracks;
+        if(cover_animation_keyframe <= ZOOMIN_FRAME_COUNT)
+        {
+            center_slide.distance += ZOOMIN_FRAME_DIST;
+            center_slide.angle +=    ZOOMIN_FRAME_ANGLE;
+            extra_fade +=            ZOOMIN_FRAME_FADE;
+        }
+        else if(cover_animation_keyframe <= KEYFRAME_COUNT)
+            center_slide.angle += ROTATE_FRAME_ANGLE;
+        else
+        {
+            cover_animation_keyframe = 0;
+            pf_state = pf_show_tracks;
+        }
     }
 }
 
@@ -4014,20 +4048,24 @@ static void update_cover_in_animation(void)
  */
 static void update_cover_out_animation(void)
 {
-    cover_animation_keyframe++;
+    int steps = cover_animation_steps();
+    while (steps-- > 0 && pf_state == pf_cover_out)
+    {
+        cover_animation_keyframe++;
 
-    if(cover_animation_keyframe <= ROTATE_FRAME_COUNT)
-        center_slide.angle -= ROTATE_FRAME_ANGLE;
-    else if(cover_animation_keyframe <= KEYFRAME_COUNT)
-    {
-        center_slide.distance -= ZOOMIN_FRAME_DIST;
-        center_slide.angle -=    ZOOMIN_FRAME_ANGLE;
-        extra_fade -=            ZOOMIN_FRAME_FADE;
-    }
-    else
-    {
-        cover_animation_keyframe = 0;
-        pf_state = pf_idle;
+        if(cover_animation_keyframe <= ROTATE_FRAME_COUNT)
+            center_slide.angle -= ROTATE_FRAME_ANGLE;
+        else if(cover_animation_keyframe <= KEYFRAME_COUNT)
+        {
+            center_slide.distance -= ZOOMIN_FRAME_DIST;
+            center_slide.angle -=    ZOOMIN_FRAME_ANGLE;
+            extra_fade -=            ZOOMIN_FRAME_FADE;
+        }
+        else
+        {
+            cover_animation_keyframe = 0;
+            pf_state = pf_idle;
+        }
     }
 }
 
