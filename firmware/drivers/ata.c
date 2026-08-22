@@ -226,6 +226,10 @@ static int ata_perform_sleep(void)
         DEBUGF("ata_perform_sleep() - CMD failed\n");
         return -2;
     }
+    if (ATA_IN8(ATA_ALT_STATUS) & (STATUS_ERR | STATUS_DF)) {
+        DEBUGF("ata_perform_sleep() - device error\n");
+        return -3;
+    }
 
     return 0;
 }
