@@ -1905,7 +1905,7 @@ static int compare_tracks (const void *a_v, const void *b_v)
 {
     uint32_t a = ((struct track_data *)a_v)->sort;
     uint32_t b = ((struct track_data *)b_v)->sort;
-    return (int)(a - b);
+    return (a > b) - (a < b);
 }
 
 
