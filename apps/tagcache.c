@@ -765,6 +765,28 @@ read_tagfile_entry_and_tag(int fd, struct tagfile_entry *tfe,
     return (tag_length > 0 && *buf) ? e_SUCCESS : e_SUCCESS_LEN_ZERO;
 }
 
+#ifdef HAVE_TC_RAMCACHE
+static enum e_read_errors
+tagcache_reader_entry_and_tag(struct tagcache_reader *reader,
+                              struct tagfile_entry *tfe,
+                              char *buf, int bufsz)
+{
+    if (tagcache_reader_entry(reader, tfe) != sizeof(*tfe))
+        return e_ENTRY_SIZEMISMATCH;
+
+    long tag_length = tfe->tag_length;
+    if (tag_length < 0 || tag_length >= bufsz)
+        return e_TAG_TOOLONG;
+
+    if (tag_length > 0 &&
+        tagcache_reader_read(reader, buf, tag_length) != tag_length)
+        return e_TAG_SIZEMISMATCH;
+
+    str_setlen(buf, tag_length);
+    return (tag_length > 0 && *buf) ? e_SUCCESS : e_SUCCESS_LEN_ZERO;
+}
+#endif
+
 static ssize_t read_index_entries(int fd, struct index_entry *buf, size_t count)
 {
     ssize_t ret = read(fd, buf, sizeof(*buf) * count);
@@ -5161,6 +5183,9 @@ static bool check_file_refs(bool auto_update)
     const int bufsz = sizeof(buf);
     struct tagfile_entry tfe;
     struct tagcache_header hdr;
+#ifdef HAVE_TC_RAMCACHE
+    struct tagcache_reader reader;
+#endif
 
     logf("reverse scan...");
 
@@ -5187,11 +5212,27 @@ static bool check_file_refs(bool auto_update)
         return false;
     }
 
+#ifdef HAVE_TC_RAMCACHE
+    if (!tagcache_reader_init(&reader, fd))
+    {
+#ifdef HAVE_DIRCACHE
+        tcrc_buffer_unlock();
+#endif
+        close(fd);
+        return false;
+    }
+#endif
+
     processed_dir_count = 0;
 
     while (!check_event_queue())
     {
-        int res = read_tagfile_entry_and_tag(fd, &tfe, buf, bufsz);
+        int res;
+#ifdef HAVE_TC_RAMCACHE
+        res = tagcache_reader_entry_and_tag(&reader, &tfe, buf, bufsz);
+#else
+        res = read_tagfile_entry_and_tag(fd, &tfe, buf, bufsz);
+#endif
         processed_dir_count++;
 
         switch (res)
