@@ -1111,6 +1111,7 @@ static void transfer_completed(void)
                         logf("skip half finished transfer");
                         goto Lskip;
                     }
+                    qh->status |= td->size_ioc_sts & DTD_ERROR_MASK;
                     length += ((td->reserved & DTD_RESERVED_LENGTH_MASK) -
                         ((td->size_ioc_sts & DTD_PACKET_SIZE) >> DTD_LENGTH_BIT_POS));
                     td=(struct transfer_descriptor*) td->next_td_ptr;
