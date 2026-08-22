@@ -1210,8 +1210,10 @@ int STORAGE_INIT_ATTR ata_init(void)
     }
 
     rc = set_multiple_mode(multisectors);
-    if (rc)
+    if (rc) {
         rc = -100 + rc;
+        goto error;
+    }
 
     rc = identify();
     if (rc) {
