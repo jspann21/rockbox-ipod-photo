@@ -22,7 +22,7 @@ __attribute__((unused)) static IAPBool pack_u16(uint8_t** data, size_t* size, ui
 }
 
 __attribute__((unused)) static IAPBool pack_u32(uint8_t** data, size_t* size, uint32_t value) {
-    check_ret(*size >= 2, iap_false);
+    check_ret(*size >= 4, iap_false);
     (*data)[0] = value >> 24;
     (*data)[1] = value >> 16;
     (*data)[2] = value >> 8;
