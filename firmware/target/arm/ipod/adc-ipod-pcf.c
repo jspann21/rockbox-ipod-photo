@@ -48,7 +48,11 @@ static unsigned short _adc_read(struct adc_struct *adc)
         adc->timeout = current_tick + (HZ * 2 / 5);
 
         /* ADCC1, 10 bit, start */
-        pcf50605_write(0x2f, (adc->channelnum << 1) | 0x1);
+        if (pcf50605_write(0x2f, (adc->channelnum << 1) | 0x1) < 0)
+        {
+            i2c_unlock();
+            return adc->data;
+        }
         if (pcf50605_read_multiple(0x30, data, 2) != 0)
         {
             i2c_unlock();

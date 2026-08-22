@@ -76,10 +76,14 @@ int pcf50605_write_multiple(int address, const unsigned char* buf, int count)
    from the good people of ipodlinux - never issue this command
    without setting CHGWAK or EXTONWAK if you ever want to be able to
    power on your iPod again. */
-void pcf50605_standby_mode(void)
+int pcf50605_standby_mode(void)
 {
-    pcf50605_write(PCF5060X_OOCC1,
-                   GOSTDBY | CHGWAK | EXTONWAK | pcf50605_wakeup_flags);
+    int rc = -1;
+    for (int attempt = 0; attempt < 3 && rc < 0; attempt++)
+        rc = pcf50605_write(PCF5060X_OOCC1,
+                            GOSTDBY | CHGWAK | EXTONWAK |
+                            pcf50605_wakeup_flags);
+    return rc;
 }
 
 void pcf50605_init(void)

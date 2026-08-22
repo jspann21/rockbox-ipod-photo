@@ -25,6 +25,7 @@
 #include "pcf5060x.h"
 #include "pcf50605.h"
 #include "audiohw.h"
+#include "logf.h"
 
 unsigned short battery_level_disksafe =
 #if   defined(IPOD_NANO)
@@ -115,8 +116,13 @@ void accessory_supply_set(bool enable)
     /* Set accessory power supply to 3.3V, otherwise switch it off. */
     unsigned char value = enable ? 0xf8 : 0x18;
     
-    /* Write to register. */
-    pcf50605_write(PCF5060X_D2REGC1, value);
+    /* Accessory power is user-visible; retry transient bus failures. */
+    for (int attempt = 0; attempt < 3; attempt++)
+    {
+        if (pcf50605_write(PCF5060X_D2REGC1, value) >= 0)
+            return;
+    }
+    logf("accessory supply write failed");
 }
 #endif
 

@@ -24,6 +24,7 @@
 #include "system.h"
 #include "pcf50605.h"
 #include "timefuncs.h"
+#include "logf.h"
 
 /* Values which each disable one alarm time register */
 static const char alarm_disable[] = {
@@ -114,9 +115,9 @@ void rtc_enable_alarm(bool enable)
          * around this time and are annoyed by this, feel free to seek out my
          * grave and do something nasty to it.
          */
-        pcf50605_write(0x17, 0x99);
-        /* Make sure we don't wake on RTC after shutting down */
-        pcf50605_wakeup_flags &= ~0x10;
+        if (pcf50605_write(0x17, 0x99) >= 0)
+            /* Make sure we don't wake on RTC after shutting down */
+            pcf50605_wakeup_flags &= ~0x10;
     }
 }
 
@@ -144,8 +145,10 @@ bool rtc_check_alarm_started(bool release_alarm)
         /* If alarm time and real time match within 10 seconds of each other, we
          * assume an alarm just triggered
          */
+        int seconds_delta = BCD2DEC((unsigned char)rt[0]) -
+                            BCD2DEC((unsigned char)at[0]);
         rc = alarm_state = rt[1] == at[1] && rt[2] == at[2]
-                           && (rt[0] - at[0]) <= 10;
+                           && seconds_delta >= 0 && seconds_delta <= 10;
         run_before = true;
     }
     return rc;
@@ -154,10 +157,9 @@ bool rtc_check_alarm_started(bool release_alarm)
 void rtc_set_alarm(int h, int m)
 {
     /* Set us to wake at the first second of the specified time */
-    pcf50605_write(0x11, 0);
-    /* Convert to BCD */
-    pcf50605_write(0x12, DEC2BCD(m));
-    pcf50605_write(0x13, DEC2BCD(h));
+    unsigned char alarm[] = { 0, DEC2BCD(m), DEC2BCD(h) };
+    if (pcf50605_write_multiple(0x11, alarm, sizeof(alarm)) < 0)
+        logf("RTC alarm write failed");
 }
 
 void rtc_get_alarm(int *h, int *m)

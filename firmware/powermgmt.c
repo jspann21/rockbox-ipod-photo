@@ -1028,19 +1028,26 @@ void shutdown_hw(enum shutdown_type sd_type)
     charging_algorithm_close();
     audio_stop();
 
-    if (battery_level_safe()) { /* do not save on critical battery */
+    bool storage_active = storage_disk_is_active();
+    bool battery_safe = battery_level_safe();
+    if (battery_safe) { /* do not save on critical battery */
         font_unload_all();
+    }
 
 /* Commit pending writes if needed. Even though we don't do write caching,
    things like flash translation layers may need this to commit scattered
-   pages to their final locations. So far only used for iPod Nano 2G. */
+   pages to their final locations. On a critical battery, only flush storage
+   that is already awake so shutdown does not spend power waking a disk. */
 #ifdef HAVE_STORAGE_FLUSH
-        storage_flush();
+    if (battery_safe || storage_active) {
+        int rc = storage_flush();
+        if (rc < 0)
+            logf("storage flush failed: %d", rc);
+    }
 #endif
 
-        if (storage_disk_is_active())
-            storage_spindown(1);
-    }
+    if (storage_active)
+        storage_spindown(1);
 
     audiohw_close();
 

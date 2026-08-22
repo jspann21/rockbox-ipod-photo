@@ -184,7 +184,8 @@ void power_off(void)
 #elif CONFIG_CPU == PP5020
     memset((void*)0x4000c000, 0, 0xc000);
 #endif
-    pcf50605_standby_mode();
+    if (pcf50605_standby_mode() < 0)
+        logf("PMU standby command failed");
 #endif
 #endif
 }

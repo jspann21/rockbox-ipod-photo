@@ -29,7 +29,7 @@ int pcf50605_write(int address, unsigned char val);
 int pcf50605_write_multiple(int address, const unsigned char* buf, int count);
 int pcf50605_a2d_read(int channel);
 bool pcf50605_charger_inserted(void);
-void pcf50605_standby_mode(void);
+int pcf50605_standby_mode(void);
 void pcf50605_init(void);
 
 #endif
