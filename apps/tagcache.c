@@ -3088,7 +3088,8 @@ static void NO_INLINE add_tagcache(char *path, unsigned long mtime)
     long metadata_started = build_profile_now();
     ret = get_metadata_afmt(&id3, -1, path, afmt,
                             METADATA_EXCLUDE_ID3_PATH |
-                            METADATA_EXCLUDE_ALBUMART);
+                            METADATA_EXCLUDE_ALBUMART |
+                            METADATA_SKIP_ID3V1_PROBE);
     build_profile.metadata_ticks += build_profile_elapsed(metadata_started);
 
     if (!ret)

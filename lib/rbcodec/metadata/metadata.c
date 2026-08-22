@@ -430,6 +430,7 @@ unsigned int probe_file_format(const char *filename)
  * METADATA_CLOSE_FD_ON_EXIT closes the open filedescriptor on exit
  * METADATA_EXCLUDE_NORMALIZE won't utf8 normalize the string type id3 entries
  * METADATA_EXCLUDE_ALBUMART won't inspect embedded album art
+ * METADATA_SKIP_ID3V1_PROBE avoids probing unused trailing ID3v1 tags
  */
 bool get_metadata_afmt(struct mp3entry* id3, int fd, const char* trackname, int audio_fmt, int flags)
 {
@@ -477,9 +478,10 @@ bool get_metadata_afmt(struct mp3entry* id3, int fd, const char* trackname, int 
     {
         bool parsed;
 
-        if ((flags & METADATA_EXCLUDE_ALBUMART) &&
+        if ((flags & (METADATA_EXCLUDE_ALBUMART |
+                      METADATA_SKIP_ID3V1_PROBE)) &&
             entry->parse_func == get_mp3_metadata)
-            parsed = get_mp3_metadata_ex(fd, id3, false);
+            parsed = get_mp3_metadata_ex(fd, id3, flags);
         else
             parsed = entry->parse_func(fd, id3);
 

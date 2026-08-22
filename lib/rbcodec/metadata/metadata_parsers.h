@@ -25,7 +25,7 @@ bool setid3v1title(int fd, struct mp3entry *entry);
 void setid3v2title(int fd, struct mp3entry *entry);
 void setid3v2title_ex(int fd, struct mp3entry *entry, bool parse_albumart);
 bool get_mp3_metadata(int fd, struct mp3entry* id3);
-bool get_mp3_metadata_ex(int fd, struct mp3entry* id3, bool parse_albumart);
+bool get_mp3_metadata_ex(int fd, struct mp3entry* id3, int flags);
 bool get_adx_metadata(int fd, struct mp3entry* id3);
 bool get_aiff_metadata(int fd, struct mp3entry* id3);
 bool get_flac_metadata(int fd, struct mp3entry* id3);

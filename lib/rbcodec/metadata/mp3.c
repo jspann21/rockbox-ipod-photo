@@ -162,7 +162,7 @@ static int getsonglength(int fd, struct mp3entry *entry)
  * about an MP3 file and updates it's entry accordingly.
  *
   Note, that this returns true for successful, false for error! */
-bool get_mp3_metadata_ex(int fd, struct mp3entry *entry, bool parse_albumart)
+bool get_mp3_metadata_ex(int fd, struct mp3entry *entry, int flags)
 {
     entry->title = NULL;
     entry->filesize = filesize(fd);
@@ -170,7 +170,17 @@ bool get_mp3_metadata_ex(int fd, struct mp3entry *entry, bool parse_albumart)
     entry->id3v2len = getid3v2len(fd);
 
     if (entry->id3v2len)
-        setid3v2title_ex(fd, entry, parse_albumart);
+    {
+        setid3v2title_ex(fd, entry,
+                        !(flags & METADATA_EXCLUDE_ALBUMART));
+
+        /* ID3v1 text is not used when ID3v2 is present. During a database
+         * scan, avoid seeking to the opposite end of every CBR file merely
+         * to exclude a possible 128-byte ID3v1 footer from its duration.
+         * Playback metadata still takes the exact path. */
+        if (flags & METADATA_SKIP_ID3V1_PROBE)
+            entry->id3v1len = 0;
+    }
     int len = getsonglength(fd, entry);
     if (len < 0)
         return false;
@@ -191,5 +201,5 @@ bool get_mp3_metadata_ex(int fd, struct mp3entry *entry, bool parse_albumart)
 
 bool get_mp3_metadata(int fd, struct mp3entry *entry)
 {
-    return get_mp3_metadata_ex(fd, entry, true);
+    return get_mp3_metadata_ex(fd, entry, 0);
 }
