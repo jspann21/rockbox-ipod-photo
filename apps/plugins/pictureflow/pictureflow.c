@@ -4622,6 +4622,7 @@ static void draw_album_text(void)
         albumtxt_index = center_index;
         c= 255;
     }
+    c = fbound(0, c, 255);
     albumtxt_index = fbound(0, albumtxt_index, pf_idx.album_ct - 1);
     albumtxt = get_album_name_idx(albumtxt_index, &album_idx);
 
