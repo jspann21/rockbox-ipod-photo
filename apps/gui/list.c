@@ -558,31 +558,39 @@ static void gui_synclist_select_previous_page(struct gui_synclist * lists,
  * Should stop increasing the value when reaching the widest item value
  * in the list.
  */
-static void gui_synclist_scroll_right(struct gui_synclist * lists)
+static bool gui_synclist_scroll_right(struct gui_synclist * lists)
 {
+    bool changed = false;
     FOR_NB_SCREENS(i)
     {
+        int old_offset = lists->offset_position[i];
         /* FIXME: This is a fake right boundry limiter. there should be some
         * callback function to find the longest item on the list in pixels,
         * to stop the list from scrolling past that point */
         lists->offset_position[i] += global_settings.screen_scroll_step;
         if (lists->offset_position[i] > 1000)
             lists->offset_position[i] = 1000;
+        changed |= lists->offset_position[i] != old_offset;
     }
+    return changed;
 }
 
 /*
  * Makes all the item in the list scroll by one step to the left.
  * stops at starting position.
  */
-static void gui_synclist_scroll_left(struct gui_synclist * lists)
+static bool gui_synclist_scroll_left(struct gui_synclist * lists)
 {
+    bool changed = false;
     FOR_NB_SCREENS(i)
     {
+        int old_offset = lists->offset_position[i];
         lists->offset_position[i] -= global_settings.screen_scroll_step;
         if (lists->offset_position[i] < 0)
             lists->offset_position[i] = 0;
+        changed |= lists->offset_position[i] != old_offset;
     }
+    return changed;
 }
 
 bool gui_synclist_keyclick_callback(int action, void* data)
@@ -748,8 +756,8 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
         }
 
         case ACTION_TREE_PGRIGHT:
-            gui_synclist_scroll_right(lists);
-            gui_synclist_draw(lists);
+            if (gui_synclist_scroll_right(lists))
+                gui_synclist_draw(lists);
             yield();
             return true;
         case ACTION_TREE_ROOT_INIT:
@@ -774,8 +782,8 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
                 *actionptr = ACTION_STD_CANCEL;
                 return false;
             }
-            gui_synclist_scroll_left(lists);
-            gui_synclist_draw(lists);
+            if (gui_synclist_scroll_left(lists))
+                gui_synclist_draw(lists);
             pgleft_allow_cancel = false; /* stop ACTION_TREE_PAGE_LEFT
                                             skipping to root */
             yield();
@@ -791,8 +799,10 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
                          SCREEN_REMOTE :
 #endif
                                           SCREEN_MAIN;
+            int old_selection = lists->selected_item;
             gui_synclist_select_previous_page(lists, screen, false);
-            gui_synclist_draw(lists);
+            if (lists->selected_item != old_selection)
+                gui_synclist_draw(lists);
             yield();
             *actionptr = ACTION_STD_NEXT;
         }
@@ -806,8 +816,10 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
                          SCREEN_REMOTE :
 #endif
                                           SCREEN_MAIN;
+            int old_selection = lists->selected_item;
             gui_synclist_select_next_page(lists, screen, false);
-            gui_synclist_draw(lists);
+            if (lists->selected_item != old_selection)
+                gui_synclist_draw(lists);
             yield();
             *actionptr = ACTION_STD_PREV;
         }
@@ -828,11 +840,14 @@ int list_do_action_timeout(struct gui_synclist *lists, int timeout)
     current_lists = lists;
     if(lists->scheduled_talk_tick)
     {
-        long delay = lists->scheduled_talk_tick -current_tick +1;
-        /* +1 because the trigger condition uses TIME_AFTER(), which
-           is implemented as strictly greater than. */
-        if(delay < 0)
-            delay = 0;
+        int delay = 0;
+        if (!TIME_AFTER(current_tick, lists->scheduled_talk_tick))
+        {
+            /* Unsigned subtraction remains valid when the tick counter wraps.
+             * +1 matches the strictly-greater TIME_AFTER() trigger. */
+            delay = (unsigned long)lists->scheduled_talk_tick -
+                    (unsigned long)current_tick + 1;
+        }
         if(timeout > delay || timeout == TIMEOUT_BLOCK)
             timeout = delay;
     }
@@ -885,15 +900,29 @@ void simplelist_setline(const char *text)
 void simplelist_addline(const char *fmt, ...)
 {
     va_list ap;
-    size_t len = simplelist_line_remaining;
+    int written;
+    int len;
+
+    if (simplelist_line_remaining <= 0)
+        return;
 
     char *bufpos = &simplelist_buffer[simplelist_line_pos];
     simplelist_setline(bufpos);
 
     va_start(ap, fmt);
-    len = vsnprintf(bufpos, simplelist_line_remaining, fmt, ap);
+    written = vsnprintf(bufpos, simplelist_line_remaining, fmt, ap);
     va_end(ap);
-    len++;
+
+    if (written < 0)
+    {
+        bufpos[0] = '\0';
+        len = 1;
+    }
+    else if (written >= simplelist_line_remaining)
+        len = simplelist_line_remaining;
+    else
+        len = written + 1;
+
     simplelist_line_remaining -= len;
     simplelist_line_pos += len;
 }

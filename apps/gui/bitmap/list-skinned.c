@@ -67,6 +67,8 @@ static bool skinlist_is_configured(enum screen_type screen,
                                     struct gui_synclist *list)
 {
     return (listcfg[screen] != NULL) &&
+            listcfg[screen]->width > 0 &&
+            listcfg[screen]->height > 0 &&
             (!list || (list && list->selected_size == 1));
 }
 static int current_drawing_line;
