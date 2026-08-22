@@ -3175,7 +3175,8 @@ int dircache_save(void)
 {
     logf("Saving directory cache");
 
-    int fd = open_dircache_file(O_WRONLY|O_CREAT|O_TRUNC);
+    static const char temp_file[] = DIRCACHE_FILE ".tmp";
+    int fd = open(temp_file, O_WRONLY|O_CREAT|O_TRUNC, 0666);
     if (fd < 0)
         return -1;
 
@@ -3246,6 +3247,12 @@ int dircache_save(void)
         goto error;
     }
 
+    if (fsync(fd) < 0)
+    {
+        logf("dircache: sync failed");
+        goto error;
+    }
+
     /* as of now, no changes to the volumes should be allowed at all since
        that makes what was saved completely invalid */
     rc = 0;
@@ -3253,10 +3260,15 @@ error:
     core_unpin(dircache_runinfo.handle);
     dircache_unlock();
 
-    if (rc < 0)
-        remove_dircache_file();
+    if (close(fd) < 0)
+        rc = -1;
 
-    close(fd);
+    if (rc == 0 && rename(temp_file, DIRCACHE_FILE) < 0)
+        rc = -1;
+
+    if (rc < 0)
+        remove(temp_file);
+
     return rc;
 }
 #endif /* HAVE_EEPROM_SETTINGS */
