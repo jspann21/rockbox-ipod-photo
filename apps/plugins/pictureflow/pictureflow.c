@@ -2422,8 +2422,13 @@ static int create_empty_slide(bool force)
 #endif
         aa_cache.input_bmp.data = (char*)aa_cache.buf;
 
-        scaled_read_bmp_file(EMPTY_SLIDE_BMP, &aa_cache.input_bmp,
-                             aa_cache.buf_sz, format, &format_transposed);
+        if (scaled_read_bmp_file(EMPTY_SLIDE_BMP, &aa_cache.input_bmp,
+                                 aa_cache.buf_sz, format,
+                                 &format_transposed) <= 0)
+        {
+            rb->remove(EMPTY_SLIDE_TMP);
+            return false;
+        }
 
         if (!save_pfraw(EMPTY_SLIDE_TMP, &aa_cache.input_bmp) ||
             rb->rename(EMPTY_SLIDE_TMP, EMPTY_SLIDE) < 0)
