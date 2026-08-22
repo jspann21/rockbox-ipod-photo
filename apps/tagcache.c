@@ -5267,7 +5267,9 @@ static bool load_tagcache(void)
                     goto failure;
                 }
 #ifdef HAVE_DIRCACHE
-                if (dircache_search(DCS_CACHED_PATH | DCS_UPDATE_FILEREF,
+                if (global_settings.tagcache_ram == TAGCACHE_RAM_ON &&
+                    !global_settings.tagcache_autoupdate &&
+                    dircache_search(DCS_CACHED_PATH | DCS_UPDATE_FILEREF,
                                     &tcrc_dcfrefs[idx_id], filename) > 0)
                     idx->flag |= FLAG_DIRCACHE;
 #endif
