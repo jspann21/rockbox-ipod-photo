@@ -3258,6 +3258,7 @@ static inline void set_current_slide(const int slide_index)
 
 
 static void skip_animation_to_idle_state(void);
+static void error_wait(const char *message);
 static void return_to_idle_state(void)
 {
     if (pf_state == pf_show_tracks)
