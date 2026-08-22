@@ -585,6 +585,8 @@ static void swap_tagcache_header(struct tagcache_header *buf) { (void)buf; }
 static void swap_master_header(struct master_header *buf) { (void)buf; }
 #endif
 
+static ssize_t read_exact(int fd, void *buf, size_t size);
+
 #ifdef HAVE_TC_RAMCACHE
 static ssize_t tagcache_reader_entry(struct tagcache_reader *reader,
                                      struct tagfile_entry *entry)
@@ -598,7 +600,7 @@ static ssize_t tagcache_reader_entry(struct tagcache_reader *reader,
 
 static ssize_t read_tagfile_entry(int fd, struct tagfile_entry *buf)
 {
-    ssize_t ret = read(fd, buf, sizeof(*buf));
+    ssize_t ret = read_exact(fd, buf, sizeof(*buf));
     if (ret == sizeof(*buf) && tc_stat.econ)
         swap_tagfile_entry(buf);
 
@@ -857,7 +859,7 @@ read_tagfile_entry_and_tag(int fd, struct tagfile_entry *tfe,
     if (tag_length == 0)
         return e_TAG_SIZEMISMATCH;
 
-    if (read(fd, buf, tag_length) != tag_length)
+    if (read_exact(fd, buf, tag_length) != tag_length)
         return e_TAG_SIZEMISMATCH;
 
     if (!memchr(buf, '\0', tag_length))
@@ -896,9 +898,16 @@ tagcache_reader_entry_and_tag(struct tagcache_reader *reader,
 
 static ssize_t read_index_entries(int fd, struct index_entry *buf, size_t count)
 {
-    ssize_t ret = read(fd, buf, sizeof(*buf) * count);
-    for (ssize_t i = 0; i < ret; i += sizeof(*buf))
-        swap_index_entry(buf++);
+    if (count > SIZE_MAX / sizeof(*buf))
+        return -1;
+
+    size_t size = sizeof(*buf) * count;
+    ssize_t ret = read_exact(fd, buf, size);
+    if (ret == (ssize_t)size)
+    {
+        for (size_t i = 0; i < count; i++)
+            swap_index_entry(&buf[i]);
+    }
 
     return ret;
 }
@@ -949,7 +958,7 @@ static ssize_t write_index_entries(int fd, struct index_entry *buf, size_t count
 
 static ssize_t read_tagcache_header(int fd, struct tagcache_header *buf)
 {
-    ssize_t ret = read(fd, buf, sizeof(*buf));
+    ssize_t ret = read_exact(fd, buf, sizeof(*buf));
     if (ret == sizeof(*buf))
         swap_tagcache_header(buf);
 
@@ -965,7 +974,7 @@ static ssize_t write_tagcache_header(int fd, struct tagcache_header *buf)
 
 static ssize_t read_master_header(int fd, struct master_header *buf)
 {
-    ssize_t ret = read(fd, buf, sizeof(*buf));
+    ssize_t ret = read_exact(fd, buf, sizeof(*buf));
     if (ret == sizeof(*buf))
         swap_master_header(buf);
 
@@ -1061,7 +1070,7 @@ static int open_master_fd(struct master_header *hdr, bool write)
         return fd;
     }
 
-    rc = read(fd, hdr, sizeof(struct master_header));
+    rc = read_exact(fd, hdr, sizeof(struct master_header));
     if (rc != sizeof(struct master_header))
     {
         logf("master file read failed");
