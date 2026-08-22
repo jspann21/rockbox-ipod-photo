@@ -272,10 +272,32 @@ void lcd_update_rect(int x, int y, int width, int height)
 {
     unsigned long *addr;
 
+    if (width <= 0 || height <= 0 || x >= LCD_WIDTH || y >= LCD_HEIGHT)
+        return;
+    if (x < 0)
+    {
+        width += x;
+        x = 0;
+    }
+    if (y < 0)
+    {
+        height += y;
+        y = 0;
+    }
+    if (width <= 0 || height <= 0)
+        return;
+    if (width > LCD_WIDTH - x)
+        width = LCD_WIDTH - x;
+    if (height > LCD_HEIGHT - y)
+        height = LCD_HEIGHT - y;
+
     /* Ensure both x and width are even to be able to read 32-bit aligned 
      * data from lcd_framebuffer */
-    x     =  x & ~1;            /* use the smaller even number */
-    width = (width + 1) & ~1;   /* use the bigger even number  */
+    int right = MIN(LCD_WIDTH, (x + width + 1) & ~1);
+    x &= ~1;                    /* use the smaller even number */
+    width = right - x;
+    if (width <= 0)
+        return;
 
     lcd_setup_drawing_region(x, y, width, height);
 

@@ -217,7 +217,7 @@ int battery_current(void)
 
 #ifndef BOOTLOADER
 #if defined(HAVE_BACKLIGHT) && defined(CURRENT_BACKLIGHT)
-    if (backlight_get_current_timeout() == 0) /* LED always on */
+    if (is_backlight_on(true))
         current += CURRENT_BACKLIGHT;
 #endif
 
