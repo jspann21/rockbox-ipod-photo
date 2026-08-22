@@ -1829,7 +1829,13 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             struct mp3entry id3;
             size_t len;
             CHECKLEN(7);
-            long tracknum = get_u32(&buf[3]);
+            uint32_t requested_track = get_u32(&buf[3]);
+            if (requested_track >= (uint32_t)playlist_amount())
+            {
+                cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                break;
+            }
+            long tracknum = requested_track;
 
             data[2] = cmd + 1;
             memcpy(&id3, audio_current_track(), sizeof(id3));
@@ -3034,6 +3040,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              * the value of cur_dbrecord[0]
              */
         {
+            CHECKLEN(9);
             memcpy(cur_dbrecord, buf + 3, 5);
 
             int paused = !!(audio_status() & AUDIO_STATUS_PAUSE);
@@ -3042,12 +3049,13 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             uint32_t trackcount;
             index = get_u32(&cur_dbrecord[1]);
             trackcount = playlist_amount();
-            if ((cur_dbrecord[0] == 0x05) && (index > trackcount))
+            if ((cur_dbrecord[0] == 0x05) && (index >= trackcount))
             {
                 cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                 break;
             }
-            if ((cur_dbrecord[0] == 0x01) && (index > (number_of_playlists + 1)))
+            if ((cur_dbrecord[0] == 0x01) &&
+                (index >= (number_of_playlists + 1)))
             {
                 cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                 break;
