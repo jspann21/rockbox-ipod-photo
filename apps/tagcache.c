@@ -6240,8 +6240,9 @@ static void tagcache_thread(void)
                 {
                     load_ramcache();
                     if (global_settings.tagcache_ram == TAGCACHE_RAM_ON &&
-                        global_settings.tagcache_autoupdate)
-                        check_file_refs(true);
+                        global_settings.tagcache_autoupdate &&
+                        !check_file_refs(true))
+                        break;
                     if (tc_stat.ramcache && global_settings.tagcache_autoupdate)
                     {
                         tagcache_build();
@@ -6266,7 +6267,8 @@ static void tagcache_thread(void)
                     /* This will be very slow unless dircache is enabled
                        or target is flash based, but do it anyway for
                        consistency. */
-                    check_deleted_files();
+                    if (!check_deleted_files())
+                        break;
                 }
 
                 logf("tagcache check done");
