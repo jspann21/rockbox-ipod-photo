@@ -29,6 +29,13 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [x] Detect and propagate ATA flush failures and detect failed standby commands.
 - [x] Validate USB mass-storage LUNs, sector ranges, descriptor lengths, transfer
       sizes, controller descriptors, and SMART read results.
+- [x] Make action, WPS, power, tick-task, and timeout timing robust across tick
+      rollover and callback removal.
+- [x] Restore persistent directory-cache loading and validate saved cache sizes.
+- [x] Harden playback buffer capacity reporting and cached artwork paths.
+- [x] Propagate USB controller transfer errors and reject malformed mass-storage
+      command wrappers and invalid device geometry.
+- [x] Preserve the last valid iPod PMU ADC reading after an I2C failure.
 
 ## Reliability and maintainability
 
