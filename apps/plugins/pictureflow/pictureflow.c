@@ -2200,14 +2200,25 @@ static unsigned int mfnv(char *str)
 static bool save_pfraw(char* filename, struct bitmap *bm)
 {
     struct pfraw_header bmph;
+    size_t pixel_bytes;
+
+    if (bm->width <= 0 || bm->height <= 0 ||
+        bm->width > DISPLAY_WIDTH || bm->height > DISPLAY_HEIGHT)
+        return false;
+
+    pixel_bytes = sizeof(pix_t) * (size_t)bm->width * (size_t)bm->height;
     bmph.width = bm->width;
     bmph.height = bm->height;
     int fh = rb->open(filename, O_WRONLY|O_CREAT|O_TRUNC, 0666);
     if( fh < 0 ) return false;
-    rb->write( fh, &bmph, sizeof( struct pfraw_header ) );
-    rb->write( fh, bm->data , sizeof( pix_t ) * bm->width *  bm->height );
-    rb->close( fh );
-    return true;
+
+    bool ok = rb->write(fh, &bmph, sizeof(bmph)) == (ssize_t)sizeof(bmph) &&
+              rb->write(fh, bm->data, pixel_bytes) == (ssize_t)pixel_bytes;
+    if (rb->close(fh) < 0)
+        ok = false;
+    if (!ok)
+        rb->remove(filename);
+    return ok;
 }
 
 static bool incremental_albumart_cache(bool verbose)
