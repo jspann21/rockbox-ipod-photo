@@ -1686,6 +1686,9 @@ void INIT_ATTR buffering_init(void)
             buffering_thread_name IF_PRIO(, PRIORITY_BUFFERING)
             IF_COP(, CPU));
 
+    if (buffering_thread_id == 0)
+        panicf("buffering: no worker thread");
+
     queue_enable_queue_send(&buffering_queue, &buffering_queue_sender_list,
                             buffering_thread_id);
 }

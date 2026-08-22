@@ -54,11 +54,12 @@ static struct filestr_desc
 /* check and return a struct filestr_desc* from a file descriptor number */
 static struct filestr_desc * get_filestr(int fildes)
 {
-    struct filestr_desc *file = &open_streams[fildes];
+    struct filestr_desc *file = NULL;
 
-    if ((unsigned int)fildes >= MAX_OPEN_FILES)
-        file = NULL;
-    else if (file->stream.flags & FDO_BUSY)
+    if ((unsigned int)fildes < MAX_OPEN_FILES)
+        file = &open_streams[fildes];
+
+    if (file && (file->stream.flags & FDO_BUSY))
         return file;
 
     DEBUGF("fildes %d: bad file number\n", fildes);
@@ -840,8 +841,10 @@ int close(int fildes)
     file_internal_lock_WRITER();
 
     /* needs to work even if marked "nonexistant" */
-    struct filestr_desc *file = &open_streams[fildes];
-    if ((unsigned int)fildes >= MAX_OPEN_FILES || !file->stream.flags)
+    struct filestr_desc *file = NULL;
+    if ((unsigned int)fildes < MAX_OPEN_FILES)
+        file = &open_streams[fildes];
+    if (!file || !file->stream.flags)
     {
         DEBUGF("filedes %d not open\n", fildes);
         FILE_ERROR(EBADF, -2);

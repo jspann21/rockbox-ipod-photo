@@ -271,10 +271,10 @@ void storage_post_event(long event, intptr_t data)
         queue_post(&storage_queue, event, data);
 }
 
-static inline void storage_thread_init(void)
+static inline bool storage_thread_init(void)
 {
     if (storage_thread_id) {
-        return;
+        return true;
     }
 
     queue_init(&storage_queue, true);
@@ -283,6 +283,7 @@ static inline void storage_thread_init(void)
                                       0, &storage_thread_name[1]
                                       IF_PRIO(, PRIORITY_USER_INTERFACE)
                                       IF_COP(, CPU));
+    return storage_thread_id != 0;
 }
 
 int storage_init(void)
@@ -359,7 +360,8 @@ int storage_init(void)
     init_volume_names();
 #endif
 
-    storage_thread_init();
+    if (!storage_thread_init() && rc == 0)
+        rc = -1;
     return rc;
 }
 

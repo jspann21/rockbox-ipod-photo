@@ -6719,10 +6719,19 @@ void tagcache_init(void)
                sizeof(tc_stat.db_path));
     mutex_init(&command_queue_mutex);
     queue_init(&tagcache_queue, true);
-    create_thread(tagcache_thread, tagcache_stack,
-                  sizeof(tagcache_stack), 0, tagcache_thread_name
-                  IF_PRIO(, PRIORITY_BACKGROUND)
-                  IF_COP(, CPU));
+    unsigned int thread_id = create_thread(tagcache_thread, tagcache_stack,
+                              sizeof(tagcache_stack), 0,
+                              tagcache_thread_name
+                              IF_PRIO(, PRIORITY_BACKGROUND)
+                              IF_COP(, CPU));
+    if (thread_id == 0)
+    {
+        logf("tagcache: failed to create worker thread");
+        /* Keep boot and the file browser usable. The database remains
+         * unavailable instead of making main wait forever. */
+        tc_stat.initialized = true;
+        tc_stat.ready = false;
+    }
 #else
     /* use default DB path */
     strcpy(tc_stat.db_path, ROCKBOX_DIR);
