@@ -1332,6 +1332,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
         {
             unsigned char data[] = {0x04, 0x00, 0x19,
                                     0x00, 0x00, 0x00, 0x00};
+            CHECKLEN(4);
             switch(buf[3]) /* type number */
             {
                 case 0x01: /* total number of playlists */
@@ -1827,6 +1828,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             unsigned char data[70] = {0x04, 0x00, 0xFF};
             struct mp3entry id3;
             size_t len;
+            CHECKLEN(7);
             long tracknum = get_u32(&buf[3]);
 
             data[2] = cmd + 1;
@@ -2050,6 +2052,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              *
              */
         {
+            CHECKLEN(7);
             int paused = !!(audio_status() & AUDIO_STATUS_PAUSE);
             uint32_t index;
             uint32_t trackcount;
@@ -2340,6 +2343,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              *  7   0xNN  Telegram payload checksum byte
              *
              */
+            CHECKLEN(4);
             if(buf[3] && !global_settings.playlist_shuffle)
             {
                 global_settings.playlist_shuffle = 1;
@@ -2464,6 +2468,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              *  7   0xNN  Telegram payload checksum byte
              *
              */
+            CHECKLEN(4);
             int oldmode = global_settings.repeat_mode;
             if (buf[3] == 0)
                 global_settings.repeat_mode = REPEAT_OFF;
@@ -3178,6 +3183,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              * enable an unsupported hierarchy, such as a video hierarchy on an
              * iPod  model that does not support video.
              */
+            CHECKLEN(4);
             dbrecordcount = 0;
             cur_dbrecord[0] = 0;
             put_u32(&cur_dbrecord[1],0);
