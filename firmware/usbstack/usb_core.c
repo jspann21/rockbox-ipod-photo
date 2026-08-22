@@ -496,6 +496,13 @@ void usb_core_handle_transfer_completion(
 
     if(num == EP_CONTROL) {
         logf("ctrl handled %ld req=0x%x", current_tick,event->req->bRequest);
+        if(!(event->req->bRequestType & USB_DIR_IN) && event->req->wLength > 0 &&
+           (event->status != 0 || event->length != event->req->wLength)) {
+            logf("ctrl short write status=%d length=%d expected=%u",
+                 event->status, event->length, event->req->wLength);
+            usb_core_control_response(USB_CONTROL_STALL, NULL, 0);
+            return;
+        }
         usb_core_control_request_handler(event->req, usb_control_data, sizeof(usb_control_data));
         return;
     }

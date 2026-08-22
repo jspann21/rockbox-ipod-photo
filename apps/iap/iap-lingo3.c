@@ -361,7 +361,6 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
          */
         case 0x0C:
         {
-            struct playlist_info* playlist;
             int play_status;
             struct tm* tm;
 
@@ -389,8 +388,7 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x01:
                 {
-                    playlist = playlist_get_current();
-                    IAP_TX_PUT_U32(playlist->index - playlist->first_index);
+                    IAP_TX_PUT_U32(iap_get_trackindex());
 
                     iap_send_tx();
                     break;
@@ -401,8 +399,7 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x02:
                 {
-                    playlist = playlist_get_current();
-                    IAP_TX_PUT_U32(playlist->index - playlist->first_index);
+                    IAP_TX_PUT_U32(iap_get_trackindex());
                     /* Indicate that track does not have chapters */
                     IAP_TX_PUT_U16(0x0000);
                     IAP_TX_PUT_U16(0xFFFF);

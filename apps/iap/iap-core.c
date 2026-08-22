@@ -761,6 +761,9 @@ uint32_t iap_get_trackindex(void)
 {
     struct playlist_info* playlist = playlist_get_current();
 
+    if (playlist == NULL || playlist->amount <= 0)
+        return 0;
+
     return (playlist->index - playlist->first_index);
 }
 
@@ -1403,12 +1406,34 @@ const unsigned char *iap_get_serbuf(void)
 static int iap_move_callback(int handle, void* current, void* new)
 {
     (void) handle;
-    (void) current;
 
-    iap_txstart = new;
-    iap_txpayload = iap_txstart+5;
-    iap_txnext = iap_txpayload;
-    iap_rxstart = iap_buffers+(TX_BUFLEN+6);
+    unsigned char *oldbuf = current;
+    unsigned char *newbuf = new;
+    uintptr_t oldbase = (uintptr_t)oldbuf;
+    uintptr_t oldend = oldbase + IAP_MALLOC_SIZE;
+    uintptr_t pointers[] = {
+        (uintptr_t)iap_txstart, (uintptr_t)iap_txpayload,
+        (uintptr_t)iap_txnext, (uintptr_t)iap_rxstart,
+        (uintptr_t)iap_rxpayload, (uintptr_t)iap_rxnext,
+    };
+
+    iap_buffers = newbuf;
+
+    for (size_t i = 0; i < ARRAYLEN(pointers); i++)
+    {
+        if (pointers[i] < oldbase || pointers[i] > oldend)
+        {
+            iap_reset_buffers();
+            return BUFLIB_CB_OK;
+        }
+    }
+
+    iap_txstart = newbuf + (iap_txstart - oldbuf);
+    iap_txpayload = newbuf + (iap_txpayload - oldbuf);
+    iap_txnext = newbuf + (iap_txnext - oldbuf);
+    iap_rxstart = newbuf + (iap_rxstart - oldbuf);
+    iap_rxpayload = newbuf + (iap_rxpayload - oldbuf);
+    iap_rxnext = newbuf + (iap_rxnext - oldbuf);
 
     return BUFLIB_CB_OK;
 }

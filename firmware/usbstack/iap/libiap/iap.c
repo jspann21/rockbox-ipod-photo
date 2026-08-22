@@ -1157,6 +1157,13 @@ static int32_t build_ipod_ack_response(uint8_t lingo, uint16_t command, uint8_t 
 }
 
 IAPBool _iap_feed_packet(struct IAPContext* ctx, const uint8_t* const data, const size_t size) {
+    /* The response buffer is also the backing store for reports which have
+     * not reached the accessory yet. Do not let a new request overwrite an
+     * in-flight response; stalling it lets the accessory retry cleanly. */
+    check_ret(!ctx->send_busy &&
+              ctx->send_buf_sending_cursor >= ctx->send_buf_sending_range_end,
+              iap_false);
+
     union {
         uint8_t  u8;
         uint16_t u16;

@@ -91,7 +91,9 @@ IAPBool iap_platform_get_ipod_serial_num(struct IAPContext* iap_ctx, struct IAPS
 IAPBool iap_platform_get_play_status(struct IAPContext* iap_ctx, struct IAPPlatformPlayStatus* status) {
     struct Platform* plt = iap_ctx->platform;
 
+    memset(status, 0, sizeof(*status));
     status->state = _iap_convert_play_status(audio_status());
+    status->track_count = MAX(playlist_amount(), 0);
     if(status->state == IAPIPodStatePlayStatus_PlaybackStopped) {
         return iap_true;
     }
@@ -100,8 +102,8 @@ IAPBool iap_platform_get_play_status(struct IAPContext* iap_ctx, struct IAPPlatf
     check_act(id3 != NULL, return iap_false);
     status->track_total_ms = id3->length;
     status->track_pos_ms   = id3->elapsed;
-    status->track_index    = playlist_get_display_index() - 1;
-    status->track_count    = playlist_amount();
+    int display_index = playlist_get_display_index();
+    status->track_index    = display_index > 0 ? display_index - 1 : 0;
     status->track_caps     = IAPIPodStateTrackCapBits_HasReleaseDate;
     if(plt->aa_slot >= 0 && playback_current_aa_hid(plt->aa_slot) >= 0) {
         status->track_caps |= IAPIPodStateTrackCapBits_HasAlbumArts;

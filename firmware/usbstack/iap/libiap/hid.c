@@ -107,9 +107,9 @@ IAPBool iap_notify_send_complete(struct IAPContext* ctx) {
 }
 
 IAPBool _iap_send_hid_reports(struct IAPContext* ctx, size_t begin, size_t end) {
-    if(ctx->send_buf_sending_cursor < ctx->send_buf_sending_range_end) {
-        warn("another transmission in progress, aborting it");
-    }
+    check_ret(!ctx->send_busy &&
+              ctx->send_buf_sending_cursor >= ctx->send_buf_sending_range_end,
+              iap_false, "another transmission is already in progress");
     ctx->send_buf_sending_cursor      = begin;
     ctx->send_buf_sending_range_begin = begin;
     ctx->send_buf_sending_range_end   = end;
