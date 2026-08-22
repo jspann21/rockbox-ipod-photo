@@ -38,6 +38,7 @@ static const int support_codepages[5] = {
 
 /* extra codepage */
 #define UCS2  (NUM_CODEPAGES + 1)
+#define SMAF_TEXT_LIMIT 256
 
 /* support id3 tag */
 #define TAG_TITLE    (('S'<<8)|'T')
@@ -113,9 +114,15 @@ static void set_length(struct mp3entry *id3, unsigned int ch, unsigned int baseb
 static void decode2utf8(const unsigned char *src, unsigned char **dst,
                         int srcsize, int *dstsize, int codepage)
 {
-    unsigned char tmpbuf[srcsize * 3 + 1];
+    unsigned char tmpbuf[SMAF_TEXT_LIMIT * 3 + 1];
     unsigned char *p;
     int utf8size;
+
+    if (!dst || !*dst || !dstsize || *dstsize <= 0 || srcsize < 0)
+        return;
+    srcsize = MIN(srcsize, SMAF_TEXT_LIMIT);
+    if (codepage == UCS2)
+        srcsize &= ~1;
 
     if (codepage < NUM_CODEPAGES)
         p = iso_decode(src, tmpbuf, codepage, srcsize);
@@ -136,64 +143,77 @@ static void decode2utf8(const unsigned char *src, unsigned char **dst,
     *dstsize -= utf8size;
 }
 
-static int read_audio_track_contents(int fd, int codepage, unsigned char **dst,
-                                    int *dstsize)
+static int read_audio_track_contents(int fd, int codepage, int remaining,
+                                     unsigned char **dst, int *dstsize)
 {
     /* value length <= 256 bytes */
-    unsigned char buf[256];
+    unsigned char buf[SMAF_TEXT_LIMIT];
     unsigned char *p = buf;
     unsigned char *q = buf;
 
-    int datasize = read(fd, buf, 256);
+    int readsize = MIN(remaining, SMAF_TEXT_LIMIT);
+    int datasize = read(fd, buf, readsize);
     if (datasize <= 0)
         return  0;
 
-    while (p - buf < datasize && *p != ',')
+    unsigned char *end = buf + datasize;
+    while (p < end)
     {
+        int charsize = codepage == UCS2 ? 2 : 1;
+        if ((codepage == UCS2 && end - p >= 2 && p[0] == 0 && p[1] == ',') ||
+            (codepage != UCS2 && *p == ','))
+        {
+            p += charsize;
+            break;
+        }
+
         /* skip yen mark */
         if (codepage != UCS2)
         {
             if (*p == '\\')
+            {
                 p++;
+                if (p >= end)
+                    break;
+            }
         }
-        else if (*p == '\0' && *(p+1) == '\\')
-            p += 2;
-
-        if (*p > 0x7f)
+        else if (end - p >= 2 && p[0] == '\0' && p[1] == '\\')
         {
-            if (codepage == UTF_8)
-            {
-                while ((*p & MASK) != COMP)
-                    *q++ = *p++;
-            }
-            else if (codepage == SJIS)
-            {
-                if (*p <= 0xa0 || *p >= 0xe0)
-                    *q++ = *p++;
-            }
+            p += 2;
+            if (p >= end)
+                break;
         }
 
-        *q++ = *p++;
-        if (codepage == UCS2)
+        charsize = codepage == UCS2 ? 2 :
+                   (codepage == SJIS && *p > 0x7f &&
+                    (*p <= 0xa0 || *p >= 0xe0) ? 2 : 1);
+        if (end - p < charsize || q - buf > SMAF_TEXT_LIMIT - charsize)
+            break;
+        while (charsize-- > 0)
             *q++ = *p++;
     }
 
-    datasize =  p - buf + 1;
-    lseek(fd, datasize - 256, SEEK_CUR);
+    int consumed = p - buf;
+    if (lseek(fd, consumed - datasize, SEEK_CUR) < 0)
+        return 0;
 
     if (dst != NULL)
         decode2utf8(buf, dst, q - buf, dstsize, codepage);
 
-    return datasize;
+    return consumed;
 }
 
-static void read_score_track_contents(int fd, int codepage, int datasize,
-                                     unsigned char **dst, int *dstsize)
+static bool read_score_track_contents(int fd, int codepage, int datasize,
+                                      unsigned char **dst, int *dstsize)
 {
-    unsigned char buf[datasize];
-    if (read(fd, buf, datasize) != datasize)
-        memset(buf, 0, datasize);
-    decode2utf8(buf, dst, datasize, dstsize, codepage);
+    unsigned char buf[SMAF_TEXT_LIMIT];
+    int keep = MIN(datasize, SMAF_TEXT_LIMIT);
+    if (read(fd, buf, keep) != keep)
+        return false;
+    if (datasize > keep && lseek(fd, datasize - keep, SEEK_CUR) < 0)
+        return false;
+    decode2utf8(buf, dst, keep, dstsize, codepage);
+    return true;
 }
 
 /* traverse chunk functions */
@@ -209,7 +229,12 @@ static unsigned int search_chunk(int fd, const unsigned char *name, int nlen)
         if (memcmp(buf, name, nlen) == 0)
             return chunksize;
 
-        lseek(fd, chunksize, SEEK_CUR);
+        off_t pos = lseek(fd, 0, SEEK_CUR);
+        off_t size = filesize(fd);
+        if (pos < 0 || size < 0 || pos > size ||
+            chunksize > (uint64_t)(size - pos) ||
+            lseek(fd, chunksize, SEEK_CUR) < 0)
+            break;
     }
     DEBUGF("metadata error: missing '%s' chunk\n", name);
     return 0;
@@ -227,8 +252,9 @@ static bool parse_smaf_audio_track(int fd, struct mp3entry *id3, unsigned int da
     int codepage = -1;
 
     /* parse contents info */
-    if (read(fd, tmp, 5) == 5)
-        codepage = convert_smaf_codetype(tmp[2]);
+    if (datasize < 5 || read(fd, tmp, 5) != 5)
+        return false;
+    codepage = convert_smaf_codetype(tmp[2]);
 
     if (codepage < 0)
     {
@@ -240,8 +266,9 @@ static bool parse_smaf_audio_track(int fd, struct mp3entry *id3, unsigned int da
     while ((id3->title == NULL || id3->artist == NULL || id3->composer == NULL)
            && (datasize > 0 && bufsize > 0))
     {
-        if (read(fd, tmp, 3) != 3)
+        if (datasize < 3 || read(fd, tmp, 3) != 3)
             return false;
+        datasize -= 3;
 
         if (tmp[2] != ':')
         {
@@ -252,25 +279,34 @@ static bool parse_smaf_audio_track(int fd, struct mp3entry *id3, unsigned int da
         {
             case TAG_TITLE:
                 id3->title = buf;
-                valsize = read_audio_track_contents(fd, codepage, &buf, &bufsize);
+                valsize = read_audio_track_contents(fd, codepage, datasize,
+                                                    &buf, &bufsize);
                 break;
             case TAG_ARTIST:
                 id3->artist = buf;
-                valsize = read_audio_track_contents(fd, codepage, &buf, &bufsize);
+                valsize = read_audio_track_contents(fd, codepage, datasize,
+                                                    &buf, &bufsize);
                 break;
             case TAG_COMPOSER:
                 id3->composer = buf;
-                valsize = read_audio_track_contents(fd, codepage, &buf, &bufsize);
+                valsize = read_audio_track_contents(fd, codepage, datasize,
+                                                    &buf, &bufsize);
                 break;
             default:
-                valsize = read_audio_track_contents(fd, codepage, NULL, &bufsize);
+                valsize = read_audio_track_contents(fd, codepage, datasize,
+                                                    NULL, &bufsize);
                 break;
         }
-        datasize -= (valsize + 3);
+        if (valsize <= 0 || (unsigned int)valsize > datasize)
+            return false;
+        datasize -= valsize;
     }
 
     /* search PCM Audio Track Chunk */
-    lseek(fd, 16 + chunksize, SEEK_SET);
+    off_t content_end = 16 + (off_t)chunksize;
+    if (content_end < 16 || content_end > filesize(fd) ||
+        lseek(fd, content_end, SEEK_SET) != content_end)
+        return false;
 
     chunksize = search_chunk(fd, "ATR", 3);
     if (chunksize == 0)
@@ -292,7 +328,8 @@ static bool parse_smaf_audio_track(int fd, struct mp3entry *id3, unsigned int da
      * Note: If PCM Audio Track does not include Sequence Data Chunk,
      *       tmp+6 is the start position of Wave Data Chunk.
      */
-    read(fd, tmp, 6);
+    if (chunksize < 6 || read(fd, tmp, 6) != 6)
+        return false;
 
     /* search Wave Data Chunk */
     chunksize = search_chunk(fd, "Awa", 3);
@@ -324,7 +361,8 @@ static bool parse_smaf_score_track(int fd, struct mp3entry *id3)
     int codepage;
 
     /* parse Optional Data Chunk */
-    read(fd, tmp, 21);
+    if (read(fd, tmp, 21) != 21)
+        return false;
     if (memcmp(tmp + 5, "OPDA", 4) != 0)
     {
         DEBUGF("metadata error: missing Optional Data Chunk\n");
@@ -333,6 +371,8 @@ static bool parse_smaf_score_track(int fd, struct mp3entry *id3)
 
     /* Optional Data Chunk size */
     chunksize = get_long_be(tmp + 9);
+    if (chunksize < 8 || 29u + (uint64_t)chunksize > (uint64_t)id3->filesize)
+        return false;
 
     /* parse Data Chunk */
     if (memcmp(tmp + 13, "Dch", 3) != 0)
@@ -353,33 +393,47 @@ static bool parse_smaf_score_track(int fd, struct mp3entry *id3)
     while ((id3->title == NULL || id3->artist == NULL || id3->composer == NULL)
            && (datasize > 0 && bufsize > 0))
     {
+        if (datasize < 4)
+            return false;
         if (read(fd, tmp, 4) != 4)
             return false;
 
         valsize = (tmp[2] << 8) | tmp[3];
-        datasize -= (valsize + 4);
+        if ((unsigned int)valsize > datasize - 4)
+            return false;
+        datasize -= valsize + 4;
         switch ((tmp[0]<<8)|tmp[1])
         {
             case TAG_TITLE:
                 id3->title = buf;
-                read_score_track_contents(fd, codepage, valsize, &buf, &bufsize);
+                if (!read_score_track_contents(fd, codepage, valsize,
+                                               &buf, &bufsize))
+                    return false;
                 break;
             case TAG_ARTIST:
                 id3->artist = buf;
-                read_score_track_contents(fd, codepage, valsize, &buf, &bufsize);
+                if (!read_score_track_contents(fd, codepage, valsize,
+                                               &buf, &bufsize))
+                    return false;
                 break;
             case TAG_COMPOSER:
                 id3->composer = buf;
-                read_score_track_contents(fd, codepage, valsize, &buf, &bufsize);
+                if (!read_score_track_contents(fd, codepage, valsize,
+                                               &buf, &bufsize))
+                    return false;
                 break;
             default:
-                lseek(fd, valsize, SEEK_CUR);
+                if (lseek(fd, valsize, SEEK_CUR) < 0)
+                    return false;
                 break;
         }
     }
 
     /* search Score Track Chunk */
-    lseek(fd, 29 + chunksize, SEEK_SET);
+    off_t optional_end = 29 + (off_t)chunksize;
+    if (optional_end < 29 || optional_end > id3->filesize ||
+        lseek(fd, optional_end, SEEK_SET) != optional_end)
+        return false;
 
     if (search_chunk(fd, "MTR", 3) == 0)
     {
@@ -392,13 +446,15 @@ static bool parse_smaf_score_track(int fd, struct mp3entry *id3)
      * usually, next chunk ('M***') found within 40 bytes.
      */
     chunksize = 40;
-    read(fd, tmp, chunksize);
+    int search_size = read(fd, tmp, chunksize);
+    if (search_size <= 0)
+        return false;
 
-    tmp[chunksize] = 'M'; /* stopper */
+    tmp[search_size] = 'M'; /* stopper */
     while (*p != 'M')
         p++;
 
-    chunksize -= (p - tmp);
+    chunksize = search_size - (p - tmp);
     if (chunksize == 0)
     {
         DEBUGF("metadata error: missing Score Track Stream PCM Data Chunk");
@@ -406,7 +462,8 @@ static bool parse_smaf_score_track(int fd, struct mp3entry *id3)
     }
 
     /* search Score Track Stream PCM Data Chunk */
-    lseek(fd, -chunksize, SEEK_CUR);
+    if (lseek(fd, -(off_t)chunksize, SEEK_CUR) < 0)
+        return false;
     if (search_chunk(fd, "Mtsp", 4) == 0)
     {
         DEBUGF("metadata error: missing Score Track Stream PCM Data Chunk\n");
@@ -421,7 +478,8 @@ static bool parse_smaf_score_track(int fd, struct mp3entry *id3)
      *    +9:   frequency (MSB)
      *    +10:  frequency (LSB)
      */
-    read(fd, tmp, 11);
+    if (read(fd, tmp, 11) != 11)
+        return false;
     if (memcmp(tmp, "Mwa", 3) != 0)
     {
         DEBUGF("metadata error: missing Score Track Stream Wave Data Chunk\n");
@@ -429,8 +487,11 @@ static bool parse_smaf_score_track(int fd, struct mp3entry *id3)
     }
 
     /* set track length and bitrate */
+    unsigned int wave_size = get_long_be(tmp + 4);
+    if (wave_size < 3)
+        return false;
     id3->frequency = (tmp[9] << 8) | tmp[10];
-    set_length(id3, tmp[8], tmp[8] & 0x0f, get_long_be(tmp + 4) - 3);
+    set_length(id3, tmp[8], tmp[8] & 0x0f, wave_size - 3);
     return true;
 }
 
@@ -445,7 +506,10 @@ bool get_smaf_metadata(int fd, struct mp3entry* id3)
     id3->composer = NULL;
 
     id3->vbr      = false;   /* All SMAF files are CBR */
-    id3->filesize = filesize(fd);
+    off_t file_size = filesize(fd);
+    if (file_size < 16)
+        return false;
+    id3->filesize = file_size;
 
     /* check File Chunk and Contents Info Chunk */
     lseek(fd, 0, SEEK_SET);
