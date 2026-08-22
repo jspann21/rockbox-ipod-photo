@@ -1503,7 +1503,20 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                         break;
                 }
                 put_u32(&data[3], start_index+counter);
-                iap_send_pkt(data, 7 + strlen(data+7) + 1);
+                {
+                    size_t name_len = strlen((char *)data + 7);
+                    const size_t max_name_len = TX_BUFLEN - 8;
+
+                    /* Playlist filenames may be MAX_PATH bytes long, but
+                     * the iAP transmitter has a fixed payload buffer. Keep
+                     * the reply terminated and inside that buffer. */
+                    if (name_len > max_name_len)
+                    {
+                        name_len = max_name_len;
+                        data[7 + name_len] = '\0';
+                    }
+                    iap_send_pkt(data, 7 + name_len + 1);
+                }
                 yield();
             }
             break;
