@@ -48,6 +48,7 @@
 #include "audiohw.h"
 #include "general.h"
 #include "iap-usb.h"
+#include "string-extra.h"
 #include <stdio.h>
 
 #ifdef HAVE_TAGCACHE
@@ -1929,7 +1930,7 @@ static int load_album_art_from_path(char *path, struct bufopen_bitmap_data *user
     if (!same_path && is_cacheable)
     {
         clear_last_folder_album_art();
-        strlcpy(last_folder_aa_path, path, sizeof(last_folder_aa_path));
+        strmemccpy(last_folder_aa_path, path, sizeof(last_folder_aa_path));
     }
     int hid = bufopen(path, 0, TYPE_BITMAP, user_data);
     if (hid != ERR_BUFFER_FULL && (same_path || is_cacheable))
