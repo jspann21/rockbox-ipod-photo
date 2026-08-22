@@ -5333,13 +5333,16 @@ static bool check_file_refs(bool auto_update)
 #ifdef HAVE_TC_RAMCACHE
     struct tagcache_reader reader;
 #endif
+#ifdef HAVE_DIRCACHE
+    bool ram_refs = tcramcache.handle > 0;
+#endif
 
     logf("reverse scan...");
 
 #ifdef HAVE_DIRCACHE
-    if (tcramcache.handle > 0)
+    if (ram_refs)
         tcrc_buffer_lock();
-    else
+    else if (!auto_update)
         return false;
     /* Wait for any in-progress dircache build to complete */
     dircache_wait();
@@ -5354,7 +5357,8 @@ static bool check_file_refs(bool auto_update)
     {
         logf(TAGCACHE_FILE_INDEX " open fail", tag_filename);
 #ifdef HAVE_DIRCACHE
-        tcrc_buffer_unlock();
+        if (ram_refs)
+            tcrc_buffer_unlock();
 #endif
         return false;
     }
@@ -5363,7 +5367,8 @@ static bool check_file_refs(bool auto_update)
     if (!tagcache_reader_init(&reader, fd))
     {
 #ifdef HAVE_DIRCACHE
-        tcrc_buffer_unlock();
+        if (ram_refs)
+            tcrc_buffer_unlock();
 #endif
         close(fd);
         return false;
@@ -5409,35 +5414,37 @@ static bool check_file_refs(bool auto_update)
             ret = false;
             goto wend_finished;
         }
+        bool missing = false;
 #ifdef HAVE_DIRCACHE
-        struct index_entry *idx = &tcramcache.hdr->indices[idx_id];
-        unsigned int searchflag;
-        if (!auto_update)
+        if (ram_refs)
         {
-            if(idx->flag & FLAG_DIRCACHE) /* already found */
+            struct index_entry *idx = &tcramcache.hdr->indices[idx_id];
+            unsigned int searchflag;
+            if (!auto_update)
             {
-                continue;
+                if(idx->flag & FLAG_DIRCACHE) /* already found */
+                    continue;
+                searchflag = DCS_CACHED_PATH; /* load cache references */
             }
-            searchflag = DCS_CACHED_PATH; /* attempt to load cache references */
-        }
-        else /* If auto updating, check storage too */
-        {
-            searchflag = DCS_STORAGE_PATH;
-        }
+            else /* If auto updating, check storage too */
+            {
+                searchflag = DCS_STORAGE_PATH;
+            }
 
-        int rc_cache = dircache_search(searchflag | DCS_UPDATE_FILEREF,
-                                   &tcrc_dcfrefs[idx_id], buf);
+            int rc_cache = dircache_search(searchflag | DCS_UPDATE_FILEREF,
+                                           &tcrc_dcfrefs[idx_id], buf);
 
-        if (rc_cache > 0)           /* in cache and we have fileref */
-        {
-            idx->flag |= FLAG_DIRCACHE;
+            if (rc_cache > 0) /* in cache and we have fileref */
+                idx->flag |= FLAG_DIRCACHE;
+            else if (auto_update && rc_cache == ENOENT)
+                missing = true;
         }
-        else if (rc_cache == 0)     /* not in cache but okay */
-        {;}
-        else if (auto_update && rc_cache == ENOENT)
+        else
+            missing = !file_exists(buf);
 #else
-        if (!file_exists(buf))
+        missing = !file_exists(buf);
 #endif /* HAVE_DIRCACHE */
+        if (missing)
         {
             logf("Entry no longer valid.");
             logf("-> %s / %" PRId32, buf, tfe.tag_length);
@@ -5450,7 +5457,7 @@ static bool check_file_refs(bool auto_update)
 wend_finished:
 
 #ifdef HAVE_DIRCACHE
-    if (tcramcache.handle > 0)
+    if (ram_refs)
         tcrc_buffer_unlock();
 #endif
     close(fd);
