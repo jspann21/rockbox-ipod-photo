@@ -36,6 +36,10 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [x] Propagate USB controller transfer errors and reject malformed mass-storage
       command wrappers and invalid device geometry.
 - [x] Preserve the last valid iPod PMU ADC reading after an I2C failure.
+- [x] Buffer initial database records, batch master-index updates, coalesce tag
+      writes, and cache the temporary database during commit when RAM permits.
+- [x] Reject incomplete database writes, checkpoint long scans, publish durable
+      database headers last, and recover interrupted initial or update commits.
 
 ## Reliability and maintainability
 
@@ -53,7 +57,9 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [ ] Audit ATA IDENTIFY capability handling, LBA48, and unusual adapter replies.
 - [x] Improve DMA timeout fallback, reset recovery, and bounded retry behavior.
 - [ ] Check cold boot, wake, sleep, shutdown, and storage power sequencing.
-- [ ] Check database scans, album-art caching, USB writes, eject, and reconnect.
+- [x] Harden initial database scan and commit I/O; retain hardware timing and
+      power-loss checks for the installed iPod.
+- [ ] Check album-art caching, USB writes, eject, and reconnect.
 - [ ] Avoid retry storms and unnecessary storage wakeups that hurt responsiveness
       and battery life.
 
