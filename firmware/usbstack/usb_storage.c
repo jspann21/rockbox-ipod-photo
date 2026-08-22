@@ -885,10 +885,10 @@ static void handle_scsi(struct command_block_wrapper* cbw)
             unsigned int allocation_length=0;
             int i;
             unsigned int response_length = 8+8*storage_num_drives();
-            allocation_length|=(cbw->command_block[6]<<24);
-            allocation_length|=(cbw->command_block[7]<<16);
-            allocation_length|=(cbw->command_block[8]<<8);
-            allocation_length|=(cbw->command_block[9]);
+            allocation_length |= (uint32_t)cbw->command_block[6] << 24;
+            allocation_length |= (uint32_t)cbw->command_block[7] << 16;
+            allocation_length |= (uint32_t)cbw->command_block[8] << 8;
+            allocation_length |= (uint32_t)cbw->command_block[9];
             memset(tb.lun_data,0,sizeof(struct report_lun_data));
             tb.lun_data->lun_list_length=htobe32(8*storage_num_drives());
             for(i=0;i<storage_num_drives();i++)
