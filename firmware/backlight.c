@@ -73,6 +73,7 @@
 #define BACKLIGHT_THREAD_TIMEOUT HZ
 
 enum {
+    BACKLIGHT_IGNORE_CHANGED,
     BACKLIGHT_ON,
     BACKLIGHT_OFF,
     BACKLIGHT_TMO_CHANGED,
@@ -160,6 +161,8 @@ void buttonlight_on_ignore(bool value, int timeout)
 {
     ignore_buttonlight_on = value;
     buttonlight_ignored_timer = timeout;
+    if (timeout > 0)
+        queue_post(&backlight_queue, BACKLIGHT_IGNORE_CHANGED, 0);
 }
 
 void buttonlight_off(void)
@@ -559,7 +562,20 @@ static void backlight_queue_wait(struct queue_event *ev)
         queue_wait_w_tmo(&backlight_queue, ev, FADE_DELAY);
     else
 #endif
+    if (backlight_timer > 0 || backlight_ignored_timer > 0
+#ifdef HAVE_LCD_SLEEP
+        || lcd_sleep_timer > 0
+#endif
+#ifdef HAVE_REMOTE_LCD
+        || remote_backlight_timer > 0
+#endif
+#ifdef HAVE_BUTTON_LIGHT
+        || buttonlight_timer > 0 || buttonlight_ignored_timer > 0
+#endif
+       )
         queue_wait_w_tmo(&backlight_queue, ev, BACKLIGHT_THREAD_TIMEOUT);
+    else
+        queue_wait(&backlight_queue, ev);
 }
 
 void backlight_thread(void)
@@ -829,6 +845,8 @@ void backlight_on_ignore(bool value, int timeout)
 {
     ignore_backlight_on = value;
     backlight_ignored_timer = timeout;
+    if (timeout > 0)
+        queue_post(&backlight_queue, BACKLIGHT_IGNORE_CHANGED, 0);
 }
 
 void backlight_off(void)
