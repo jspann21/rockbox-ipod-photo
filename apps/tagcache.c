@@ -376,6 +376,95 @@ static struct tcramcache
     int handle;                       /* buffer handle */
 } tcramcache;
 
+#define TAGCACHE_LOAD_BUFSZ 4096
+static unsigned char tagcache_load_buf[TAGCACHE_LOAD_BUFSZ];
+
+struct tagcache_reader
+{
+    int fd;
+    size_t position;
+    size_t available;
+    off_t file_position;
+};
+
+static bool tagcache_reader_init(struct tagcache_reader *reader, int fd)
+{
+    off_t position = lseek(fd, 0, SEEK_CUR);
+    if (position < 0)
+        return false;
+
+    reader->fd = fd;
+    reader->position = 0;
+    reader->available = 0;
+    reader->file_position = position;
+    return true;
+}
+
+static ssize_t tagcache_reader_read(struct tagcache_reader *reader,
+                                    void *buffer, size_t size)
+{
+    unsigned char *out = buffer;
+    size_t remaining = size;
+
+    while (remaining > 0)
+    {
+        if (reader->position == reader->available)
+        {
+            ssize_t rc;
+            do
+            {
+                rc = read(reader->fd, tagcache_load_buf,
+                          sizeof(tagcache_load_buf));
+            }
+            while (rc < 0 && errno == EINTR);
+
+            if (rc <= 0)
+                return -1;
+
+            reader->position = 0;
+            reader->available = rc;
+        }
+
+        size_t count = MIN(remaining, reader->available - reader->position);
+        memcpy(out, tagcache_load_buf + reader->position, count);
+        reader->position += count;
+        reader->file_position += count;
+        out += count;
+        remaining -= count;
+    }
+
+    return size;
+}
+
+static bool tagcache_reader_skip(struct tagcache_reader *reader, size_t size)
+{
+    size_t buffered = reader->available - reader->position;
+    size_t consume = MIN(size, buffered);
+    reader->position += consume;
+    reader->file_position += consume;
+    size -= consume;
+
+    if (size == 0)
+        return true;
+
+    reader->position = 0;
+    reader->available = 0;
+    if (lseek(reader->fd, size, SEEK_CUR) < 0)
+        return false;
+
+    reader->file_position += size;
+    return true;
+}
+
+static ssize_t tagcache_reader_entry(struct tagcache_reader *reader,
+                                     struct tagfile_entry *entry)
+{
+    ssize_t rc = tagcache_reader_read(reader, entry, sizeof(*entry));
+    if (rc == sizeof(*entry))
+        swap_tagfile_entry(entry);
+    return rc;
+}
+
 static inline void tcrc_buffer_lock(void)
 {
     core_pin(tcramcache.handle);
@@ -4888,6 +4977,7 @@ static bool load_tagcache(void)
     for (int tag = 0; tag < TAG_COUNT; tag++)
     {
         ssize_t rc;
+        struct tagcache_reader reader;
 
         if (TAGCACHE_IS_NUMERIC(tag))
             continue;
@@ -4908,7 +4998,7 @@ static bool load_tagcache(void)
         bytesleft -= sizeof (struct tagcache_header);
 
         fd = open_tag_fd(tch, tag, false);
-        if (fd < 0)
+        if (fd < 0 || !tagcache_reader_init(&reader, fd))
             goto failure;
 
         /* Load the entries for this tag */
@@ -4929,18 +5019,23 @@ static bool load_tagcache(void)
             }
 
             struct tagfile_entry *fe = (struct tagfile_entry *)p;
-            off_t pos = lseek(fd, 0, SEEK_CUR);
+            off_t pos = reader.file_position;
 
             /* Load the header for the tag itself */
-            if (read_tagfile_entry(fd, fe) != sizeof(struct tagfile_entry))
+            if (tagcache_reader_entry(&reader, fe) != sizeof(*fe))
             {
                 /* End of lookup table. */
                 logf("read error #11");
                 goto failure;
             }
+            if (fe->tag_length < 0)
+            {
+                logf("invalid tag length");
+                goto failure;
+            }
 
             int idx_id = fe->idx_id; /* dircache reference clobbers *fe */
-            struct index_entry *idx = &tcramcache.hdr->indices[idx_id];
+            struct index_entry *idx = NULL;
 
             if (idx_id != -1 || tag == tag_filename) /* filename NOT optional */
             {
@@ -4949,6 +5044,7 @@ static bool load_tagcache(void)
                     logf("corrupt tagfile entry:tag=%d:idxid=%d", tag, idx_id);
                     goto failure;
                 }
+                idx = &tcramcache.hdr->indices[idx_id];
 
                 if (idx->tag_seek[tag] != pos)
                 {
@@ -4979,7 +5075,7 @@ static bool load_tagcache(void)
                 char filename[TAGCACHE_BUFSZ];
                 if (fe->tag_length >= (long)sizeof(filename)-1)
                 {
-                    read(fd, filename, 10);
+                    tagcache_reader_read(&reader, filename, 10);
                     str_setlen(filename, 10);
                     logf("TAG:%s", filename);
                     logf("too long filename");
@@ -4990,7 +5086,7 @@ static bool load_tagcache(void)
                     IFN_DIRCACHE( || !global_settings.tagcache_autoupdate ))
                 {
                     /* seek over tag data instead of reading */
-                    if (lseek(fd, fe->tag_length, SEEK_CUR) < 0)
+                    if (!tagcache_reader_skip(&reader, fe->tag_length))
                     {
                         logf("read error #11.5");
                         goto failure;
@@ -4999,7 +5095,8 @@ static bool load_tagcache(void)
                     continue;
                 }
 
-                if (read(fd, filename, fe->tag_length) != fe->tag_length)
+                if (tagcache_reader_read(&reader, filename, fe->tag_length) !=
+                    fe->tag_length)
                 {
                     logf("read error #12");
                     goto failure;
@@ -5017,18 +5114,17 @@ static bool load_tagcache(void)
             }
 
             p = fe->tag_data;
-            rc = read(fd, p, fe->tag_length);
-            p += rc;
-
+            rc = tagcache_reader_read(&reader, p, fe->tag_length);
             if (rc != fe->tag_length)
             {
                 logf("read error #13");
                 logf("rc=0x%04x", (unsigned int)rc); // 0x431
                 logf("len=0x%04" PRIx32, fe->tag_length); // 0x4000
-                logf("pos=0x%04lx", (unsigned long) lseek(fd, 0, SEEK_CUR)); // 0x433
+                logf("pos=0x%04lx", (unsigned long)reader.file_position); // 0x433
                 logf("tag=0x%02x", tag); // 0x00
                 goto failure;
             }
+            p += rc;
         }
 
     #ifdef HAVE_DIRCACHE
