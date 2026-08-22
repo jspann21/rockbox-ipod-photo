@@ -1070,6 +1070,16 @@ static int open_master_fd(struct master_header *hdr, bool write)
     return fd;
 }
 
+static bool master_file_exists(void)
+{
+    int fd = open_db_fd(TAGCACHE_FILE_MASTER, O_RDONLY);
+    if (fd < 0)
+        return false;
+
+    close(fd);
+    return true;
+}
+
 static void remove_files(void)
 {
     int i;
@@ -3972,7 +3982,16 @@ static bool commit(void)
         logf("nothing to commit");
 
     /* Fully initialize existing headers (if any) before going further. */
+    bool had_master = master_file_exists();
     tc_stat.ready = check_all_headers();
+    if (had_master && !tc_stat.ready)
+    {
+        logf("invalid existing database; full rebuild required");
+        close(tmpfd);
+        remove_db_file(TAGCACHE_FILE_TEMP);
+        remove_files();
+        return false;
+    }
 
 #ifdef HAVE_EEPROM_SETTINGS
     remove_db_file(TAGCACHE_STATEFILE);
@@ -5751,6 +5770,10 @@ void do_tagcache_build(const char *path[])
         logf("master file open failed: %s", TAGCACHE_FILE_TEMP);
         return ;
     }
+
+    /* Never merge a scan into a partial database or orphaned tag indexes. */
+    if (!master_file_exists() || !check_all_headers())
+        remove_files();
 
     filenametag_fd = open_tag_fd(&header, tag_filename, false);
 
