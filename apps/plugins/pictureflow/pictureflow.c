@@ -3139,6 +3139,7 @@ static void render_slide(struct slide_data *slide, const int alpha)
 
     const int sw = bmp->width;
     const int sh = bmp->height;
+    const int display_offs = MIN(DISPLAY_OFFS, sh - 1);
     const PFreal slide_left = -sw * PFREAL_HALF + PFREAL_HALF;
     const int w = LCD_WIDTH;
 
@@ -3196,7 +3197,7 @@ static void render_slide(struct slide_data *slide, const int alpha)
 #define LCDADDR(x, y) (&buffer[(y)*BUFFER_WIDTH + (x)])
 #endif
 
-        int p = (bmp->height-1-DISPLAY_OFFS) * PFREAL_ONE;
+        int p = (bmp->height - 1 - display_offs) * PFREAL_ONE;
         int plim = MAX(0, p - (LCD_HEIGHT/2-1) * dy);
         pix_t *pixel = LCDADDR(x, (LCD_HEIGHT/2)-1 );
 
@@ -3213,7 +3214,7 @@ static void render_slide(struct slide_data *slide, const int alpha)
                 pixel -= PIXELSTEP_Y;
             }
         }
-        p = (bmp->height-DISPLAY_OFFS) * PFREAL_ONE;
+        p = (bmp->height - display_offs) * PFREAL_ONE;
         plim = MIN(sh * PFREAL_ONE, p + (LCD_HEIGHT/2) * dy);
         int plim2 = MIN(MIN(sh + REFLECT_HEIGHT, sh * 2) * PFREAL_ONE,
                         p + (LCD_HEIGHT/2) * dy);
