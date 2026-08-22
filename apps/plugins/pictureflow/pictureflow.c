@@ -2271,7 +2271,8 @@ static bool save_pfraw(char* filename, struct bitmap *bm)
     struct pfraw_header bmph;
     size_t pixel_bytes;
 
-    if (bm->width <= 0 || bm->height <= 0 ||
+    if (bm == NULL || bm->data == NULL ||
+        bm->width <= 0 || bm->height <= 0 ||
         bm->width > DISPLAY_WIDTH || bm->height > DISPLAY_HEIGHT)
         return false;
 
