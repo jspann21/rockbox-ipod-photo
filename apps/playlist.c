@@ -737,7 +737,11 @@ static int add_indices_to_playlist(struct playlist_info* playlist,
         nread = read(playlist->fd, buffer, buflen);
         /* Terminate on EOF */
         if(nread <= 0)
+        {
+            if (nread < 0)
+                result = -1;
             break;
+        }
 
         p = (unsigned char *)buffer;
 
@@ -3548,7 +3552,12 @@ int playlist_resume(void)
             /* We didn't end on a newline or we exited loop prematurely.
                Either way, re-read the remainder. */
             count = last_newline;
-            lseek(playlist->control_fd, total_read+count, SEEK_SET);
+            if (lseek(playlist->control_fd, total_read+count, SEEK_SET) < 0)
+            {
+                notify_control_access_error();
+                result = -1;
+                goto out;
+            }
         }
 
         total_read += count;
@@ -3558,6 +3567,11 @@ int playlist_resume(void)
         /* Terminate on EOF */
         if(nread <= 0)
         {
+            if (nread < 0)
+            {
+                notify_control_access_error();
+                result = -1;
+            }
             break;
         }
     }

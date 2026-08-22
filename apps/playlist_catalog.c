@@ -314,7 +314,8 @@ int catalog_insert_into(const char* playlist, bool new_playlist,
     else if ((sel_attr & FILE_ATTR_MASK) == FILE_ATTR_M3U)
     {
         /* append playlist */
-        int f, fs, i;
+        int f;
+        off_t fs, i;
         char buf[1024];
 
         if(strcasecmp(playlist, sel) == 0)
@@ -326,16 +327,24 @@ int catalog_insert_into(const char* playlist, bool new_playlist,
 
         i = lseek(f, 0, SEEK_CUR);
         fs = filesize(f);
+        if (i < 0 || fs < i)
+            goto close_source;
         while (i < fs)
         {
-            int n;
+            ssize_t n;
 
             n = read(f, buf, sizeof(buf));
-            if (n < 0)
+            if (n <= 0)
                 break;
 
-            if (write(fd, buf, n) < 0)
-                break;
+            ssize_t written = 0;
+            while (written < n)
+            {
+                ssize_t rc = write(fd, buf + written, n - written);
+                if (rc <= 0)
+                    goto close_source;
+                written += rc;
+            }
 
             i += n;
         }
@@ -343,6 +352,7 @@ int catalog_insert_into(const char* playlist, bool new_playlist,
         if (i >= fs)
             result = 0;
 
+close_source:
         close(f);
     }
     else if (sel_attr & ATTR_DIRECTORY)

@@ -66,14 +66,19 @@ bool read_ape_tags(int fd, struct mp3entry* id3)
     if (IS_BIG_ENDIAN)
     {
         header.version = swap32(header.version);
-        header.length = swap32(header.version);
-        header.item_count = swap32(header.version);
-        header.flags = swap32(header.version);
+        header.length = swap32(header.length);
+        header.item_count = swap32(header.item_count);
+        header.flags = swap32(header.flags);
     }
 
     if ((header.version == 2000) && (header.item_count > 0)
         && (header.length > APETAG_HEADER_LENGTH)) 
     {
+        off_t file_size = filesize(fd);
+        if (file_size < 0 || header.length > (uint64_t)file_size ||
+            header.length > INT32_MAX)
+            return false;
+
         char *buf = id3->id3v2buf;
         unsigned int buf_remaining = sizeof(id3->id3v2buf) 
             + sizeof(id3->id3v1buf);
@@ -109,12 +114,13 @@ bool read_ape_tags(int fd, struct mp3entry* id3)
             tag_remaining -= sizeof(item);
             r = read_string(fd, name, sizeof(name), 0, tag_remaining);
             
-            if (r == -1)
+            if (r < 0 || item.length < 0 || (uint32_t)r > tag_remaining ||
+                (uint32_t)item.length > tag_remaining - (uint32_t)r)
             {
                 return false;
             }
 
-            tag_remaining -= r + item.length;
+            tag_remaining -= (uint32_t)r + (uint32_t)item.length;
 
             if ((item.flags & APETAG_ITEM_TYPE_MASK) == 0) 
             {
@@ -137,6 +143,8 @@ bool read_ape_tags(int fd, struct mp3entry* id3)
                 {
                     len = parse_tag(name, value, id3, buf, buf_remaining,
                     TAGTYPE_APE);
+                    if (len < 0 || (unsigned long)len > buf_remaining)
+                        return false;
                     buf += len;
                     buf_remaining -= len;
                 }
@@ -147,13 +155,13 @@ bool read_ape_tags(int fd, struct mp3entry* id3)
                 if (strcasecmp(name, "cover art (front)") == 0)
                 {
                     /* Skip any file name. */
-                    r = read_string(fd, value, sizeof(value), 0, -1);
-                    r += read_string(fd, value, sizeof(value), -1, 4);
-
-                    if (r < 0)
+                    r = read_string(fd, value, sizeof(value), 0, item.length);
+                    if (r < 0 || r > item.length - 4 ||
+                        read_string(fd, value, sizeof(value), -1, 4) != 4)
                     {
                         return false;
                     }
+                    r += 4;
 
                     /* Gather the album art format from the magic number of the embedded binary. */
                     id3->albumart.type = AA_TYPE_UNKNOWN;
