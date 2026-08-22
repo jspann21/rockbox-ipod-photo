@@ -2284,6 +2284,8 @@ static bool save_pfraw(char* filename, struct bitmap *bm)
 
 static bool incremental_albumart_cache(bool verbose)
 {
+    char temp_file[MAX_PATH];
+
     if (!aa_cache.buf)
         goto aa_failure;
 
@@ -2337,10 +2339,20 @@ static bool incremental_albumart_cache(bool verbose)
 
         goto aa_failure;
     }
-    rb->remove(aa_cache.pfraw_file);
-
-    if (!save_pfraw(aa_cache.pfraw_file, &aa_cache.input_bmp))
+    int temp_len = rb->snprintf(temp_file, sizeof(temp_file), "%s.tmp",
+                                aa_cache.pfraw_file);
+    if (temp_len < 0 || temp_len >= (int)sizeof(temp_file))
     {
+        if (verbose) { rb->splash(HZ, "Cache path is too long"); }
+        goto aa_failure;
+    }
+
+    if (!save_pfraw(temp_file, &aa_cache.input_bmp) ||
+        (rb->file_exists(aa_cache.pfraw_file) &&
+         rb->remove(aa_cache.pfraw_file) < 0) ||
+        rb->rename(temp_file, aa_cache.pfraw_file) < 0)
+    {
+        rb->remove(temp_file);
         if (verbose) { rb->splash(HZ, "Could not write bmp"); }
         goto aa_failure;
     }
