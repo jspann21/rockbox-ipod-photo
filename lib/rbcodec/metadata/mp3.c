@@ -70,7 +70,7 @@ static int getsonglength(int fd, struct mp3entry *entry)
     if(bytecount < 0)
         return -1;
 
-    if (entry->id3v1len < 0)
+    if (entry->id3v1len == (unsigned long)-1)
         entry->id3v1len = getid3v1len(fd);
 
     /* Subtract the meta information from the file size to get
@@ -166,7 +166,7 @@ bool get_mp3_metadata_ex(int fd, struct mp3entry *entry, bool parse_albumart)
 {
     entry->title = NULL;
     entry->filesize = filesize(fd);
-    entry->id3v1len = -1;
+    entry->id3v1len = (unsigned long)-1;
     entry->id3v2len = getid3v2len(fd);
 
     if (entry->id3v2len)
