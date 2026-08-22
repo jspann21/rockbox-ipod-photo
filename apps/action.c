@@ -256,7 +256,7 @@ static bool is_action_discarded(action_cur_t *cur, bool filtered, long *tick)
         * key release event then return false
         * keeping action, and reset tick
         */
-        if (!filtered && *tick < current_tick)
+        if (!filtered && TIME_AFTER(current_tick, *tick))
         {
             *tick = 0;
              ret  = false;
@@ -781,7 +781,8 @@ static inline int do_auto_softlock(action_last_t *last, action_cur_t *cur)
     if (has_flag(last->softlock_mask, SEL_ACTION_ALOCK_OK))
     {
         timeout = backlight_get_current_timeout();
-        is_timeout = (timeout > 0 && (current_tick > action_last.tick + timeout));
+        is_timeout = timeout > 0 &&
+                     TIME_AFTER(current_tick, action_last.tick + timeout);
     }
 
     if (is_timeout)
@@ -989,7 +990,8 @@ static inline int update_action_last(action_last_t *last, action_cur_t *cur)
 
     if (action == last->action)
     {
-        last->repeated = (current_tick < last->tick + REPEAT_WINDOW_TICKS);
+        last->repeated = TIME_BEFORE(current_tick,
+                                     last->tick + REPEAT_WINDOW_TICKS);
     }
     else
     {
