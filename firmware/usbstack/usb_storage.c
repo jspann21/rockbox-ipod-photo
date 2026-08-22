@@ -681,6 +681,7 @@ static void usb_storage_send_ata_identify(void)
     }
     cur_cmd.count = 0;
     cur_cmd.last_result = 0;
+    cur_cmd.data[0] = tb.transfer_buffer;
     send_block_data(cur_cmd.data[0], 512);
 }
 #ifdef HAVE_ATA_SMART
