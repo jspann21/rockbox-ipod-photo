@@ -1563,9 +1563,7 @@ static int save_album_index(void){
         if (rb->close(fd) < 0)
             ok = false;
 
-        if (ok && (!rb->file_exists(ALBUM_INDEX) ||
-                   rb->remove(ALBUM_INDEX) == 0) &&
-            rb->rename(ALBUM_INDEX_TMP, ALBUM_INDEX) == 0)
+        if (ok && rb->rename(ALBUM_INDEX_TMP, ALBUM_INDEX) == 0)
             return 0;
 
         rb->remove(ALBUM_INDEX_TMP);
@@ -2345,8 +2343,6 @@ static bool incremental_albumart_cache(bool verbose)
     }
 
     if (!save_pfraw(temp_file, &aa_cache.input_bmp) ||
-        (rb->file_exists(aa_cache.pfraw_file) &&
-         rb->remove(aa_cache.pfraw_file) < 0) ||
         rb->rename(temp_file, aa_cache.pfraw_file) < 0)
     {
         rb->remove(temp_file);
@@ -2427,7 +2423,6 @@ static int create_empty_slide(bool force)
                              aa_cache.buf_sz, format, &format_transposed);
 
         if (!save_pfraw(EMPTY_SLIDE_TMP, &aa_cache.input_bmp) ||
-            (rb->file_exists(EMPTY_SLIDE) && rb->remove(EMPTY_SLIDE) < 0) ||
             rb->rename(EMPTY_SLIDE_TMP, EMPTY_SLIDE) < 0)
         {
             rb->remove(EMPTY_SLIDE_TMP);
