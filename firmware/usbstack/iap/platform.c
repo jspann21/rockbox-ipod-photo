@@ -309,16 +309,20 @@ IAPBool iap_platform_get_indexed_track_info(struct IAPContext* iap_ctx, uint32_t
         info->release_date->seconds = 0;
     }
     if(info->artist != NULL) {
-        check_act(iap_span_append(info->artist, id3.artist, strlen(id3.artist) + 1), return iap_false);
+        const char *artist = id3.artist ? id3.artist : "";
+        check_act(iap_span_append(info->artist, artist, strlen(artist) + 1), return iap_false);
     }
     if(info->composer != NULL) {
-        check_act(iap_span_append(info->composer, id3.composer, strlen(id3.composer) + 1), return iap_false);
+        const char *composer = id3.composer ? id3.composer : "";
+        check_act(iap_span_append(info->composer, composer, strlen(composer) + 1), return iap_false);
     }
     if(info->album != NULL) {
-        check_act(iap_span_append(info->album, id3.album, strlen(id3.album) + 1), return iap_false);
+        const char *album = id3.album ? id3.album : "";
+        check_act(iap_span_append(info->album, album, strlen(album) + 1), return iap_false);
     }
     if(info->title != NULL) {
-        check_act(iap_span_append(info->title, id3.title, strlen(id3.title) + 1), return iap_false);
+        const char *title = id3.title ? id3.title : "";
+        check_act(iap_span_append(info->title, title, strlen(title) + 1), return iap_false);
     }
     return iap_true;
 }
