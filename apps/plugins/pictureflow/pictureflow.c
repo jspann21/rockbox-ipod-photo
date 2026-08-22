@@ -1597,6 +1597,9 @@ static int load_album_index(void){
             if (rb->read(fr, &data, sizeof(data)) == sizeof(data) &&
                 rb->memcmp(&(data.header), INDEX_HDR, sizeof(data.header)) == 0)
             {
+                if (data.album_ct == 0)
+                    goto failure;
+
                 album_idx_sz = data.album_ct * sizeof(struct album_data);
                 size_t file_remaining = filesize - sizeof(data);
 
