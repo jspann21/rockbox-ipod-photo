@@ -119,6 +119,8 @@
 
 /* Tag Cache Header version 'TCHxx'. Increment when changing internal structures. */
 #define TAGCACHE_MAGIC  0x54434810
+/* A scan checkpoint is recoverable progress, not commit-ready input. */
+#define TAGCACHE_TEMP_MAGIC 0x54435410
 
 /* Dump store/restore header version 'TCSxx'. */
 #define TAGCACHE_STATEFILE_MAGIC 0x54435301
@@ -2650,7 +2652,7 @@ static bool tempdb_checkpoint(void)
 
     off_t end = lseek(cachefd, 0, SEEK_CUR);
     struct tagcache_header header = {
-        .magic = TAGCACHE_MAGIC,
+        .magic = TAGCACHE_TEMP_MAGIC,
         .datasize = data_size,
         .entry_count = total_entry_count,
     };
@@ -5757,7 +5759,7 @@ void do_tagcache_build(const char *path[])
     logf("Scanning files...");
     /* Scan for new files. */
     memset(&header, 0, sizeof(struct tagcache_header));
-    header.magic = TAGCACHE_MAGIC;
+    header.magic = TAGCACHE_TEMP_MAGIC;
     if (write_tagcache_header(cachefd, &header) != sizeof(header))
     {
         logf("temporary header write failed");
@@ -5843,18 +5845,23 @@ void do_tagcache_build(const char *path[])
     }
     free_search_roots(&roots_ll[0]);
 
-    /* Write the header. */
-    header.magic = TAGCACHE_MAGIC;
-    header.datasize = data_size;
-    header.entry_count = total_entry_count;
-    if (!tempdb_flush() ||
-        lseek(cachefd, 0, SEEK_SET) < 0 ||
-        write_tagcache_header(cachefd, &header) != sizeof(header) ||
-        sync_file(cachefd) < 0)
+    /* Publish a commit-ready header only after the complete tree scan. */
+    if (ret && !build_write_error)
     {
-        logf("temporary database finalization failed");
-        build_write_error = true;
+        header.magic = TAGCACHE_MAGIC;
+        header.datasize = data_size;
+        header.entry_count = total_entry_count;
+        if (!tempdb_flush() ||
+            lseek(cachefd, 0, SEEK_SET) < 0 ||
+            write_tagcache_header(cachefd, &header) != sizeof(header) ||
+            sync_file(cachefd) < 0)
+        {
+            logf("temporary database finalization failed");
+            build_write_error = true;
+        }
     }
+    else
+        tempdb_write_used = 0;
 
     if (close(cachefd) < 0)
         build_write_error = true;
@@ -5869,8 +5876,7 @@ void do_tagcache_build(const char *path[])
     if (!ret || build_write_error)
     {
         logf("Aborted.");
-        if (build_write_error)
-            remove_db_file(TAGCACHE_FILE_TEMP);
+        remove_db_file(TAGCACHE_FILE_TEMP);
         cpu_boost(false);
         return ;
     }
