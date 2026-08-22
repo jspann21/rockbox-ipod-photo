@@ -487,6 +487,7 @@ void usb_core_exit(void)
 
 /* for sending/receiving control data */
 static uint8_t usb_control_data[256] USB_DEVBSS_ATTR;
+static uint8_t usb_descriptor_scratch[256] USB_DEVBSS_ATTR;
 
 void usb_core_handle_transfer_completion(
     struct usb_transfer_completion_event_data* event)
@@ -811,12 +812,28 @@ static void request_handler_device_get_descriptor(struct usb_ctrlrequest* req, u
             }
 #endif
             size = sizeof(struct usb_config_descriptor);
+            bool descriptor_ok = (size_t)size <= reqdata_size;
 
-            for(i = 0; i < USB_NUM_DRIVERS; i++) {
+            for(i = 0; descriptor_ok && i < USB_NUM_DRIVERS; i++) {
                 if(drivers[i]->enabled && drivers[i]->config == index + 1 && drivers[i]->get_config_descriptor) {
-                    size += drivers[i]->get_config_descriptor(reqdata + size, max_packet_size);
+                    int part_size = drivers[i]->get_config_descriptor(
+                                        usb_descriptor_scratch,
+                                        max_packet_size);
+                    if(part_size < 0 ||
+                       (size_t)part_size > sizeof(usb_descriptor_scratch) ||
+                       (size_t)part_size > reqdata_size - size) {
+                        logf("config descriptor overflow driver=%d size=%d",
+                             i, part_size);
+                        descriptor_ok = false;
+                        break;
+                    }
+                    memcpy(reqdata + size, usb_descriptor_scratch, part_size);
+                    size += part_size;
                 }
             }
+
+            if(!descriptor_ok)
+                break;
 
             config_descriptor.bNumInterfaces = config_states[index].num_interfaces;
             config_descriptor.bConfigurationValue = index + 1;
