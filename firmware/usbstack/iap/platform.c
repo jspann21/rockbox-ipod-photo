@@ -336,6 +336,23 @@ IAPBool iap_platform_set_playing_track(struct IAPContext* iap_ctx, uint32_t inde
     return iap_true;
 }
 
+static IAPBool artwork_bitmap_size(const struct bitmap* bmp, size_t* size) {
+    if(bmp == NULL || bmp->data == NULL || bmp->width <= 0 || bmp->height <= 0 ||
+       bmp->width > UINT16_MAX || bmp->height > UINT16_MAX) {
+        return iap_false;
+    }
+
+    size_t pixels = (size_t)bmp->width * (size_t)bmp->height;
+    if(pixels > (size_t)-1 / 2) {
+        return iap_false;
+    }
+
+    if(size != NULL) {
+        *size = pixels * 2;
+    }
+    return iap_true;
+}
+
 IAPBool iap_platform_open_artwork(struct IAPContext* iap_ctx, uint32_t index, struct IAPPlatformArtwork* artwork) {
     struct Platform* plt = iap_ctx->platform;
     /* only aa for currently playing track is available */
@@ -344,6 +361,7 @@ IAPBool iap_platform_open_artwork(struct IAPContext* iap_ctx, uint32_t index, st
     check_act(hid >= 0, return iap_false, "%d %d", plt->aa_slot, hid);
     struct bitmap* bmp;
     check_act(bufgetdata(hid, 0, (void*)&bmp) > 0, return iap_false);
+    check_act(artwork_bitmap_size(bmp, NULL), return iap_false);
     artwork->color  = iap_true;
     artwork->width  = bmp->width;
     artwork->height = bmp->height;
@@ -363,9 +381,11 @@ IAPBool iap_platform_get_artwork_ptr(struct IAPContext* iap_ctx, struct IAPPlatf
     /* more checks */
     check_act(bufgetdata(hid, 0, (void*)&bmp) > 0, return iap_false);
     check_act(bmp->width == artwork->width && bmp->height == artwork->height, return iap_false);
+    size_t size;
+    check_act(artwork_bitmap_size(bmp, &size), return iap_false);
 
     span->ptr  = bmp->data;
-    span->size = bmp->width * bmp->height * 2;
+    span->size = size;
     return iap_true;
 }
 
