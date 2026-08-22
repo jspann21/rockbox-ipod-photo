@@ -169,6 +169,8 @@
 /* Compact performance summary written once after a database build. */
 #define TAGCACHE_FILE_PROFILE      "database-build.log"
 #define TAGCACHE_FILE_PROFILE_TEMP "database-build.tmp"
+#define TAGCACHE_FILE_UPDATE_PROFILE      "database-update.log"
+#define TAGCACHE_FILE_UPDATE_PROFILE_TEMP "database-update.tmp"
 
 /* Serialized DB. */
 #define TAGCACHE_STATEFILE       "database_state.tcd"
@@ -1382,7 +1384,11 @@ static bool build_profile_write(const char *status)
     if (error)
         return false;
 
-    int fd = open_db_fd(TAGCACHE_FILE_PROFILE_TEMP,
+    const char *temp_name = build_profile.initial_build ?
+        TAGCACHE_FILE_PROFILE_TEMP : TAGCACHE_FILE_UPDATE_PROFILE_TEMP;
+    const char *report_name = build_profile.initial_build ?
+        TAGCACHE_FILE_PROFILE : TAGCACHE_FILE_UPDATE_PROFILE;
+    int fd = open_db_fd(temp_name,
                         O_WRONLY | O_CREAT | O_TRUNC);
     if (fd < 0)
         return false;
@@ -1396,10 +1402,9 @@ static bool build_profile_write(const char *status)
     if (close(fd) < 0)
         error = true;
 
-    if (error || rename_db_file(TAGCACHE_FILE_PROFILE_TEMP,
-                                TAGCACHE_FILE_PROFILE) < 0)
+    if (error || rename_db_file(temp_name, report_name) < 0)
     {
-        remove_db_file(TAGCACHE_FILE_PROFILE_TEMP);
+        remove_db_file(temp_name);
         return false;
     }
 
