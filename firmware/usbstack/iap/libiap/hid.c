@@ -68,6 +68,11 @@ static int find_output_report_size(struct IAPContext* ctx, uint8_t id) {
 
 IAPBool iap_feed_hid_report(struct IAPContext* ctx, const uint8_t* const data, const size_t size) {
     check_ret(size > sizeof(struct IAPHIDReport), iap_false);
+    /* Do not consume part of a request while its backing response buffer is
+     * still owned by an IN transfer. The accessory can retry the report. */
+    check_ret(!ctx->send_busy &&
+              ctx->send_buf_sending_cursor >= ctx->send_buf_sending_range_end,
+              iap_false);
     struct IAPHIDReport* report = (struct IAPHIDReport*)data;
 
     int report_size;
@@ -104,6 +109,18 @@ IAPBool iap_notify_send_complete(struct IAPContext* ctx) {
     ctx->send_busy = iap_false;
     check_ret(_iap_send_next_report(ctx), iap_false);
     return iap_true;
+}
+
+void iap_notify_send_error(struct IAPContext* ctx) {
+    /* The transport no longer owns any part of this response. Drop callback
+     * chaining as well so a later request cannot run a stale transaction. */
+    ctx->send_busy = iap_false;
+    ctx->send_buf_sending_cursor = 0;
+    ctx->send_buf_sending_range_begin = 0;
+    ctx->send_buf_sending_range_end = 0;
+    ctx->hid_recv_buf_cursor = 0;
+    ctx->on_send_complete = NULL;
+    ctx->flushing_notifications = iap_false;
 }
 
 IAPBool _iap_send_hid_reports(struct IAPContext* ctx, size_t begin, size_t end) {
@@ -175,7 +192,10 @@ IAPBool _iap_send_next_report(struct IAPContext* ctx) {
     ctx->send_busy = iap_true;
 
     const size_t send_size = 1 + report_size->size;
-    check_ret(iap_platform_send_hid_report(ctx, report, send_size) == (int)send_size, iap_false);
+    if (iap_platform_send_hid_report(ctx, report, send_size) != (int)send_size) {
+        iap_notify_send_error(ctx);
+        return iap_false;
+    }
 
     return iap_true;
 }

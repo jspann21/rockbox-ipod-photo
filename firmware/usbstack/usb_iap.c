@@ -482,11 +482,15 @@ static void usb_iap_transfer_complete(int ep, int dir, int status, int length) {
     }
 
     if((ep | dir) == HID_EP_IN) {
-        check_act(status == 0, return);
 #if DEBUG_DUMP_TX
         LOG("ep=%d dir=%d state=%d length=%d", ep, dir, status, length);
 #endif
         struct IAPContext* ctx = _iap_acquire_ctx(true);
+        if(status != 0) {
+            iap_notify_send_error(ctx);
+            _iap_release_ctx();
+            return;
+        }
         check_act(iap_notify_send_complete(ctx), );
         _iap_release_ctx();
     }
