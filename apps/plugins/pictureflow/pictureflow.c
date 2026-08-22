@@ -2036,6 +2036,10 @@ static void create_track_index(const int slide_index)
         int track_num = rb->tagcache_get_numeric(&tcs, tag_tracknumber);
         disc_num = disc_num > 0 ? disc_num : 0;
         track_num = track_num > 0 ? track_num : 0;
+        if (disc_num > 255)
+            disc_num = 255;
+        if (track_num > 1023)
+            track_num = 1023;
         int fn_idx = 1 + pf_tcs_retrieve_track_title(string_index, disc_num, track_num);
         if (fn_idx <= 1)
             goto fail;
@@ -2055,7 +2059,8 @@ static void create_track_index(const int slide_index)
         // Arrray descends from upper end of buflib-borrowed buffer.
         pf_tracks.index = (struct track_data*)(pf_tracks.names + pf_tracks.borrowed
                                                                - arr_sz );
-        pf_tracks.index->sort = (disc_num << 24) + (track_num << 14);
+        pf_tracks.index->sort = ((uint32_t)disc_num << 24) |
+                                ((uint32_t)track_num << 14);
         pf_tracks.index->sort += pf_tracks.count;
         pf_tracks.index->name_idx = string_index;
         pf_tracks.index->seek = tcs.result_seek;
