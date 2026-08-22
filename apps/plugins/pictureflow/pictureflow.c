@@ -3808,7 +3808,11 @@ static int settings_menu(void)
                       &pf_cfg.year_sort_order, RB_INT, year_sort_order_options, 2, NULL);
                 if (old_val != pf_cfg.year_sort_order &&
                     !sort_albums(pf_cfg.sort_albums_by, true))
+                {
                     pf_cfg.year_sort_order = old_val;
+                    if (wants_to_quit)
+                        return -1;
+                }
                 break;
             case 3:
                 rb->set_option(rb->str(LANG_WPS_INTEGRATION),
@@ -3879,7 +3883,11 @@ static int main_menu(void)
                       &pf_cfg.sort_albums_by, RB_INT, sort_options, 4, NULL);
                 if (old_val != pf_cfg.sort_albums_by &&
                     !sort_albums(pf_cfg.sort_albums_by, true))
+                {
                     pf_cfg.sort_albums_by = old_val;
+                    if (wants_to_quit)
+                        return -1;
+                }
                 if (old_val == pf_cfg.sort_albums_by)
                     break;
                 return 0;
@@ -5096,10 +5104,15 @@ static int pictureflow_main(void)
                 show_previous_slide();
             break;
         case PF_SORTING_NEXT:
-            sort_albums((pf_cfg.sort_albums_by + 1) % SORT_VALUES_SIZE, false);
+            if (!sort_albums((pf_cfg.sort_albums_by + 1) % SORT_VALUES_SIZE,
+                             false) && wants_to_quit)
+                return PLUGIN_OK;
             break;
         case PF_SORTING_PREV:
-            sort_albums((pf_cfg.sort_albums_by + (SORT_VALUES_SIZE - 1)) % SORT_VALUES_SIZE, false);
+            if (!sort_albums((pf_cfg.sort_albums_by +
+                              (SORT_VALUES_SIZE - 1)) % SORT_VALUES_SIZE,
+                             false) && wants_to_quit)
+                return PLUGIN_OK;
             break;
         case PF_JMP:
             if (pf_state == pf_idle || pf_state == pf_scrolling)
