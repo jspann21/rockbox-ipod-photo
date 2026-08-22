@@ -2491,10 +2491,20 @@ bool tagcache_search(struct tagcache_search *tcs, int tag)
 void tagcache_search_set_uniqbuf(struct tagcache_search *tcs,
                                  void *buffer, long length)
 {
+    if (buffer == NULL || length < (long)sizeof(*tcs->unique_list))
+    {
+        tcs->unique_list = NULL;
+        tcs->unique_list_capacity = 0;
+        tcs->unique_list_count = 0;
+        return;
+    }
+
     tcs->unique_list = (uint32_t *)buffer;
-    tcs->unique_list_capacity = length / sizeof(*tcs->unique_list);
+    tcs->unique_list_capacity = MIN(length / (long)sizeof(*tcs->unique_list),
+                                    INT_MAX);
     tcs->unique_list_count = 0;
-    memset(tcs->unique_list, 0, tcs->unique_list_capacity);
+    memset(tcs->unique_list, 0, tcs->unique_list_capacity *
+                                  sizeof(*tcs->unique_list));
 }
 
 bool tagcache_search_add_filter(struct tagcache_search *tcs,
