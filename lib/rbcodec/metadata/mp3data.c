@@ -212,15 +212,18 @@ static bool headers_have_same_type(unsigned long header1,
 }
 
 /* Helper function to read 4-byte in big endian format. */
-static void read_uint32be_mp3data(int fd, unsigned long *data)
+static bool read_uint32be_mp3data(int fd, unsigned long *data)
 {
     *data = 0;
-    unsigned long ret;
-    if (read(fd, (char*)&ret, sizeof(ret)) == sizeof(ret))
-        *data = ret;
+    uint32_t ret;
+    if (read(fd, (char*)&ret, sizeof(ret)) != sizeof(ret))
+        return false;
+
+    *data = ret;
 #ifndef ROCKBOX_BIG_ENDIAN
     *data = betoh32(*data);
 #endif
+    return true;
 }
 
 static unsigned long __find_next_frame(int fd, long *offset, long max_offset,
@@ -510,7 +513,8 @@ static void get_vbri_info(struct mp3info *info, unsigned char *buf)
 
 /* Seek to next mpeg header and extract relevant information. */
 static int get_next_header_info(int fd, long *bytecount, struct mp3info *info,
-                                bool single_header)
+                                bool single_header,
+                                unsigned long *header_out)
 {
     long tmp;
     unsigned long header = 0;
@@ -521,6 +525,9 @@ static int get_next_header_info(int fd, long *bytecount, struct mp3info *info,
 
     if(!mp3headerinfo(info, header))
         return -2;
+
+    if (header_out)
+        *header_out = header;
 
     /* Next frame header is tmp bytes away. */
     *bytecount += tmp;
@@ -534,6 +541,7 @@ int get_mp3file_info(int fd, struct mp3info *info,
     unsigned char frame[VBR_HEADER_MAX_SIZE], *vbrheader;
     long bytecount = 0;
     int result, buf_size;
+    unsigned long first_header;
 
     /* Initialize info and frame */
     memset(info,  0, sizeof(struct mp3info));
@@ -544,7 +552,7 @@ int get_mp3file_info(int fd, struct mp3info *info,
     info->enc_padding = -1;
 
     /* Get the very first single MPEG frame. */
-    result = get_next_header_info(fd, &bytecount, info, true);
+    result = get_next_header_info(fd, &bytecount, info, true, &first_header);
     if(result)
         return result;
 
@@ -576,7 +584,7 @@ int get_mp3file_info(int fd, struct mp3info *info,
         bytecount += info->frame_size;
         
         /* Now get the next frame to read the real info about the mp3 stream */
-        result = get_next_header_info(fd, &bytecount, info, false);
+        result = get_next_header_info(fd, &bytecount, info, false, NULL);
         if(result)
             return result;
             
@@ -590,7 +598,7 @@ int get_mp3file_info(int fd, struct mp3info *info,
         bytecount += info->frame_size;
         
         /* Now get the next frame to read the real info about the mp3 stream */
-        result = get_next_header_info(fd, &bytecount, info, false);
+        result = get_next_header_info(fd, &bytecount, info, false, NULL);
         if(result)
             return result;
             
@@ -599,15 +607,30 @@ int get_mp3file_info(int fd, struct mp3info *info,
     else
     {
         long offset;
+        off_t next_frame_offset;
+        unsigned long next_header = 0;
 
         VDEBUGF("-- No VBR header --\n");
-        
-        /* There was no VBR header found. So, we seek back to beginning and
-         * search for the first MPEG frame header of the mp3 stream. */
-        offset = lseek(fd, -info->frame_size, SEEK_CUR);
-        result = get_next_header_info(fd, &bytecount, info, false);
-        if(result)
-            return result;
+
+        /* The first frame payload left us at the next frame. Validate it
+         * directly so ordinary CBR files stay in forward seek order. If the
+         * first header was a false positive, retain the exhaustive search. */
+        next_frame_offset = lseek(fd, 0, SEEK_CUR);
+        if (next_frame_offset < info->frame_size)
+            return -3;
+
+        offset = next_frame_offset - info->frame_size;
+        if (!read_uint32be_mp3data(fd, &next_header) ||
+            !is_mp3frameheader(next_header) ||
+            !headers_have_same_type(first_header, next_header))
+        {
+            if (lseek(fd, offset, SEEK_SET) < 0)
+                return -3;
+
+            result = get_next_header_info(fd, &bytecount, info, false, NULL);
+            if(result)
+                return result;
+        }
 
         if (*id3v1len == (unsigned long)-1)
             *id3v1len = getid3v1len(fd);
