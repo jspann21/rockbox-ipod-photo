@@ -23,22 +23,29 @@ static void timeout_tick(void)
     struct timeout **p = tmo_list;
     struct timeout *curr;
 
-    for(curr = *p; curr != NULL; curr = *(++p))
+    while ((curr = *p) != NULL)
     {
         int ticks;
 
         if(TIME_BEFORE(tick, curr->expires))
+        {
+            p++;
             continue;
+        }
 
         /* this event has expired - call callback */
         ticks = curr->callback(curr);
         if(ticks > 0)
         {
             curr->expires = tick + ticks; /* reload */
+            if (*p == curr)
+                p++;
         }
         else
         {
             timeout_cancel(curr); /* cancel */
+            if (*p == curr)
+                p++;
         }
     }
 }
