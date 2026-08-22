@@ -728,6 +728,8 @@ void iap_get_trackinfo(const unsigned int track, struct mp3entry* id3)
     int tracknum;
     struct playlist_track_info info;
 
+    memset(id3, 0, sizeof(*id3));
+
     tracknum = track;
 
     tracknum += playlist_get_first_index(NULL);
@@ -738,11 +740,13 @@ void iap_get_trackinfo(const unsigned int track, struct mp3entry* id3)
        read id3 from disk */
     if(playlist_next(0) != tracknum)
     {
-        playlist_get_track_info(NULL, tracknum, &info);
-        /* memset(id3, 0, sizeof(*id3)) --get_metadata does this for us */
+        if (playlist_get_track_info(NULL, tracknum, &info) < 0)
+            return;
         get_metadata(id3, -1, info.filename);
     } else {
-        memcpy(id3, audio_current_track(), sizeof(*id3));
+        struct mp3entry *current = audio_current_track();
+        if (current != NULL)
+            memcpy(id3, current, sizeof(*id3));
     }
 }
 

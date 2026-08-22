@@ -266,7 +266,7 @@ IAPBool iap_platform_get_hold_switch_state(struct IAPContext* iap_ctx, IAPBool* 
 }
 
 /* taken from iap-core.c */
-static void get_trackinfo(const unsigned int track, struct mp3entry* id3) {
+static bool get_trackinfo(const unsigned int track, struct mp3entry* id3) {
     int tracknum = track;
     tracknum += playlist_get_first_index(NULL);
     if(tracknum >= playlist_amount()) {
@@ -275,10 +275,17 @@ static void get_trackinfo(const unsigned int track, struct mp3entry* id3) {
 
     if(playlist_next(0) != tracknum) {
         struct playlist_track_info info;
-        playlist_get_track_info(NULL, tracknum, &info);
-        get_metadata(id3, -1, info.filename);
+        if(playlist_get_track_info(NULL, tracknum, &info) < 0) {
+            return false;
+        }
+        return get_metadata(id3, -1, info.filename);
     } else {
-        memcpy(id3, audio_current_track(), sizeof(*id3));
+        struct mp3entry* current = audio_current_track();
+        if(current == NULL) {
+            return false;
+        }
+        memcpy(id3, current, sizeof(*id3));
+        return true;
     }
 }
 
@@ -288,7 +295,7 @@ IAPBool iap_platform_get_indexed_track_info(struct IAPContext* iap_ctx, uint32_t
     struct playlist_track_info track;
     struct mp3entry            id3;
     check_act(playlist_get_track_info(NULL, index, &track) == 0, return iap_false);
-    get_trackinfo(index, &id3);
+    check_act(get_trackinfo(index, &id3), return iap_false);
 
     if(info->total_ms != NULL) {
         *info->total_ms = id3.length;
