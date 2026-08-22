@@ -4851,7 +4851,10 @@ static bool init(void)
     if (pf_cfg.cache_version != CACHE_VERSION)
         config_save(CACHE_VERSION, pf_cfg.update_albumart);
 
-    if ((empty_slide_hid = read_pfraw(EMPTY_SLIDE, 0)) < 0)
+    empty_slide_hid = read_pfraw(EMPTY_SLIDE, 0);
+    if (empty_slide_hid < 0 &&
+        (!create_empty_slide(true) ||
+         (empty_slide_hid = read_pfraw(EMPTY_SLIDE, 0)) < 0))
     {
         error_wait("Unable to load empty slide image");
         return false;
