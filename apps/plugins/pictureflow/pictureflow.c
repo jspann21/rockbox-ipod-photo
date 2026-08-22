@@ -260,6 +260,7 @@ typedef fb_data pix_t;
 #define THREAD_STACK_SIZE DEFAULT_STACK_SIZE + 0x200
 #define CACHE_PREFIX PLUGIN_DEMOS_DATA_DIR "/pictureflow"
 #define ALBUM_INDEX CACHE_PREFIX "/pictureflow_album.idx"
+#define ALBUM_INDEX_TMP ALBUM_INDEX ".tmp"
 
 #define EV_EXIT 9999
 #define EV_WAKEUP 1337
@@ -1541,24 +1542,32 @@ retry_artist_lookup:
  next time PictureFlow is launched*/
 
 static int save_album_index(void){
-    int fd = rb->creat(ALBUM_INDEX,0666);
+    int fd = rb->creat(ALBUM_INDEX_TMP, 0666);
 
     struct pf_index_t data;
     memcpy(&data, &pf_idx, sizeof(struct pf_index_t));
 
     if(fd >= 0)
     {
+        size_t index_bytes = data.album_ct * sizeof(struct album_data);
         rb->memcpy(&data.header, INDEX_HDR, sizeof(pf_idx.header));
 
-        rb->write(fd, &data, sizeof(struct pf_index_t));
+        bool ok = rb->write(fd, &data, sizeof(data)) == (ssize_t)sizeof(data) &&
+                  rb->write(fd, data.artist_names, data.artist_len) ==
+                      (ssize_t)data.artist_len &&
+                  rb->write(fd, data.album_names, data.album_len) ==
+                      (ssize_t)data.album_len &&
+                  rb->write(fd, data.album_index, index_bytes) ==
+                      (ssize_t)index_bytes;
+        if (rb->close(fd) < 0)
+            ok = false;
 
-        rb->write(fd, data.artist_names, data.artist_len);
-        rb->write(fd, data.album_names, data.album_len);
+        if (ok && (!rb->file_exists(ALBUM_INDEX) ||
+                   rb->remove(ALBUM_INDEX) == 0) &&
+            rb->rename(ALBUM_INDEX_TMP, ALBUM_INDEX) == 0)
+            return 0;
 
-        rb->write(fd, data.album_index, data.album_ct * sizeof(struct album_data));
-
-        rb->close(fd);
-        return 0;
+        rb->remove(ALBUM_INDEX_TMP);
     }
     return -1;
 }
