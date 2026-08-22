@@ -707,7 +707,8 @@ int read_bmp_fd(int fd,
         numcolors = letoh32(bmph.clr_used);
         if (numcolors == 0)
             numcolors = BIT_N(depth);
-        if (numcolors < 1 || numcolors > BIT_N(depth) || numcolors > 256 ||
+        if (numcolors < 1 || (unsigned int)numcolors > BIT_N(depth) ||
+            numcolors > 256 ||
             14u + (uint64_t)hdr_size +
                 (uint64_t)numcolors * sizeof(struct uint8_rgb) > off_bits)
             return -7;

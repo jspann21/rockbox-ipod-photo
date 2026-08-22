@@ -431,7 +431,7 @@ static bool parse_smaf_score_track(int fd, struct mp3entry *id3)
 
     /* search Score Track Chunk */
     off_t optional_end = 29 + (off_t)chunksize;
-    if (optional_end < 29 || optional_end > id3->filesize ||
+    if (optional_end < 29 || (uint64_t)optional_end > id3->filesize ||
         lseek(fd, optional_end, SEEK_SET) != optional_end)
         return false;
 
