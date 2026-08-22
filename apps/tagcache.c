@@ -5650,7 +5650,8 @@ static bool check_dir(const char *dirname, int add_files)
                 add_search_root(curpath);
             else
 #endif /* SIMULATOR */
-                check_dir(curpath, add_files);
+            if (!check_dir(curpath, add_files))
+                break;
         }
         else if (add_files)
         {
