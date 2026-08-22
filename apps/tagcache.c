@@ -2925,6 +2925,13 @@ static bool tempbuf_insert(char *str, int id, int idx_id, bool unique)
     unsigned *crcbuf = (unsigned *)&tempbuf[tempbuf_size-4];
     unsigned crc32 = 0xffffffff;
     char chr_lower;
+
+    if (id < -1 || id >= lookup_buffer_depth)
+    {
+        logf("lookup buf overf.: %d", id);
+        return false;
+    }
+
     for (i = 0; str[i] != '\0' && i < len -1; i++)
     {
         chr_lower = tolower(str[i]);
@@ -2946,35 +2953,24 @@ static bool tempbuf_insert(char *str, int id, int idx_id, bool unique)
 
             if (!strcasecmp(str, index[i].str))
             {
-                if (id < 0 || id >= lookup_buffer_depth)
-                {
-                    logf("lookup buf overf.: %d", id);
+                if (id < 0)
                     return false;
-                }
-
                 lookup[id] = &index[i];
                 return true;
             }
         }
     }
 
-    /* Insert to CRC buffer. */
-    crcbuf[-tempbufidx] = crc32;
-    tempbuf_left -= 4;
-
-    /* Insert it to the buffer. */
-    tempbuf_left -= len;
-    if (tempbuf_left - 4 < 0 || tempbufidx >= commit_entry_count)
+    if (tempbufidx >= commit_entry_count || tempbuf_left < len + 8)
     {
         logf("temp buf error rem: %ld idx: %ld / %ld",
              tempbuf_left, tempbufidx, commit_entry_count-1);
         return false;
     }
-    if (id >= lookup_buffer_depth)
-    {
-        logf("lookup buf overf. #2: %d", id);
-        return false;
-    }
+
+    /* Insert to CRC and string buffers after validating both capacities. */
+    crcbuf[-tempbufidx] = crc32;
+    tempbuf_left -= len + 4;
 
     if (id >= 0)
     {
