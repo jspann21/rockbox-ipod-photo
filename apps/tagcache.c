@@ -4027,7 +4027,16 @@ static bool commit(void)
 
     /* Load the header. */
     len = sizeof(struct tagcache_header);
-    rc = read(tmpfd, &tch, len);
+    rc = read_exact(tmpfd, &tch, len);
+
+#ifdef TAGCACHE_SUPPORT_FOREIGN_ENDIAN
+    if (rc == len && tch.magic == swap32(TAGCACHE_MAGIC))
+    {
+        tch.magic = swap32(tch.magic);
+        tch.datasize = swap32(tch.datasize);
+        tch.entry_count = swap32(tch.entry_count);
+    }
+#endif
 
     if (tch.magic != TAGCACHE_MAGIC || rc != len)
     {
