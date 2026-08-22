@@ -68,6 +68,7 @@
 #endif
 
 #define READWRITE_TIMEOUT 5*HZ
+#define ATA_SLEEP_RETRY_TIMEOUT 5*HZ
 
 #ifdef HAVE_ATA_POWER_OFF
 #define ATA_POWER_OFF_TIMEOUT 2*HZ
@@ -99,6 +100,7 @@ static bool ata_led_on = false;
 static long sleep_timeout = 5*HZ;
 
 static long last_disk_activity = -1;
+static long sleep_retry_tick = 0;
 #ifdef HAVE_ATA_POWER_OFF
 static long power_off_tick = 0;
 #endif
@@ -119,6 +121,7 @@ static int set_features(void);
 static inline void keep_ata_active(void)
 {
     last_disk_activity = current_tick;
+    sleep_retry_tick = 0;
 }
 
 static inline bool ata_sleep_timed_out(void)
@@ -710,13 +713,23 @@ void ata_sleepnow(void)
         logf("ata SLEEPNOW %ld", current_tick);
         mutex_lock(&ata_mutex);
         if (ata_state == ATA_ON) {
-            if (!ata_perform_flush_cache() && !ata_perform_sleep()) {
+            int rc = ata_perform_flush_cache();
+            if (!rc)
+                rc = ata_perform_sleep();
+
+            if (!rc) {
                 ata_state = ATA_SLEEPING;
+                sleep_retry_tick = 0;
 #ifdef HAVE_ATA_POWER_OFF
                 if (ata_disk_can_sleep() || canflush) {
                     power_off_tick = current_tick + ATA_POWER_OFF_TIMEOUT;
                 }
 #endif
+            }
+            else {
+                /* A marginal adapter must not be hammered with flush and
+                 * standby commands on every storage-thread tick. */
+                sleep_retry_tick = current_tick + ATA_SLEEP_RETRY_TIMEOUT;
             }
         }
         mutex_unlock(&ata_mutex);
@@ -1285,7 +1298,9 @@ int ata_event(long id, intptr_t data)
        the first case is frequently hit anyway. */
     if (LIKELY(id == Q_STORAGE_TICK)) {
         /* won't see ATA_BOOT in here */
-        if (ata_state != ATA_ON || !ata_sleep_timed_out()) {
+        bool retry_pending = sleep_retry_tick &&
+                             TIME_BEFORE(current_tick, sleep_retry_tick);
+        if (ata_state != ATA_ON || !ata_sleep_timed_out() || retry_pending) {
 #ifdef HAVE_ATA_POWER_OFF
             if (ata_state == ATA_SLEEPING && ata_power_off_timed_out()) {
                 power_off_tick = 0;
