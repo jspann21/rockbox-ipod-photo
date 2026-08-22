@@ -4174,8 +4174,10 @@ void reset_track_list(void)
     int char_height = rb->screens[SCREEN_MAIN]->getcharheight();
     int total_height;
     track_list_yh(char_height);
-    pf_tracks.list_visible =
-                         fmin( pf_tracks.list_h/char_height , pf_tracks.count );
+    int visible_rows = char_height > 0 ? pf_tracks.list_h / char_height : 0;
+    pf_tracks.list_visible = fmin(visible_rows, pf_tracks.count);
+    if (pf_tracks.count > 0 && pf_tracks.list_visible < 1)
+        pf_tracks.list_visible = 1;
 
     pf_tracks.list_start = 0;
     pf_tracks.sel = 0;
