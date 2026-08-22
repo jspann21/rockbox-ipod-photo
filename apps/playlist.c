@@ -1378,7 +1378,14 @@ static int add_track_to_playlist_unlocked(struct playlist_info* playlist,
             int newpos = playlist->index + 1;
             playlist->last_insert_pos = position = insert_position = newpos;
             break;
+        default:
+            if (position < 0)
+                return -1;
+            break;
     }
+
+    if (insert_position < 0 || insert_position > playlist->amount)
+        return -1;
 
     if (queue)
         flags |= PLAYLIST_QUEUED;
@@ -1475,7 +1482,7 @@ static int remove_track_unlocked(struct playlist_info* playlist,
     int i;
     int result = 0;
 
-    if (playlist->amount <= 0)
+    if (playlist->amount <= 0 || position < 0 || position >= playlist->amount)
         return -1;
 
 #ifdef HAVE_DIRCACHE
@@ -1553,7 +1560,11 @@ static int randomise_playlist_unlocked(struct playlist_info* playlist,
 {
     int count;
     int candidate;
-    unsigned long current = playlist->indices[playlist->index];
+    if (playlist->amount > 0 &&
+        (playlist->index < 0 || playlist->index >= playlist->amount))
+        return -1;
+    unsigned long current = playlist->amount > 0 ?
+                            playlist->indices[playlist->index] : 0;
 
     /* seed 0 is used to identify sorted playlist for resume purposes */
     if (seed == 0)
@@ -1635,7 +1646,11 @@ static int sort_compare_fn(const void* p1, const void* p2)
 static int sort_playlist_unlocked(struct playlist_info* playlist,
                                   bool start_current, bool write)
 {
-    unsigned long current = playlist->indices[playlist->index];
+    if (playlist->amount > 0 &&
+        (playlist->index < 0 || playlist->index >= playlist->amount))
+        return -1;
+    unsigned long current = playlist->amount > 0 ?
+                            playlist->indices[playlist->index] : 0;
 
     if (playlist->amount > 0)
         qsort((void*)playlist->indices, playlist->amount,
@@ -3380,6 +3395,12 @@ int playlist_resume(void)
 
                         int position = atoi(strp[0]);
                         int last_position = atoi(strp[1]);
+                        if (last_position < -1 ||
+                            last_position > playlist->amount)
+                        {
+                            result = -5;
+                            goto out;
+                        }
 
                         /* seek position is based on strp[2]'s position in
                            buffer */
@@ -3436,6 +3457,14 @@ int playlist_resume(void)
 
                         seed = atoi(strp[0]);
                         playlist->first_index = atoi(strp[1]);
+                        if (playlist->first_index < 0 ||
+                            (playlist->amount == 0 ?
+                                playlist->first_index != 0 :
+                                playlist->first_index >= playlist->amount))
+                        {
+                            result = -9;
+                            goto out;
+                        }
 
                         if (randomise_playlist_unlocked(playlist, seed, false,
                                 false) < 0)
@@ -3458,6 +3487,14 @@ int playlist_resume(void)
                         }
 
                         playlist->first_index = atoi(strp[0]);
+                        if (playlist->first_index < 0 ||
+                            (playlist->amount == 0 ?
+                                playlist->first_index != 0 :
+                                playlist->first_index >= playlist->amount))
+                        {
+                            result = -11;
+                            goto out;
+                        }
 
                         if (sort_playlist_unlocked(playlist, false, false) < 0)
                         {
