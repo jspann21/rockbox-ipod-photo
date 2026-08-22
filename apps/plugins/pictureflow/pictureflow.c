@@ -1169,6 +1169,11 @@ static int get_tcs_search_res(int type, struct tagcache_search *tcs,
             break;
         }
 
+        if (*bufsz < (size_t)data_size)
+        {
+            ret = ERROR_BUFFER_FULL;
+            break;
+        }
         *bufsz -= data_size;
 
         l = tcs->result_len;
