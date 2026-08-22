@@ -320,6 +320,11 @@ static struct index_entry commit_idxbuf[IDX_BUF_DEPTH];
 static unsigned char tagfile_record_buf[sizeof(struct tagfile_entry) +
                                         TAGCACHE_BUFSZ +
                                         TAGFILE_ENTRY_CHUNK_LENGTH];
+#define TAGFILE_WRITE_BUFSZ 4096
+static unsigned char tagfile_write_buf[TAGFILE_WRITE_BUFSZ];
+static size_t tagfile_write_used;
+static off_t tagfile_write_position;
+static int tagfile_write_fd = -1;
 
 /* Header is the same in every file. */
 struct tagcache_header {
@@ -729,6 +734,82 @@ static int sync_file(int fd)
 #endif
 }
 
+static bool tagfile_writer_flush(void)
+{
+    if (tagfile_write_fd < 0 || tagfile_write_used == 0)
+        return true;
+
+    if (write_exact(tagfile_write_fd, tagfile_write_buf,
+                    tagfile_write_used) != (ssize_t)tagfile_write_used)
+        return false;
+
+    tagfile_write_used = 0;
+    return true;
+}
+
+static void tagfile_writer_start(int fd, off_t position)
+{
+    tagfile_write_fd = fd;
+    tagfile_write_used = 0;
+    tagfile_write_position = position;
+}
+
+static ssize_t tagfile_writer_write(int fd, const void *buffer, size_t size)
+{
+    if (tagfile_write_fd != fd)
+        return write_exact(fd, buffer, size);
+
+    const unsigned char *src = buffer;
+    size_t remaining = size;
+    while (remaining > 0)
+    {
+        size_t count = MIN(remaining,
+                           sizeof(tagfile_write_buf) - tagfile_write_used);
+        memcpy(tagfile_write_buf + tagfile_write_used, src, count);
+        tagfile_write_used += count;
+        tagfile_write_position += count;
+        src += count;
+        remaining -= count;
+
+        if (tagfile_write_used == sizeof(tagfile_write_buf) &&
+            !tagfile_writer_flush())
+        {
+            tagfile_write_fd = -1;
+            tagfile_write_used = 0;
+            return -1;
+        }
+    }
+
+    return size;
+}
+
+static off_t tagfile_writer_tell(int fd)
+{
+    if (tagfile_write_fd == fd)
+        return tagfile_write_position;
+    return lseek(fd, 0, SEEK_CUR);
+}
+
+static bool tagfile_writer_stop(int fd)
+{
+    if (tagfile_write_fd != fd)
+        return true;
+
+    bool ok = tagfile_writer_flush();
+    tagfile_write_fd = -1;
+    tagfile_write_used = 0;
+    return ok;
+}
+
+static void tagfile_writer_abort(int fd)
+{
+    if (tagfile_write_fd == fd)
+    {
+        tagfile_write_fd = -1;
+        tagfile_write_used = 0;
+    }
+}
+
 static ssize_t write_tagfile_record(int fd, const struct tagfile_entry *entry,
                                     const char *tag, size_t tag_size)
 {
@@ -746,7 +827,7 @@ static ssize_t write_tagfile_record(int fd, const struct tagfile_entry *entry,
     memset(tagfile_record_buf + sizeof(disk_entry) + tag_size, 'X',
            entry->tag_length - tag_size);
 
-    return write_exact(fd, tagfile_record_buf, total);
+    return tagfile_writer_write(fd, tagfile_record_buf, total);
 }
 
 enum e_read_errors {
@@ -2982,7 +3063,7 @@ static int tempbuf_sort(int fd)
             idlist = idlist->next;
         }
 
-        index[i].seek = lseek(fd, 0, SEEK_CUR);
+        index[i].seek = tagfile_writer_tell(fd);
         length = strlen(index[i].str) + 1;
         fe.tag_length = length;
         fe.idx_id = index[i].idx_id;
@@ -3609,9 +3690,13 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
             goto error_exit;
         }
 
+        tagfile_writer_start(fd, truncate_at);
         i = tempbuf_sort(fd);
-        if (i < 0)
+        if (i < 0 || !tagfile_writer_stop(fd))
+        {
+            error = true;
             goto error_exit;
+        }
         logf("sorted %d tags", i);
 
         /**
@@ -3678,7 +3763,14 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
     logf("updating new indices...");
     lseek(masterfd, masterfd_pos, SEEK_SET);
     tmpdb_lseek(tmpfd, sizeof(struct tagcache_header), SEEK_SET);
-    lseek(fd, 0, SEEK_END);
+    off_t tagfile_end = lseek(fd, 0, SEEK_END);
+    if (tagfile_end < 0)
+    {
+        error = true;
+        goto error_exit;
+    }
+    if (!TAGCACHE_IS_SORTED(index_type))
+        tagfile_writer_start(fd, tagfile_end);
     for (i = 0; i < h->entry_count && !USR_CANCEL; i += idxbuf_pos)
     {
         int j;
@@ -3740,7 +3832,7 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
                 }
 
                 /* Write to index file. */
-                idxbuf[j].tag_seek[index_type] = lseek(fd, 0, SEEK_CUR);
+                idxbuf[j].tag_seek[index_type] = tagfile_writer_tell(fd);
                 fe.tag_length = entry.tag_length[index_type];
                 fe.idx_id = tcmh.tch.entry_count + i + j;
                 if (write_tagfile_record(fd, &fe, build_idx_buf,
@@ -3783,6 +3875,12 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
     }
     logf("done");
 
+    if (!tagfile_writer_stop(fd))
+    {
+        logf("tagcache: buffered tag write failed");
+        error = true;
+    }
+
     /* Finally write the header. */
     tch.magic = TAGCACHE_MAGIC;
     tch.entry_count = tempbufidx;
@@ -3798,6 +3896,8 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
         h->datasize += tch.datasize;
     logf("s:%d/%" PRId32 "/%" PRId32, index_type, tch.datasize, h->datasize);
     error_exit:
+
+    tagfile_writer_abort(fd);
 
     fd_sync_rc = sync_file(fd);
     master_sync_rc = sync_file(masterfd);
