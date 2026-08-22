@@ -62,7 +62,7 @@ static int getsonglength(int fd, struct mp3entry *entry)
     if(-1 == lseek(fd, entry->id3v2len, SEEK_SET))
         return 0;
 
-    bytecount = get_mp3file_info(fd, &info);
+    bytecount = get_mp3file_info(fd, &info, &entry->id3v1len);
 
     logf("Space between ID3V2 tag and first audio frame: 0x%lx bytes",
            bytecount);

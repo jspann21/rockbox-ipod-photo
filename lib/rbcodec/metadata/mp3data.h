@@ -68,7 +68,8 @@ unsigned long mem_find_next_frame(int startpos,
                                   unsigned long reference_header,
                                   unsigned char* buf, size_t buflen);
 int get_mp3file_info(int fd, 
-                     struct mp3info *info);
+                     struct mp3info *info,
+                     int *id3v1len);
 
 int count_mp3_frames(int fd,  int startpos,  int filesize,
                      void (*progressfunc)(int),

@@ -528,7 +528,7 @@ static int get_next_header_info(int fd, long *bytecount, struct mp3info *info,
     return 0;
 }
 
-int get_mp3file_info(int fd, struct mp3info *info)
+int get_mp3file_info(int fd, struct mp3info *info, int *id3v1len)
 {
     unsigned char frame[VBR_HEADER_MAX_SIZE], *vbrheader;
     long bytecount = 0;
@@ -608,7 +608,10 @@ int get_mp3file_info(int fd, struct mp3info *info)
         if(result)
             return result;
 
-        info->byte_count = filesize(fd) - getid3v1len(fd) - offset - bytecount;
+        if (*id3v1len < 0)
+            *id3v1len = getid3v1len(fd);
+
+        info->byte_count = filesize(fd) - *id3v1len - offset - bytecount;
     }
 
     return bytecount;
