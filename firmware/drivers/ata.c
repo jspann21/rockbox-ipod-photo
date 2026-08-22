@@ -394,7 +394,7 @@ static int ata_transfer_sectors(uint64_t start,
     long timeout;
     int count;
     void* buf;
-    long spinup_start = spinup_start;
+    long spinup_start;
 #ifdef HAVE_ATA_DMA
     bool usedma = false;
 #endif
