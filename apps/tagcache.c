@@ -4867,7 +4867,7 @@ static bool load_tagcache(void)
         bytesleft -= sizeof (struct tagcache_header);
 
         fd = open_tag_fd(tch, tag, false);
-        if (rc < 0)
+        if (fd < 0)
             goto failure;
 
         /* Load the entries for this tag */
