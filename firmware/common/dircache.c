@@ -3057,9 +3057,15 @@ int INIT_ATTR dircache_load(void)
         goto error_nolock;
     }
 
-    if (maindata.dircache.size !=
+    if (maindata.dircache.sizeentries > DIRCACHE_LIMIT ||
+        maindata.dircache.sizenames > DIRCACHE_LIMIT ||
+        maindata.dircache.sizeentries >
+            SIZE_MAX - maindata.dircache.sizenames ||
+        maindata.dircache.size !=
             maindata.dircache.sizeentries + maindata.dircache.sizenames ||
-        ALIGN_DOWN(maindata.dircache.size, ENTRYSIZE) != maindata.dircache.size ||
+        maindata.dircache.size > DIRCACHE_LIMIT ||
+        ALIGN_DOWN(maindata.dircache.sizeentries, ENTRYSIZE) !=
+            maindata.dircache.sizeentries ||
         filesize(fd) - sizeof (maindata) != maindata.dircache.size)
     {
         logf("dircache: file header error");
@@ -3067,6 +3073,8 @@ int INIT_ATTR dircache_load(void)
     }
 
     /* allocate so that exactly the reserve size remains */
+    if (maindata.dircache.size > SIZE_MAX - DIRCACHE_RESERVE - 1)
+        goto error_nolock;
     size_t bufsize = maindata.dircache.size + DIRCACHE_RESERVE + 1;
     handle = alloc_cache(bufsize);
     if (handle <= 0)
