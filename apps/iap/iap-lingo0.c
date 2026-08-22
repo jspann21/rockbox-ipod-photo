@@ -128,6 +128,10 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
             iap_interface_state_change(IST_STANDARD);
             iap_reset_device(&device);
 
+            /* Legacy Identify has no authentication phase. Grant access so
+             * later lingo commands are not permanently rejected. */
+            device.auth.state = AUST_AUTH;
+
             switch (lingo) {
                 case 0x04:
                 {
@@ -586,6 +590,8 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
             if (deviceid && (options & 0x03) && !DEVICE_AUTH_RUNNING) {
                 device.auth.state = AUST_INIT;
             } else {
+                /* This accessory did not request authentication. */
+                device.auth.state = AUST_AUTH;
                 device.accinfo = ACCST_INIT;
             }
 
