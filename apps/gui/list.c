@@ -712,24 +712,29 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
             allow_wrap = false; /* Prevent list wraparound on repeating actions */
             /*Fallthrough*/
         case ACTION_STD_PREV:
-
+        {
+            int old_selection = lists->selected_item;
             gui_list_select_at_offset(lists, -next_item_modifier, allow_wrap);
-            if (list_redraw_allowed())
+            if (lists->selected_item != old_selection && list_redraw_allowed())
                 gui_synclist_draw(lists);
             yield();
             *actionptr = ACTION_STD_PREV;
             return true;
+        }
 
         case ACTION_STD_NEXTREPEAT:
             allow_wrap = false; /* Prevent list wraparound on repeating actions */
             /*Fallthrough*/
         case ACTION_STD_NEXT:
+        {
+            int old_selection = lists->selected_item;
             gui_list_select_at_offset(lists, next_item_modifier, allow_wrap);
-            if (list_redraw_allowed())
+            if (lists->selected_item != old_selection && list_redraw_allowed())
                 gui_synclist_draw(lists);
             yield();
             *actionptr = ACTION_STD_NEXT;
             return true;
+        }
 
         case ACTION_TREE_PGRIGHT:
             gui_synclist_scroll_right(lists);
