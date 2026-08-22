@@ -586,6 +586,7 @@ static bool settings_write_config(const char* filename, int options)
     logf("%s\r\n", __func__);
     int i;
     int fd;
+    bool ok = true;
     char value[MAX_PATH];
     fd = open(filename,O_CREAT|O_TRUNC|O_WRONLY, 0666);
     if (fd < 0)
@@ -593,11 +594,11 @@ static bool settings_write_config(const char* filename, int options)
 
     if (options != SETTINGS_SAVE_RESUMEINFO)
     {
-        fdprintf(fd, "# .cfg file created by rockbox %s - "
-                 "http://www.rockbox.org\r\n\r\n", rbversion);
+        ok = fdprintf(fd, "# .cfg file created by rockbox %s - "
+                      "http://www.rockbox.org\r\n\r\n", rbversion) >= 0;
     }
 
-    for(i=0; i<nb_settings; i++)
+    for(i=0; ok && i<nb_settings; i++)
     {
         const struct settings_list *setting = &settings[i];
         if (!setting->cfg_name || (setting->flags & F_DEPRECATED))
@@ -648,17 +649,18 @@ static bool settings_write_config(const char* filename, int options)
         cfg_to_string(setting, value, MAX_PATH);
         logf("Written: '%s: %s'\r\n",setting->cfg_name, value);
 
-        fdprintf(fd,"%s: %s\r\n",setting->cfg_name,value);
+        ok = fdprintf(fd,"%s: %s\r\n",setting->cfg_name,value) >= 0;
     } /* for(...) */
 #ifndef __PCTOOL__
-    if (options == SETTINGS_SAVE_ALL)
+    if (ok && options == SETTINGS_SAVE_ALL)
     {
         /* add openplugin entries to the open settings file */
         open_plugin_export(fd);
     }
 #endif
-    close(fd);
-    return true;
+    if (close(fd) < 0)
+        ok = false;
+    return ok;
 }
 
 static void flush_global_status_callback(void)
