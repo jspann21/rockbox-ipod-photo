@@ -58,10 +58,14 @@ void* iap_platform_malloc(struct IAPContext* iap_ctx, size_t size, int flags) {
 
 void iap_platform_free(struct IAPContext* iap_ctx, void* ptr) {
     struct Platform* plt = iap_ctx->platform;
+    if(ptr == NULL) {
+        return;
+    }
     for(size_t i = 0; i < ARRAYLEN(plt->malloc_results); i += 1) {
         if(plt->malloc_results[i].ptr == ptr) {
             core_free(plt->malloc_results[i].handle);
             plt->malloc_results[i].ptr = NULL;
+            plt->malloc_results[i].handle = 0;
             return;
         }
     }
@@ -364,6 +368,7 @@ IAPBool iap_platform_open_artwork(struct IAPContext* iap_ctx, uint32_t index, st
     struct Platform* plt = iap_ctx->platform;
     /* only aa for currently playing track is available */
     check_act((int)index == playlist_get_display_index() - 1, return iap_false);
+    check_act(plt->aa_slot >= 0, return iap_false);
     const int hid = playback_current_aa_hid(plt->aa_slot);
     check_act(hid >= 0, return iap_false, "%d %d", plt->aa_slot, hid);
     struct bitmap* bmp;
@@ -378,6 +383,7 @@ IAPBool iap_platform_open_artwork(struct IAPContext* iap_ctx, uint32_t index, st
 
 IAPBool iap_platform_get_artwork_ptr(struct IAPContext* iap_ctx, struct IAPPlatformArtwork* artwork, struct IAPSpan* span) {
     struct Platform* plt = iap_ctx->platform;
+    check_act(plt->aa_slot >= 0, return iap_false);
 
     /* check the albumart has not reloaded */
     /* FIXME: not a correct check due to possibility of hid confliction */

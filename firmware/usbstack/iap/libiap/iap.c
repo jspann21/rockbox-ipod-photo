@@ -85,6 +85,9 @@ error:
     if(ctx->hid_recv_buf != NULL) {
         iap_platform_free(ctx, ctx->hid_recv_buf);
     }
+    ctx->hid_send_staging_buf = NULL;
+    ctx->send_buf = NULL;
+    ctx->hid_recv_buf = NULL;
     return iap_false;
 }
 
@@ -95,6 +98,12 @@ IAPBool iap_deinit_ctx(struct IAPContext* ctx) {
     iap_platform_free(ctx, ctx->hid_send_staging_buf);
     iap_platform_free(ctx, ctx->hid_recv_buf);
     iap_platform_free(ctx, ctx->send_buf);
+    ctx->hid_send_staging_buf = NULL;
+    ctx->hid_recv_buf = NULL;
+    ctx->send_buf = NULL;
+    ctx->artwork.valid = iap_false;
+    ctx->send_busy = iap_false;
+    ctx->on_send_complete = NULL;
     return iap_true;
 }
 
@@ -137,6 +146,7 @@ static IAPBool send_artwork_chunk_cb(struct IAPContext* ctx) {
     struct IAPSpan request = _iap_get_buffer_for_send_payload(ctx);
     if(ctx->artwork_chunk_index == 0) {
         struct IAPRetTrackArtworkDataFirstPayload* payload = iap_span_alloc(&request, sizeof(*payload));
+        check_ret(payload != NULL, iap_false);
 
         payload->index                = swap_16(ctx->artwork_chunk_index);
         payload->pixel_format         = ctx->artwork.color ? IAPArtworkPixelFormats_RGB565LE : IAPArtworkPixelFormats_Mono;
@@ -149,6 +159,7 @@ static IAPBool send_artwork_chunk_cb(struct IAPContext* ctx) {
         payload->stride               = swap_32(ctx->artwork.width * 2); /* TODO: support stride */
     } else {
         struct IAPRetTrackArtworkDataSubsequenctPayload* payload = iap_span_alloc(&request, sizeof(*payload));
+        check_ret(payload != NULL, iap_false);
 
         payload->index = swap_16(ctx->artwork_chunk_index);
     }
@@ -160,7 +171,10 @@ static IAPBool send_artwork_chunk_cb(struct IAPContext* ctx) {
         check_ret(iap_platform_get_artwork_ptr(ctx, &ctx->artwork, &artwork), iap_false);
         check_ret(iap_span_read(&artwork, ctx->artwork_cursor) != NULL, iap_false); /* skip already read chunk */
         copy_size = min((ctx->opts.artwork_single_report ? 48 : request.size), artwork.size);
-        memcpy(iap_span_alloc(&request, copy_size), iap_span_read(&artwork, copy_size), copy_size);
+        void* dst = iap_span_alloc(&request, copy_size);
+        const void* src = iap_span_read(&artwork, copy_size);
+        check_ret(dst != NULL && src != NULL, iap_false);
+        memcpy(dst, src, copy_size);
     }
     check_ret(_iap_send_packet(ctx, ctx->artwork_data_lingo, ctx->artwork_data_command, ctx->artwork_trans_id, request.ptr), iap_false);
     if(header_only || artwork.size > 0) {
@@ -1284,8 +1298,13 @@ int32_t _iap_next_trans_id(struct IAPContext* ctx) {
 }
 
 IAPBool _iap_send_packet(struct IAPContext* ctx, uint8_t lingo, uint16_t command, int32_t trans_id, uint8_t* final_ptr) {
-    uint8_t* ptr          = _iap_get_buffer_for_send_payload(ctx).ptr;
-    size_t   payload_size = final_ptr - ptr;
+    struct IAPSpan payload = _iap_get_buffer_for_send_payload(ctx);
+    uintptr_t payload_start = (uintptr_t)payload.ptr;
+    uintptr_t payload_end = (uintptr_t)final_ptr;
+    check_ret(final_ptr != NULL && payload_end >= payload_start &&
+              payload_end - payload_start <= payload.size, iap_false);
+    uint8_t* ptr          = payload.ptr;
+    size_t   payload_size = payload_end - payload_start;
 
     if(ctx->opts.enable_packet_dump) {
         IAP_LOGF("==== dev ====");
@@ -1317,7 +1336,11 @@ IAPBool _iap_send_packet(struct IAPContext* ctx, uint8_t lingo, uint16_t command
     /* lingo */
     pack_8(lingo);
     /* length */
-    const uint16_t length = 1 /*lingo*/ + (lingo == IAPLingoID_ExtendedInterface ? 2 : 1) /*command*/ + (trans_id >= 0 ? 2 : 0) + payload_size;
+    const size_t packet_length = 1 /* lingo */ +
+        (lingo == IAPLingoID_ExtendedInterface ? 2 : 1) /* command */ +
+        (trans_id >= 0 ? 2 : 0) + payload_size;
+    check_ret(packet_length <= UINT16_MAX, iap_false);
+    const uint16_t length = packet_length;
     if(length <= 0xFC) {
         pack_8(length);
     } else {
@@ -1362,6 +1385,7 @@ static IAPBool process_select_sampr(struct IAPContext* ctx, struct IAPActiveEven
 
     struct IAPSpan                            request_span = _iap_get_buffer_for_send_payload(ctx);
     struct IAPTrackNewAudioAttributesPayload* request      = iap_span_alloc(&request_span, sizeof(*request));
+    check_ret(request != NULL, iap_false);
     request->sample_rate                                   = swap_32(event->sampr);
     request->sound_check                                   = 0;
     request->volume_adjustment                             = 0;

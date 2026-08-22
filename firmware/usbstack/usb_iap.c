@@ -381,6 +381,8 @@ static int usb_iap_init_connection(void) {
     last_hold_switch_state = -1;
 
     iap_debug_reset_timestamp();
+    iap_initialized = false;
+    platform.aa_slot = -1;
 
     /* init audio sink */
     check_act(iap_audio_init(), return -1);
@@ -407,6 +409,7 @@ static int usb_iap_init_connection(void) {
     platform.aa_slot = playback_claim_aa_slot(&dim);
     if(platform.aa_slot < 0) {
         ERROR("failed to claim albumart slot");
+        goto cleanup_ctx;
     }
     platform.control_pending = false;
 
@@ -417,8 +420,14 @@ static int usb_iap_init_connection(void) {
     LOG("initialized");
     return 0;
 
+cleanup_ctx:
+    ctx = _iap_acquire_ctx(true);
+    check_act(iap_deinit_ctx(ctx), );
+    _iap_release_ctx();
+    goto cleanup_audio_only;
 cleanup_audio:
     _iap_release_ctx();
+cleanup_audio_only:
     iap_audio_deinit();
     return -1;
 }
@@ -456,6 +465,7 @@ static void usb_iap_disconnect(void) {
     timeout_cancel(&tick_tmo);
     if(platform.aa_slot >= 0) {
         playback_release_aa_slot(platform.aa_slot);
+        platform.aa_slot = -1;
     }
     struct IAPContext* ctx = _iap_acquire_ctx(true);
     check_act(iap_deinit_ctx(ctx), );
@@ -466,6 +476,10 @@ static void usb_iap_disconnect(void) {
 
 static void usb_iap_transfer_complete(int ep, int dir, int status, int length) {
     (void)length;
+
+    if(!iap_initialized) {
+        return;
+    }
 
     if((ep | dir) == HID_EP_IN) {
         check_act(status == 0, return);
@@ -479,9 +493,8 @@ static void usb_iap_transfer_complete(int ep, int dir, int status, int length) {
 }
 
 static bool usb_iap_fast_transfer_complete(int ep, int dir, int status, int length) {
-    (void)status;
     (void)length;
-    return (ep | dir) == AS_EP_IN;
+    return iap_initialized && status == 0 && (ep | dir) == AS_EP_IN;
 }
 
 static void respond_zero(struct usb_ctrlrequest* req, uint8_t* reqdata, size_t reqdata_size) {

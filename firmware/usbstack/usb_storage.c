@@ -34,7 +34,6 @@
 #include "timefuncs.h"
 #endif
 #include "core_alloc.h"
-#include "panic.h"
 
 #ifdef USB_USE_RAMDISK
 #define RAMDISK_SIZE 2048
@@ -461,7 +460,7 @@ static int usb_storage_init_connection(void)
     usb_handle = core_alloc_ex(ALLOCATE_BUFFER_SIZE + MAX_CBW_SIZE + 31,
                                &buflib_ops_locked);
     if (usb_handle < 0)
-        panicf("%s(): OOM", __func__);
+        return -1;
 
     buffer = core_get_data(usb_handle);
 #if defined(UNCACHED_ADDR) && CONFIG_CPU != AS3525
@@ -504,7 +503,21 @@ void usb_storage_disconnect(void)
 #endif
 #ifndef USB_STATIC_ALLOC
     usb_handle = core_free(usb_handle);
+    cbw_buffer = NULL;
+    tb.transfer_buffer = NULL;
 #endif
+}
+
+static bool valid_cbw_completion(int dir, int status, int length)
+{
+    return dir == USB_DIR_OUT && status == 0 &&
+           length == (int)sizeof(struct command_block_wrapper);
+}
+
+static void receive_next_cbw(void)
+{
+    state = WAITING_FOR_COMMAND;
+    usb_drv_recv_nonblocking(EP_OUT, cbw_buffer, MAX_CBW_SIZE);
 }
 
 /* called by usb_core_transfer_complete() */
@@ -606,19 +619,29 @@ static void usb_storage_transfer_complete(int ep,int dir,int status,int length)
             else {
                 /* This was the command */
                 state = WAITING_FOR_CSW_COMPLETION;
+                if (!valid_cbw_completion(dir, status, length))
+                    cbw->signature = 0;
                 /* We now have the CBW, but we won't execute it yet to avoid
                  * issues with the still-pending CSW */
             }
             break;
         case WAITING_FOR_COMMAND:
-            if(dir==USB_DIR_IN) {
-                logf("IN received in WAITING_FOR_COMMAND");
+            if (!valid_cbw_completion(dir, status, length)) {
+                logf("invalid CBW completion %d/%d/%d", dir, status, length);
+                /* The OUT receive is still pending for an unrelated IN
+                 * completion. Re-prime only after a failed OUT completes. */
+                if (dir == USB_DIR_OUT)
+                    receive_next_cbw();
+                break;
             }
             handle_scsi(cbw);
             break;
         case WAITING_FOR_CSW_COMPLETION:
-            if(dir==USB_DIR_OUT) {
-                logf("OUT received in WAITING_FOR_CSW_COMPLETION");
+            if (dir != USB_DIR_IN || status != 0 ||
+                cbw->signature == 0) {
+                logf("invalid pending CBW %d/%d/%d", dir, status, length);
+                receive_next_cbw();
+                break;
             }
             handle_scsi(cbw);
             break;

@@ -324,13 +324,13 @@ void iap_reset_state(IF_IAP_MP_NONVOID(int port))
     iap_reset_device(&device);
     iap_bitrate_set(global_settings.serial_bitrate);
 
-#if 0  // XXX this is still screwed up
+    int level = disable_irq_save();
     memset(&frame_state, 0, sizeof(frame_state));
     interface_state = IST_STANDARD;
     frame_state.state = ST_SYNC;
 
     iap_reset_buffers();
-#endif
+    restore_irq(level);
 }
 
 void iap_reset_device(struct device_t* device)
