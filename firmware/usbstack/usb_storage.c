@@ -1112,9 +1112,9 @@ static void handle_scsi(struct command_block_wrapper* cbw)
                 /* "block count" actually means "number of last block" */
 #ifdef STORAGE_64BIT_SECTOR
                     tb.capacity_data_16->block_count[2] =
-                        ((bcount-1) & 0xff00000000ULL)>>40;
+                        ((bcount-1) >> 40) & 0xff;
                     tb.capacity_data_16->block_count[3] =
-                        ((bcount-1) & 0x00ff000000ULL)>>32;
+                        ((bcount-1) >> 32) & 0xff;
 #else
                     tb.capacity_data_16->block_count[2] = 0;
                     tb.capacity_data_16->block_count[3] = 0;
