@@ -239,7 +239,7 @@ void sb_skin_force_next_update(void)
  */
 char* sb_create_from_settings(enum screen_type screen)
 {
-    static char buf[128];
+    static char buf[192];
     char *ptr, *ptr2;
     int len, remaining = sizeof(buf);
     int bar_position = statusbar_position(screen);
@@ -256,6 +256,8 @@ char* sb_create_from_settings(enum screen_type screen)
         }
         len = snprintf(ptr, remaining, "%%V(0,%d,-,%d,0)\n%%wi\n",
                        y, height);
+        if (len < 0 || len >= remaining)
+            return buf;
         remaining -= len;
         ptr += len;
     }
@@ -269,9 +271,14 @@ char* sb_create_from_settings(enum screen_type screen)
 
     if (ptr2[0] && ptr2[0] != '-') /* from ui viewport setting */
     {
-        char *comma = ptr;
+        char *viewport_start = ptr;
+        char *comma = viewport_start;
         int param_count = 0;
         len = snprintf(ptr, remaining, "%%ax%%Vi(-,%s)\n", ptr2);
+        if (len < 0 || len >= remaining)
+            return buf;
+        ptr += len;
+        remaining -= len;
         /* The config put the colours at the end of the viewport,
          * they need to be stripped for the skin code though */
         do {
@@ -291,7 +298,12 @@ char* sb_create_from_settings(enum screen_type screen)
             while (*comma != ')'  && i < (int) sizeof(bg) - 1)
                 bg[i++] = *comma++;
             bg[i] = '\0';
-            len += snprintf(end, remaining-len, ") %%Vf(%s) %%Vb(%s)\n", fg, bg);
+            size_t tail = sizeof(buf) - (end - buf);
+            len = snprintf(end, tail, ") %%Vf(%s) %%Vb(%s)\n", fg, bg);
+            if (len < 0 || (size_t)len >= tail)
+                return buf;
+            ptr = end + len;
+            remaining = sizeof(buf) - (ptr - buf);
         }
         else
         {
@@ -316,6 +328,8 @@ char* sb_create_from_settings(enum screen_type screen)
         }
         len = snprintf(ptr, remaining, "%%ax%%Vi(-,0,%d,-,%d,1)\n",
                        y, height);
+        if (len < 0 || len >= remaining)
+            buf[sizeof(buf) - 1] = '\0';
     }
     return buf;
 }

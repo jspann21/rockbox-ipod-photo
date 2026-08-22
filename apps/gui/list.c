@@ -888,10 +888,10 @@ int simplelist_get_line_count(void)
 /* set/edit a line pointer in the list. */
 void simplelist_setline(const char *text)
 {
-    int line_number = simplelist_line_count++;
     if (simplelist_line_count >= SIMPLELIST_MAX_LINES)
-        simplelist_line_count = 0;
-    simplelist_text[line_number] = text;
+        return;
+
+    simplelist_text[simplelist_line_count++] = text;
 }
 
 /* add/edit a line in the list.

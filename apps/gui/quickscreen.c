@@ -92,9 +92,11 @@ static void quickscreen_fix_viewports(struct quickscreen *qs, enum screen_type s
         vert_lines = 1;
     else
         vert_lines = 2;
+    int vertical_height = vert_lines * char_height;
+    vertical_height = MIN(vertical_height, MAX(1, (parent->height - 8) / 2));
     vps[QUICKSCREEN_TOP].y = parent->y;
     vps[QUICKSCREEN_TOP].height = vps[QUICKSCREEN_BOTTOM].height
-            = vert_lines*char_height;
+            = vertical_height;
     vps[QUICKSCREEN_BOTTOM].y
             = parent->y + parent->height - vps[QUICKSCREEN_BOTTOM].height;
 
@@ -108,6 +110,8 @@ static void quickscreen_fix_viewports(struct quickscreen *qs, enum screen_type s
     vp_icons->y = vps[QUICKSCREEN_TOP].y
             + vps[QUICKSCREEN_TOP].height;
     vp_icons->height = vps[QUICKSCREEN_BOTTOM].y - vp_icons->y;
+    if (vp_icons->height < 1)
+        vp_icons->height = 1;
 
     /* adjust the left/right items widths to fit the screen nicely */
     if (qs->items[QUICKSCREEN_LEFT])

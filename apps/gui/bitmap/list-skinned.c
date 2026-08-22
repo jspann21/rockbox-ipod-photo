@@ -138,12 +138,12 @@ int skinlist_get_line_count(enum screen_type screen, struct gui_synclist *list)
         return -1;
     if (listcfg[screen]->tile == true)
     {
-        int rows = (parent->height / listcfg[screen]->height);
-        int cols = (parent->width / listcfg[screen]->width);
+        int rows = MAX(1, parent->height / listcfg[screen]->height);
+        int cols = MAX(1, parent->width / listcfg[screen]->width);
         return rows*cols;
     }
     else
-        return  (parent->height / listcfg[screen]->height);
+        return MAX(1, parent->height / listcfg[screen]->height);
 }
 
 static int current_item;
@@ -178,7 +178,7 @@ bool skinlist_get_item(struct screen *display, struct gui_synclist *list, int x,
     int row = y / listcfg[screen]->height;
     int column = x / listcfg[screen]->width;
     struct viewport *parent = (list->parent[screen]);
-    int cols = (parent->width / listcfg[screen]->width);
+    int cols = MAX(1, parent->width / listcfg[screen]->width);
     *item = row * cols+ column;
     return true;
 }
@@ -239,7 +239,7 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
             original_y = skin_viewport->vp.y;
             if (listcfg[screen]->tile)
             {
-                int cols = (parent->width / listcfg[screen]->width);
+                int cols = MAX(1, parent->width / listcfg[screen]->width);
                 current_column = (cur_line)%cols;
                 current_row = (cur_line)/cols;
 
