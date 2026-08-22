@@ -964,6 +964,11 @@ static int set_multiple_mode(int sectors)
         DEBUGF("set_multiple_mode() - CMD failed\n");
         return -2;
     }
+    if (ATA_IN8(ATA_ALT_STATUS) & (STATUS_ERR | STATUS_DF))
+    {
+        DEBUGF("set_multiple_mode() - device error\n");
+        return -3;
+    }
 
     return 0;
 }
