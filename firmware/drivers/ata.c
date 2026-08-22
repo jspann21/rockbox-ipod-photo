@@ -388,7 +388,11 @@ static int ata_transfer_sectors(uint64_t start,
     bool usedma = false;
 #endif
 
-    if (start + incount > total_sectors) {
+    if (incount == 0)
+        return 0;
+
+    if (incount < 0 || start > total_sectors ||
+        (uint64_t)incount > total_sectors - start) {
         ret = -1;
         goto error;
     }
