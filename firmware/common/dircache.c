@@ -3167,7 +3167,7 @@ int dircache_save(void)
 {
     logf("Saving directory cache");
 
-    int fd = open_dircache_file(O_WRONLY|O_CREAT|O_TRUNC|O_APPEND);
+    int fd = open_dircache_file(O_WRONLY|O_CREAT|O_TRUNC);
     if (fd < 0)
         return -1;
 
