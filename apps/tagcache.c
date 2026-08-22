@@ -5959,7 +5959,10 @@ void do_tagcache_build(const char *path[])
             if (dir_exists(this->path))
                 ret = check_dir(this->path, true);
             else
+            {
                 logf("Dir not found %s", this->path);
+                ret = false;
+            }
         }
     }
     free_search_roots(&roots_ll[0]);
