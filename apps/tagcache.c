@@ -406,6 +406,7 @@ static int cachefd = -1, filenametag_fd;
 static int total_entry_count = 0;
 static int data_size = 0;
 static int processed_dir_count;
+static bool build_write_error;
 
 /* Thread safe locking */
 static volatile int write_lock;
@@ -479,13 +480,31 @@ static ssize_t read_tagfile_entry(int fd, struct tagfile_entry *buf)
     return ret;
 }
 
+static ssize_t write_exact(int fd, const void *buf, size_t size)
+{
+    const unsigned char *p = buf;
+    size_t remaining = size;
+
+    while (remaining > 0)
+    {
+        ssize_t rc = write(fd, p, remaining);
+        if (rc <= 0)
+            return -1;
+
+        p += rc;
+        remaining -= rc;
+    }
+
+    return size;
+}
+
 static ssize_t write_tagfile_entry(int fd, struct tagfile_entry *buf)
 {
     struct tagfile_entry e = *buf;
 
     swap_tagfile_entry(&e);
 
-    return write(fd, &e, sizeof(e));
+    return write_exact(fd, &e, sizeof(e));
 }
 
 enum e_read_errors {
@@ -532,7 +551,7 @@ static ssize_t write_index_entries(int fd, struct index_entry *buf, size_t count
         struct index_entry e = *buf++;
         swap_index_entry(&e);
 
-        ssize_t rc = write(fd, &e, sizeof(e));
+        ssize_t rc = write_exact(fd, &e, sizeof(e));
         if (rc < 0)
             return rc;
         ret += rc;
@@ -540,7 +559,7 @@ static ssize_t write_index_entries(int fd, struct index_entry *buf, size_t count
 
     return ret;
 #else
-    return write(fd, buf, sizeof(*buf) * count);
+    return write_exact(fd, buf, sizeof(*buf) * count);
 #endif
 }
 
@@ -557,7 +576,7 @@ static ssize_t write_tagcache_header(int fd, struct tagcache_header *buf)
 {
     struct tagcache_header e = *buf;
     swap_tagcache_header(&e);
-    return write(fd, &e, sizeof(e));
+    return write_exact(fd, &e, sizeof(e));
 }
 
 static ssize_t read_master_header(int fd, struct master_header *buf)
@@ -573,7 +592,7 @@ static ssize_t write_master_header(int fd, struct master_header *buf)
 {
     struct master_header e = *buf;
     swap_master_header(&e);
-    return write(fd, &e, sizeof(e));
+    return write_exact(fd, &e, sizeof(e));
 }
 
 /*
@@ -2208,12 +2227,18 @@ bool tagcache_fill_tags(struct mp3entry *id3, const char *filename)
 }
 #endif /* defined(HAVE_TC_RAMCACHE) && defined(HAVE_DIRCACHE) */
 
-static inline void write_item(const char *item)
+static inline bool write_item(const char *item)
 {
     int len = strlen(item) + 1;
 
+    if (write_exact(cachefd, item, len) != len)
+    {
+        build_write_error = true;
+        return false;
+    }
+
     data_size += len;
-    write(cachefd, item, len);
+    return true;
 }
 
 static int check_if_empty(char **tag)
@@ -2395,33 +2420,44 @@ static void NO_INLINE add_tagcache(char *path, unsigned long mtime)
     }
     entry.data_length = offset;
 
-    /* Write the header */
-    write(cachefd, &entry, sizeof(struct temp_file_entry));
+    /* Write the header. */
+    if (write_exact(cachefd, &entry, sizeof(struct temp_file_entry)) !=
+        sizeof(struct temp_file_entry))
+    {
+        build_write_error = true;
+        return;
+    }
 
     /* And tags also... Correct order is critical */
-    write_item(path);
-    write_item(id3.title);
-    write_item(id3.artist);
-    write_item(id3.album);
-    write_item(id3.genre_string);
-    write_item(id3.composer);
-    write_item(id3.comment);
-    write_item(id3.albumartist);
+    if (!write_item(path) ||
+        !write_item(id3.title) ||
+        !write_item(id3.artist) ||
+        !write_item(id3.album) ||
+        !write_item(id3.genre_string) ||
+        !write_item(id3.composer) ||
+        !write_item(id3.comment) ||
+        !write_item(id3.albumartist))
+        return;
+
     if (has_artist)
     {
-        write_item(id3.artist);
+        if (!write_item(id3.artist))
+            return;
     }
     else
     {
-        write_item(id3.albumartist);
+        if (!write_item(id3.albumartist))
+            return;
     }
     if (has_grouping)
     {
-        write_item(id3.grouping);
+        if (!write_item(id3.grouping))
+            return;
     }
     else
     {
-        write_item(id3.title);
+        if (!write_item(id3.title))
+            return;
     }
 
     total_entry_count++;
@@ -4985,6 +5021,12 @@ static bool check_dir(const char *dirname, int add_files)
             /* Add a new entry to the temporary db file. */
             add_tagcache(curpath, info.mtime);
 
+            if (build_write_error)
+            {
+                tc_stat.curentry = NULL;
+                break;
+            }
+
             /* Wait until current path for debug screen is read and unset. */
             while (tc_stat.syncscreen && tc_stat.curentry != NULL)
                 yield();
@@ -5023,6 +5065,7 @@ void do_tagcache_build(const char *path[])
     data_size = 0;
     total_entry_count = 0;
     processed_dir_count = 0;
+    build_write_error = false;
 
 #ifdef HAVE_DIRCACHE
     dircache_wait();
@@ -5052,9 +5095,13 @@ void do_tagcache_build(const char *path[])
     logf("Scanning files...");
     /* Scan for new files. */
     memset(&header, 0, sizeof(struct tagcache_header));
-    write(cachefd, &header, sizeof(struct tagcache_header));
+    if (write_tagcache_header(cachefd, &header) != sizeof(header))
+    {
+        logf("temporary header write failed");
+        build_write_error = true;
+    }
 
-    ret = true;
+    ret = !build_write_error;
 
     roots_ll[0].path = path[0];
     roots_ll[0].next = NULL;
@@ -5137,9 +5184,17 @@ void do_tagcache_build(const char *path[])
     header.magic = TAGCACHE_MAGIC;
     header.datasize = data_size;
     header.entry_count = total_entry_count;
-    lseek(cachefd, 0, SEEK_SET);
-    write(cachefd, &header, sizeof(struct tagcache_header));
-    close(cachefd);
+    if (lseek(cachefd, 0, SEEK_SET) < 0 ||
+        write_tagcache_header(cachefd, &header) != sizeof(header) ||
+        fsync(cachefd) < 0)
+    {
+        logf("temporary database finalization failed");
+        build_write_error = true;
+    }
+
+    if (close(cachefd) < 0)
+        build_write_error = true;
+    cachefd = -1;
 
     if (filenametag_fd >= 0)
     {
@@ -5147,9 +5202,11 @@ void do_tagcache_build(const char *path[])
         filenametag_fd = -1;
     }
 
-    if (!ret)
+    if (!ret || build_write_error)
     {
         logf("Aborted.");
+        if (build_write_error)
+            remove_db_file(TAGCACHE_FILE_TEMP);
         cpu_boost(false);
         return ;
     }
