@@ -666,6 +666,14 @@ void utf8_normalize(char *string)
     if (!string || !*string)
          return;
 
+    /* ASCII is already normalized; avoid the mutex and Unicode tables for
+     * the overwhelmingly common metadata and filename case. */
+    const unsigned char *p = (const unsigned char *)string;
+    while (*p && *p < 0x80)
+        p++;
+    if (!*p)
+        return;
+
     mutex_lock(&norm_mutex);
     orig = strlen(string);
     result = utf8proc_decompose(string, 0, normbuf, sizeof(normbuf)/4 -1, UTF8PROC_NULLTERM);
