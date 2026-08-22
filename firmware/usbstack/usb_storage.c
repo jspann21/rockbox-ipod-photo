@@ -111,6 +111,7 @@
 #define SCSI_READ_10              0x28
 #define SCSI_WRITE_10             0x2a
 #define SCSI_START_STOP_UNIT      0x1b
+#define SCSI_SYNCHRONIZE_CACHE_10 0x35
 #define SCSI_REPORT_LUNS          0xa0
 #define SCSI_WRITE_BUFFER         0x3b
 
@@ -485,8 +486,22 @@ static int usb_storage_init_connection(void)
     return 0;
 }
 
+static int usb_storage_flush_media(void)
+{
+#ifdef HAVE_STORAGE_FLUSH
+    return storage_flush();
+#else
+    return 0;
+#endif
+}
+
 void usb_storage_disconnect(void)
 {
+#ifdef HAVE_STORAGE_FLUSH
+    /* Hosts do not invariably issue SYNCHRONIZE CACHE before disconnecting
+     * or changing configuration. Preserve device and adapter write caches. */
+    usb_storage_flush_media();
+#endif
 #ifndef USB_STATIC_ALLOC
     usb_handle = core_free(usb_handle);
 #endif
@@ -1046,6 +1061,20 @@ static void handle_scsi(struct command_block_wrapper* cbw)
             break;
         }
 
+        case SCSI_SYNCHRONIZE_CACHE_10:
+            logf("scsi synchronize_cache %d",lun);
+            if (!lun_present || usb_storage_flush_media() != 0) {
+                send_command_failed_result();
+                cur_sense_data.sense_key = lun_present ? SENSE_MEDIUM_ERROR
+                                                       : SENSE_NOT_READY;
+                cur_sense_data.asc = lun_present ? ASC_WRITE_ERROR
+                                                 : ASC_MEDIUM_NOT_PRESENT;
+                cur_sense_data.ascq = 0;
+            }
+            else
+                send_csw(UMS_STATUS_GOOD);
+            break;
+
         case SCSI_START_STOP_UNIT:
             logf("scsi start_stop unit %d",lun);
             if((cbw->command_block[4] & 0xf0) == 0) /*load/eject bit is valid*/
@@ -1056,6 +1085,17 @@ static void handle_scsi(struct command_block_wrapper* cbw)
                     if((cbw->command_block[4] & 0x02) != 0) /* eject */
                     {
                         logf("scsi eject");
+                        if (!lun_present || usb_storage_flush_media() != 0) {
+                            send_command_failed_result();
+                            cur_sense_data.sense_key =
+                                lun_present ? SENSE_MEDIUM_ERROR
+                                            : SENSE_NOT_READY;
+                            cur_sense_data.asc =
+                                lun_present ? ASC_WRITE_ERROR
+                                            : ASC_MEDIUM_NOT_PRESENT;
+                            cur_sense_data.ascq = 0;
+                            break;
+                        }
                         ejected[lun]=true;
                     }
                 }

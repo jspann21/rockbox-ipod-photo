@@ -420,6 +420,13 @@ static int ata_transfer_sectors(uint64_t start,
         int state = ata_state;
         ata_state = ATA_SPINUP;
         if (ata_perform_wakeup(state)) {
+#ifdef HAVE_ATA_POWER_OFF
+            if (state == ATA_OFF)
+                ide_power_enable(false);
+#endif
+            /* A later request must retry the wake sequence instead of
+             * treating a failed reset or power-on as an awake device. */
+            ata_state = state;
             ret = -2;
             goto error;
         }
@@ -1331,7 +1338,8 @@ int ata_event(long id, intptr_t data)
         /* won't see ATA_BOOT in here */
         bool retry_pending = sleep_retry_tick &&
                              TIME_BEFORE(current_tick, sleep_retry_tick);
-        if (ata_state != ATA_ON || !ata_sleep_timed_out() || retry_pending) {
+        if (ata_state != ATA_OFF &&
+            (ata_state != ATA_ON || !ata_sleep_timed_out() || retry_pending)) {
 #ifdef HAVE_ATA_POWER_OFF
             if (ata_state == ATA_SLEEPING && ata_power_off_timed_out()) {
                 power_off_tick = 0;

@@ -147,7 +147,9 @@ static int pp_i2c_send_bytes(unsigned int addr, int len, unsigned char *data)
         restore_irq(old_irq_level);
     }
 
-    return 0;
+    /* Writes used to return while the controller was still transmitting.
+     * In particular, the final PMU standby command could race deep sleep. */
+    return pp_i2c_wait_not_busy() < 0 ? -2 : 0;
 }
 
 static int pp_i2c_send_byte(unsigned int addr, int data0)
