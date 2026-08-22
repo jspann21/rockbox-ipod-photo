@@ -410,7 +410,8 @@ static int update_control_unlocked(struct playlist_info* playlist,
     int fd = playlist->control_fd;
     int result;
 
-    lseek(fd, 0, SEEK_END);
+    if (lseek(fd, 0, SEEK_END) < 0)
+        return -1;
 
     switch (command)
     {
@@ -424,7 +425,10 @@ static int update_control_unlocked(struct playlist_info* playlist,
         if (result > 0)
         {
             *seekpos = lseek(fd, 0, SEEK_CUR);
-            result = fdprintf(fd, "%s\n", s1);
+            if (*seekpos < 0)
+                result = -1;
+            else
+                result = fdprintf(fd, "%s\n", s1);
         }
         break;
     case PLAYLIST_COMMAND_DELETE:
@@ -437,7 +441,7 @@ static int update_control_unlocked(struct playlist_info* playlist,
         result = fdprintf(fd, "U:%d\n", i1);
         break;
     case PLAYLIST_COMMAND_RESET:
-        result = write(fd, "R\n", 2);
+        result = write(fd, "R\n", 2) == 2 ? 2 : -1;
         break;
     case PLAYLIST_COMMAND_FLAGS:
         result = fdprintf(fd, "F:%u:%u\n", i1, i2);
@@ -2592,7 +2596,11 @@ bool playlist_entries_iterate(const char *filename,
     }
     off_t start = lseek(fd, 0, SEEK_CUR);
     filesize = lseek(fd, 0, SEEK_END);
-    lseek(fd, start, SEEK_SET);
+    if (start < 0 || filesize < 0 || lseek(fd, start, SEEK_SET) != start)
+    {
+        notify_access_error();
+        goto out;
+    }
     /* we need the directory name for formatting purposes */
     size_t dirlen = path_dirname(filename, (const char **)&dir);
     //dir = strmemdupa(dir, dirlen);
@@ -2640,7 +2648,10 @@ bool playlist_entries_iterate(const char *filename,
         /* let the other threads work */
         yield();
     }
-    ret = true;
+    if (max < 0)
+        notify_access_error();
+    else
+        ret = true;
 
 out:
     close(fd);
@@ -3929,12 +3940,18 @@ static int pl_save_playlist(struct playlist_info* playlist,
     }
 
     display_playlist_count(num_saved, ID2P(LANG_PLAYLIST_SAVE_COUNT), true);
+    if (fsync(fd) < 0)
+    {
+        err = -4;
+        goto error;
+    }
     close(fd);
     pl_close_playlist(playlist);
 
-    pl_get_tempname(filename, tmpbuf, tmpsize);
+    if (pl_get_tempname(filename, tmpbuf, tmpsize))
+        return -5;
     if (rename(tmpbuf, filename))
-        return -4;
+        return -6;
 
     strcpy(tmpbuf, filename);
     char *dir = tmpbuf;
@@ -4046,8 +4063,13 @@ static int pl_save_update_control(struct playlist_info* playlist,
             continue;
 
         /* Read filename from old control file */
-        lseek(old_fd, playlist->indices[index] & PLAYLIST_SEEK_MASK, SEEK_SET);
-        read_line(old_fd, tmpbuf, tmpsize);
+        off_t seek = playlist->indices[index] & PLAYLIST_SEEK_MASK;
+        if (lseek(old_fd, seek, SEEK_SET) != seek ||
+            read_line(old_fd, tmpbuf, tmpsize) <= 0)
+        {
+            err = -5;
+            goto error;
+        }
 
         /* Write it out to the new control file */
         int seekpos;
@@ -4094,13 +4116,27 @@ static int pl_save_update_control(struct playlist_info* playlist,
         iap_on_shuffle_state(global_settings.playlist_shuffle);
     }
 
+    if (fsync(playlist->control_fd) < 0)
+    {
+        err = -7;
+        goto error;
+    }
     pl_close_control(playlist);
     close(old_fd);
-    remove(playlist->control_filename);
 
-    /* TODO: Check for errors? The old control file is gone by this point... */
-    pl_get_tempname(playlist->control_filename, tmpbuf, tmpsize);
-    rename(tmpbuf, playlist->control_filename);
+    if (pl_get_tempname(playlist->control_filename, tmpbuf, tmpsize))
+    {
+        playlist->control_fd = open(playlist->control_filename, O_RDWR);
+        playlist->control_created = (playlist->control_fd >= 0);
+        return -8;
+    }
+    if (rename(tmpbuf, playlist->control_filename) < 0)
+    {
+        remove(tmpbuf);
+        playlist->control_fd = open(playlist->control_filename, O_RDWR);
+        playlist->control_created = (playlist->control_fd >= 0);
+        return -9;
+    }
 
     playlist->control_fd = open(playlist->control_filename, O_RDWR);
     playlist->control_created = (playlist->control_fd >= 0);
@@ -4108,7 +4144,12 @@ static int pl_save_update_control(struct playlist_info* playlist,
     return 0;
 
 error:
+    pl_close_control(playlist);
     close(old_fd);
+    if (!pl_get_tempname(playlist->control_filename, tmpbuf, tmpsize))
+        remove(tmpbuf);
+    playlist->control_fd = open(playlist->control_filename, O_RDWR);
+    playlist->control_created = (playlist->control_fd >= 0);
     return err;
 }
 
