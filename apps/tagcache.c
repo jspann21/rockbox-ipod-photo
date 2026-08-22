@@ -317,6 +317,9 @@ struct index_entry {
 /* Shared by the single tagcache worker to keep large commit batches off its
  * deliberately small embedded stack. */
 static struct index_entry commit_idxbuf[IDX_BUF_DEPTH];
+static unsigned char tagfile_record_buf[sizeof(struct tagfile_entry) +
+                                        TAGCACHE_BUFSZ +
+                                        TAGFILE_ENTRY_CHUNK_LENGTH];
 
 /* Header is the same in every file. */
 struct tagcache_header {
@@ -626,13 +629,24 @@ static int sync_file(int fd)
 #endif
 }
 
-static ssize_t write_tagfile_entry(int fd, struct tagfile_entry *buf)
+static ssize_t write_tagfile_record(int fd, const struct tagfile_entry *entry,
+                                    const char *tag, size_t tag_size)
 {
-    struct tagfile_entry e = *buf;
+    if (tag_size > (size_t)entry->tag_length)
+        return -1;
 
-    swap_tagfile_entry(&e);
+    size_t total = sizeof(*entry) + entry->tag_length;
+    if (total > sizeof(tagfile_record_buf))
+        return -1;
 
-    return write_exact(fd, &e, sizeof(e));
+    struct tagfile_entry disk_entry = *entry;
+    swap_tagfile_entry(&disk_entry);
+    memcpy(tagfile_record_buf, &disk_entry, sizeof(disk_entry));
+    memcpy(tagfile_record_buf + sizeof(disk_entry), tag, tag_size);
+    memset(tagfile_record_buf + sizeof(disk_entry) + tag_size, 'X',
+           entry->tag_length - tag_size);
+
+    return write_exact(fd, tagfile_record_buf, total);
 }
 
 enum e_read_errors {
@@ -2803,25 +2817,11 @@ static int tempbuf_sort(int fd)
                  % TAGFILE_ENTRY_CHUNK_LENGTH);
         }
 
-        if (write_tagfile_entry(fd, &fe) != sizeof(struct tagfile_entry))
+        if (write_tagfile_record(fd, &fe, index[i].str, length) !=
+            (ssize_t)(sizeof(fe) + fe.tag_length))
         {
-            logf("tempbuf_sort: write error #1");
+            logf("tempbuf_sort: record write error");
             return -1;
-        }
-
-        if (write_exact(fd, index[i].str, length) != length)
-        {
-            logf("tempbuf_sort: write error #2");
-            return -2;
-        }
-
-        /* Write some padding. */
-        if (fe.tag_length - length > 0 &&
-            write_exact(fd, "XXXXXXXX", fe.tag_length - length) !=
-                fe.tag_length - length)
-        {
-            logf("tempbuf_sort: padding write error");
-            return -2;
         }
     }
 
@@ -3561,8 +3561,9 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
                 idxbuf[j].tag_seek[index_type] = lseek(fd, 0, SEEK_CUR);
                 fe.tag_length = entry.tag_length[index_type];
                 fe.idx_id = tcmh.tch.entry_count + i + j;
-                if (write_tagfile_entry(fd, &fe) != sizeof(fe) ||
-                    write_exact(fd, build_idx_buf, fe.tag_length) != fe.tag_length)
+                if (write_tagfile_record(fd, &fe, build_idx_buf,
+                                         fe.tag_length) !=
+                    (ssize_t)(sizeof(fe) + fe.tag_length))
                 {
                     logf("tagcache: tag write failed");
                     error = true;
