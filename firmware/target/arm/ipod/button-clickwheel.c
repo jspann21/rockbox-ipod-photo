@@ -182,7 +182,9 @@ static inline int ipod_4g_button_read(void)
 
                     if (wheel_keycode != BUTTON_NONE)
                     {
-                        long v = (usec - last_wheel_usec) & 0x7fffffff;
+                        unsigned long elapsed =
+                            (usec - last_wheel_usec) & 0x7fffffff;
+                        uint64_t v;
                         
                         /* undo signedness */
                         wheel_delta = (wheel_delta>0) ? wheel_delta : -wheel_delta;
@@ -190,9 +192,10 @@ static inline int ipod_4g_button_read(void)
                         /* add the current wheel_delta */
                         accumulated_wheel_delta += wheel_delta;
 
-                        v = v ? (1000000 * wheel_delta) / v : 0;  /* clicks/sec = 1000000 * clicks/usec */
+                        v = elapsed ? (1000000ULL * wheel_delta) / elapsed : 0;
                         v = (v * 360) / WHEELCLICKS_PER_ROTATION; /* conversion to degree/sec */
-                        v = (v<0) ? -v : v;                       /* undo signedness */
+                        if (v > 0xffffff)
+                            v = 0xffffff;
             
                         /* some velocity filtering to smooth things out */
                         wheel_velocity = (15 * wheel_velocity + v) / 16;
