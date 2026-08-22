@@ -103,6 +103,7 @@ static int oma_read_header(int fd, struct mp3entry* id3)
 {
     static const uint16_t srate_tab[6] = {320,441,480,882,960,0};
     int     ret, ea3_taglen, EA3_pos, jsflag;
+    unsigned int srate_index;
     uint32_t codec_params;
     int16_t eid;
     uint8_t buf[EA3_HEADER_SIZE];
@@ -117,7 +118,8 @@ static int oma_read_header(int fd, struct mp3entry* id3)
     if (buf[5] & 0x10)
         EA3_pos += 10;
 
-    lseek(fd, EA3_pos, SEEK_SET);
+    if (lseek(fd, EA3_pos, SEEK_SET) != EA3_pos)
+        return -1;
     ret = read(fd, buf, EA3_HEADER_SIZE);
     if (ret != EA3_HEADER_SIZE)
         return -1;
@@ -137,13 +139,18 @@ static int oma_read_header(int fd, struct mp3entry* id3)
 
     switch (buf[32]) {
         case OMA_CODECID_ATRAC3:
-            id3->frequency = srate_tab[(codec_params >> 13) & 7]*100;
+            srate_index = (codec_params >> 13) & 7;
+            if (srate_index >= ARRAYLEN(srate_tab))
+                return -1;
+            id3->frequency = srate_tab[srate_index] * 100;
             if (id3->frequency != 44100) {
                 DEBUGF("Unsupported sample rate, send sample file to developers: %d\n", id3->frequency);
                 return -1;
             }
 
             id3->bytesperframe = (codec_params & 0x3FF) * 8;
+            if (id3->bytesperframe == 0)
+                return -1;
             id3->codectype = AFMT_OMA_ATRAC3;
             jsflag = (codec_params >> 17) & 1; /* get stereo coding mode, 1 for joint-stereo */
 
@@ -174,12 +181,23 @@ static int oma_read_header(int fd, struct mp3entry* id3)
 
 bool get_oma_metadata(int fd, struct mp3entry* id3)
 {
+    off_t file_size;
+    uint64_t length;
+
     if(oma_read_header(fd, id3) < 0)
         return false;
 
     /* Currently, there's no means of knowing the duration *
      * directly from the the file so we calculate it.      */
-    id3->filesize = filesize(fd);
-    id3->length   = ((id3->filesize - id3->first_frame_offset) * 8) / id3->bitrate;
+    file_size = filesize(fd);
+    if (file_size < 0 || (uint64_t)file_size > UINT32_MAX ||
+        (uint64_t)file_size < id3->first_frame_offset || id3->bitrate == 0)
+        return false;
+    id3->filesize = file_size;
+    length = ((uint64_t)id3->filesize - id3->first_frame_offset) * 8 /
+             id3->bitrate;
+    if (length > UINT32_MAX)
+        return false;
+    id3->length = length;
     return true;
 }
