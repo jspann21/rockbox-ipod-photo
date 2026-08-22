@@ -4076,6 +4076,12 @@ static inline void draw_selector(int y, int h)
 
     switch (rb->global_settings->cursor_style)
     {
+        case SYNCLIST_CURSOR_NOSTYLE:
+            mylcd_set_foreground(G_BRIGHT(255));
+            mylcd_set_background(G_BRIGHT(0));
+            rb->screens[SCREEN_MAIN]->put_line(0, y, &line, "$I",
+                                               Icon_Cursor);
+            return;
         case SYNCLIST_CURSOR_COLOR:
             line.style = STYLE_COLORBAR;
             line.text_color = rb->global_settings->lst_color;
@@ -4088,8 +4094,6 @@ static inline void draw_selector(int y, int h)
             line.line_end_color = rb->global_settings->lse_color;
             break;
         default:
-            /* PictureFlow has no icon column for pointer mode, so use the
-             * same readable foreground/background inversion as inverse. */
             mylcd_set_foreground(G_BRIGHT(255));
             mylcd_set_background(G_BRIGHT(0));
             line.style = STYLE_INVERT;
@@ -4247,7 +4251,12 @@ static bool show_track_list(void)
             draw_selector(titletxt_y, titletxt_h);
             titletxt_x = get_scroll_line_offset(PF_SCROLL_TRACK);
 #ifdef HAVE_LCD_COLOR
-            if (rb->global_settings->cursor_style > SYNCLIST_CURSOR_INVERT)
+            if (rb->global_settings->cursor_style == SYNCLIST_CURSOR_NOSTYLE)
+            {
+                mylcd_set_foreground(G_BRIGHT(255));
+                mylcd_set_drawmode(DRMODE_FG);
+            }
+            else if (rb->global_settings->cursor_style > SYNCLIST_CURSOR_INVERT)
             {
                 mylcd_set_foreground(rb->global_settings->lst_color);
                 mylcd_set_drawmode(DRMODE_FG);
