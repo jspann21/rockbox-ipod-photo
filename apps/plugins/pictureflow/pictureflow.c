@@ -1573,13 +1573,9 @@ static int save_album_index(void){
 }
 
 /* reads data from save file to buffer */
-static inline int read2buf(int fildes, void *buf, size_t nbyte){
-    int read;
-    read = rb->read(fildes, buf, nbyte);
-    if (read < (int)nbyte)
-        return 0;
-
-    return read;
+static inline bool read2buf(int fildes, void *buf, size_t nbyte){
+    ssize_t bytes_read = rb->read(fildes, buf, nbyte);
+    return bytes_read >= 0 && (size_t)bytes_read == nbyte;
 }
 
 /*Loads the album_index information stored in the hard drive*/
@@ -1622,7 +1618,7 @@ static int load_album_index(void){
                 /* artist names */
                 if (data.artist_len > buf_size)
                     goto failure;
-                if (read2buf(fr, buf, data.artist_len) == 0)
+                if (!read2buf(fr, buf, data.artist_len))
                     goto failure;
 
                 data.artist_names = buf;
@@ -1632,7 +1628,7 @@ static int load_album_index(void){
                 /* album names */
                 if (data.album_len > buf_size)
                     goto failure;
-                if (read2buf(fr, buf, data.album_len) == 0)
+                if (!read2buf(fr, buf, data.album_len))
                     goto failure;
 
                 data.album_names = buf;
@@ -1643,7 +1639,7 @@ static int load_album_index(void){
                 ALIGN_BUFFER(buf, buf_size, alignof(struct album_data));
                 if (album_idx_sz > buf_size)
                     goto failure;
-                if (read2buf(fr, buf, album_idx_sz) == 0)
+                if (!read2buf(fr, buf, album_idx_sz))
                     goto failure;
 
                 data.album_index = buf;
