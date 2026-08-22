@@ -2688,11 +2688,9 @@ static bool tempdb_checkpoint(void)
     return true;
 }
 
-static inline bool write_item(const char *item)
+static inline bool write_item(const char *item, int len)
 {
-    int len = strlen(item) + 1;
-
-    if (!tempdb_write(item, len))
+    if (len <= 0 || !tempdb_write(item, len))
     {
         build_write_error = true;
         return false;
@@ -2850,10 +2848,8 @@ static void NO_INLINE add_tagcache(char *path, unsigned long mtime)
     entry.tag_offset[tag_mtime] = mtime;
 
     /* String tags. */
-    has_artist = id3.artist != NULL
-        && strlen(id3.artist) > 0;
-    has_grouping = id3.grouping != NULL
-        && strlen(id3.grouping) > 0;
+    has_artist = id3.artist != NULL && *id3.artist;
+    has_grouping = id3.grouping != NULL && *id3.grouping;
 
     ADD_TAG(entry, tag_filename, &path);
     ADD_TAG(entry, tag_title, &id3.title);
@@ -2889,34 +2885,36 @@ static void NO_INLINE add_tagcache(char *path, unsigned long mtime)
     }
 
     /* And tags also... Correct order is critical */
-    if (!write_item(path) ||
-        !write_item(id3.title) ||
-        !write_item(id3.artist) ||
-        !write_item(id3.album) ||
-        !write_item(id3.genre_string) ||
-        !write_item(id3.composer) ||
-        !write_item(id3.comment) ||
-        !write_item(id3.albumartist))
+    if (!write_item(path, entry.tag_length[tag_filename]) ||
+        !write_item(id3.title, entry.tag_length[tag_title]) ||
+        !write_item(id3.artist, entry.tag_length[tag_artist]) ||
+        !write_item(id3.album, entry.tag_length[tag_album]) ||
+        !write_item(id3.genre_string, entry.tag_length[tag_genre]) ||
+        !write_item(id3.composer, entry.tag_length[tag_composer]) ||
+        !write_item(id3.comment, entry.tag_length[tag_comment]) ||
+        !write_item(id3.albumartist, entry.tag_length[tag_albumartist]))
         return;
 
     if (has_artist)
     {
-        if (!write_item(id3.artist))
+        if (!write_item(id3.artist,
+                        entry.tag_length[tag_virt_canonicalartist]))
             return;
     }
     else
     {
-        if (!write_item(id3.albumartist))
+        if (!write_item(id3.albumartist,
+                        entry.tag_length[tag_virt_canonicalartist]))
             return;
     }
     if (has_grouping)
     {
-        if (!write_item(id3.grouping))
+        if (!write_item(id3.grouping, entry.tag_length[tag_grouping]))
             return;
     }
     else
     {
-        if (!write_item(id3.title))
+        if (!write_item(id3.title, entry.tag_length[tag_grouping]))
             return;
     }
 
