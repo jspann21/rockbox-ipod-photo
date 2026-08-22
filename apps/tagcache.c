@@ -392,18 +392,21 @@ struct tagcache_reader
     size_t position;
     size_t available;
     off_t file_position;
+    off_t file_limit;
 };
 
 static bool tagcache_reader_init(struct tagcache_reader *reader, int fd)
 {
     off_t position = lseek(fd, 0, SEEK_CUR);
-    if (position < 0)
+    off_t limit = filesize(fd);
+    if (position < 0 || limit < position)
         return false;
 
     reader->fd = fd;
     reader->position = 0;
     reader->available = 0;
     reader->file_position = position;
+    reader->file_limit = limit;
     return true;
 }
 
@@ -417,11 +420,16 @@ static ssize_t tagcache_reader_read(struct tagcache_reader *reader,
     {
         if (reader->position == reader->available)
         {
+            off_t left = reader->file_limit - reader->file_position;
+            if (left <= 0)
+                return -1;
+
             ssize_t rc;
             do
             {
+                size_t count = MIN((off_t)sizeof(tagcache_load_buf), left);
                 rc = read(reader->fd, tagcache_load_buf,
-                          sizeof(tagcache_load_buf));
+                          count);
             }
             while (rc < 0 && errno == EINTR);
 
@@ -445,6 +453,9 @@ static ssize_t tagcache_reader_read(struct tagcache_reader *reader,
 
 static bool tagcache_reader_skip(struct tagcache_reader *reader, size_t size)
 {
+    if (size > (size_t)(reader->file_limit - reader->file_position))
+        return false;
+
     size_t buffered = reader->available - reader->position;
     size_t consume = MIN(size, buffered);
     reader->position += consume;
@@ -595,6 +606,11 @@ static ssize_t tagcache_reader_entry(struct tagcache_reader *reader,
     if (rc == sizeof(*entry))
         swap_tagfile_entry(entry);
     return rc;
+}
+
+static bool tagcache_reader_at_end(const struct tagcache_reader *reader)
+{
+    return reader->file_position == reader->file_limit;
 }
 #endif
 
@@ -5214,7 +5230,7 @@ static bool load_tagcache(void)
         off_t tag_file_size = filesize(fd);
         if (tch->entry_count < 0 || tch->datasize < 0 ||
             tag_file_size < (off_t)sizeof(*tch) ||
-            tch->datasize > tag_file_size - (off_t)sizeof(*tch) ||
+            tch->datasize != tag_file_size - (off_t)sizeof(*tch) ||
             (size_t)tch->entry_count >
                 (size_t)tch->datasize / sizeof(struct tagfile_entry))
         {
@@ -5374,6 +5390,12 @@ static bool load_tagcache(void)
                 goto failure;
             }
             p += rc;
+        }
+
+        if (!tagcache_reader_at_end(&reader))
+        {
+            logf("tag index size mismatch: %d", tag);
+            goto failure;
         }
 
     #ifdef HAVE_DIRCACHE
@@ -5543,6 +5565,11 @@ static bool check_file_refs(bool auto_update)
 
         do_timed_yield();
     }
+
+#ifdef HAVE_TC_RAMCACHE
+    if (ret && !tagcache_reader_at_end(&reader))
+        ret = false;
+#endif
 
 wend_finished:
 
