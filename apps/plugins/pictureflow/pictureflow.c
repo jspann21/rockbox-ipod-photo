@@ -5005,8 +5005,10 @@ static int pictureflow_main(void)
         }
 
         /* Calculate FPS */
-        if (current_update - last_update > update_interval) {
-            fps = frames * HZ / (current_update - last_update);
+        unsigned long update_elapsed = (unsigned long)current_update -
+                                       (unsigned long)last_update;
+        if (update_elapsed > (unsigned long)update_interval) {
+            fps = (unsigned long)frames * HZ / update_elapsed;
             last_update = current_update;
             frames = 0;
         }
