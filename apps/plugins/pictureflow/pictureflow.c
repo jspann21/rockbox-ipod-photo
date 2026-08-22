@@ -2138,8 +2138,9 @@ static bool get_albumart_for_index_from_db(const int slide_index, char *buf,
     rb->tagcache_search_add_filter(&tcs, tag_album,
                                    pf_idx.album_index[slide_index].seek);
 
-    rb->tagcache_search_add_filter(&tcs, tag_albumartist,
-                                   pf_idx.album_index[slide_index].artist_seek);
+    if (pf_idx.album_index[slide_index].artist_idx >= 0)
+        rb->tagcache_search_add_filter(&tcs, tag_albumartist,
+            pf_idx.album_index[slide_index].artist_seek);
 
     ret = rb->tagcache_get_next(&tcs, tcs_buf, tcs_bufsz) &&
           retrieve_id3(&id3, tcs.result) &&
