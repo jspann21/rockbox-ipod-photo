@@ -2207,6 +2207,7 @@ static void draw_progressbar(int step, int count, char *msg)
     const int bar_height = 22;
     const int w = LCD_WIDTH - 20;
     const int x = 10;
+    int fill_width = 0;
     static int y;
     if (msg != NULL)
     {
@@ -2231,7 +2232,9 @@ static void draw_progressbar(int step, int count, char *msg)
     rb->lcd_set_foreground(N_PIX(165, 231, 82));
 #endif
 
-    rb->lcd_fillrect(x+1, y+1, step * w / count, bar_height-2);
+    if (count > 0)
+        fill_width = MIN(w, MAX(0, step * w / count));
+    rb->lcd_fillrect(x+1, y+1, fill_width, bar_height-2);
 #if LCD_DEPTH > 1
     rb->lcd_set_foreground(N_BRIGHT(255));
 #endif
