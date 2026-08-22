@@ -48,22 +48,28 @@ int pcf50605_read_multiple(int address, unsigned char* buf, int count)
 
 int pcf50605_write(int address, unsigned char val)
 {
-    pp_i2c_send(0x8, address, val);
-    return 0;
+    return pp_i2c_send(0x8, address, val);
 }
 
 int pcf50605_write_multiple(int address, const unsigned char* buf, int count)
 {
     int i;
 
+    if (count < 0 || (count > 0 && buf == NULL))
+        return -1;
+
     i2c_lock();
 
-    for (i = 0; i < count; i++)
-        pp_i2c_send(0x8, address + i, buf[i]);
+    int rc = 0;
+    for (i = 0; i < count; i++) {
+        rc = pp_i2c_send(0x8, address + i, buf[i]);
+        if (rc < 0)
+            break;
+    }
 
     i2c_unlock();
 
-    return 0;
+    return rc;
 }
 
 /* The following command puts the iPod into a deep sleep.  Warning

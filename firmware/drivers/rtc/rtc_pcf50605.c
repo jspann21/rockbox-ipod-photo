@@ -41,6 +41,8 @@ int rtc_read_datetime(struct tm *tm)
     int rc;
     unsigned char buf[7];
     rc = pcf50605_read_multiple(0x0a, buf, sizeof(buf));
+    if (rc < 0)
+        return rc;
 
     for (i = 0; i < sizeof(buf); i++)
         buf[i] = BCD2DEC(buf[i]);
@@ -74,9 +76,7 @@ int rtc_write_datetime(const struct tm *tm)
     for (i = 0; i < sizeof(buf); i++)
         buf[i] = DEC2BCD(buf[i]);
 
-    pcf50605_write_multiple(0x0a, buf, sizeof(buf));
-
-    return 1;
+    return pcf50605_write_multiple(0x0a, buf, sizeof(buf));
 }
 
 /**
@@ -85,7 +85,8 @@ int rtc_write_datetime(const struct tm *tm)
  */
 bool rtc_check_alarm_flag(void)
 {
-    return pcf50605_read(0x02) & 0x80;
+    int value = pcf50605_read(0x02);
+    return value >= 0 && (value & 0x80);
 }
 
 /**
@@ -100,9 +101,12 @@ void rtc_enable_alarm(bool enable)
         /* Tell the PCF to ignore everything but second, minute and hour, so
          * that an alarm will trigger the next time the alarm time occurs.
          */
-        pcf50605_write_multiple(0x14, alarm_disable + 3, 4);
+        if (pcf50605_write_multiple(0x14, alarm_disable + 3, 4) < 0)
+            return;
         /* Unmask the alarm interrupt (might be unneeded) */
-        pcf50605_write(0x5, pcf50605_read(0x5) & ~0x80);
+        int value = pcf50605_read(0x5);
+        if (value < 0 || pcf50605_write(0x5, value & ~0x80) < 0)
+            return;
         /* Make sure wake on RTC is set when shutting down */
         pcf50605_wakeup_flags |= 0x10;
     } else {
@@ -133,8 +137,9 @@ bool rtc_check_alarm_started(bool release_alarm)
          * registers, so we need to find some other way to detect if an alarm
          * just happened
          */
-        pcf50605_read_multiple(0x0a, rt, 3);
-        pcf50605_read_multiple(0x11, at, 3);
+        if (pcf50605_read_multiple(0x0a, rt, 3) < 0 ||
+            pcf50605_read_multiple(0x11, at, 3) < 0)
+            return false;
 
         /* If alarm time and real time match within 10 seconds of each other, we
          * assume an alarm just triggered
@@ -159,7 +164,11 @@ void rtc_get_alarm(int *h, int *m)
 {
     char buf[2];
 
-    pcf50605_read_multiple(0x12, buf, sizeof(buf));
+    if (pcf50605_read_multiple(0x12, buf, sizeof(buf)) < 0) {
+        *m = 0;
+        *h = 0;
+        return;
+    }
     /* Convert from BCD */
     *m = BCD2DEC(buf[0]);
     *h = BCD2DEC(buf[1]);

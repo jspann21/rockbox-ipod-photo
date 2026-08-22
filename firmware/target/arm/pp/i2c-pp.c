@@ -174,10 +174,16 @@ int i2c_readbytes(unsigned int dev_addr, int addr, int len, unsigned char *data)
 {
     int i, n;
 
+    if (len < 0 || (len > 0 && data == NULL))
+        return -1;
+
     mutex_lock(&i2c_mtx);
 
-    if (addr >= 0)
-        pp_i2c_send_byte(dev_addr, addr);
+    if (addr >= 0 && pp_i2c_send_byte(dev_addr, addr) < 0)
+    {
+        mutex_unlock(&i2c_mtx);
+        return 0;
+    }
 
     i = 0;
     while (len > 0)
@@ -198,19 +204,24 @@ int i2c_readbytes(unsigned int dev_addr, int addr, int len, unsigned char *data)
 
 int i2c_readbyte(unsigned int dev_addr, int addr)
 {
-    unsigned char data;
+    unsigned char data = 0;
+    int rc;
 
     mutex_lock(&i2c_mtx);
-    pp_i2c_send_byte(dev_addr, addr);
-    pp_i2c_read_bytes(dev_addr, 1, &data);
+    rc = pp_i2c_send_byte(dev_addr, addr);
+    if (rc >= 0)
+        rc = pp_i2c_read_bytes(dev_addr, 1, &data);
     mutex_unlock(&i2c_mtx);
 
-    return (int)data;
+    return rc < 0 ? rc : (int)data;
 }
 
 int i2c_sendbytes(unsigned int addr, int len, const unsigned char *data)
 {
     int i, n;
+
+    if (len < 0 || (len > 0 && data == NULL))
+        return -1;
 
     mutex_lock(&i2c_mtx);
 
