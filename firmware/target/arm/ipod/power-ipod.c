@@ -40,7 +40,8 @@ void power_init(void)
     GPIOC_OUTPUT_EN |= 0x40;   /* enable output */
 #endif
 #ifndef IPOD_1G2G
-    pcf50605_init();
+    if (pcf50605_init() < 0)
+        logf("PMU initialization incomplete");
 #endif
 }
 

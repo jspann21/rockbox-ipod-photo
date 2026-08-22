@@ -86,42 +86,53 @@ int pcf50605_standby_mode(void)
     return rc;
 }
 
-void pcf50605_init(void)
+static int pcf50605_init_write(int address, unsigned char value)
 {
+    int rc = -1;
+    for (int attempt = 0; attempt < 3 && rc < 0; attempt++)
+        rc = pcf50605_write(address, value);
+    return rc;
+}
+
+int pcf50605_init(void)
+{
+    int rc = 0;
+#define INIT_WRITE(reg, value) \
+    do { if (pcf50605_init_write((reg), (value)) < 0) rc = -1; } while (0)
 #if (defined (IPOD_VIDEO) || defined (IPOD_NANO))
     /* I/O and GPO voltage supply. ECO not allowed regarding data sheet. Defaults:
      * iPod Video = 0xf8 = 3.3V ON
      * iPod nano  = 0xf5 = 3.0V ON */
-    pcf50605_write(PCF5060X_IOREGC,  0xf5); /* 3.0V ON */
+    INIT_WRITE(PCF5060X_IOREGC,  0xf5); /* 3.0V ON */
     
     /* Core voltage supply. ECO not stable, assumed due to less precision of 
      * voltage in ECO mode. DCDC2 is not relevant as this may be used for 
      * voltage scaling. Default is 1.2V ON for PP5022/PP5024 */
-    pcf50605_write(PCF5060X_DCDC1,   0xec); /* 1.2V ON */
-    pcf50605_write(PCF5060X_DCDC2,   0x0c); /* OFF */
+    INIT_WRITE(PCF5060X_DCDC1,   0xec); /* 1.2V ON */
+    INIT_WRITE(PCF5060X_DCDC2,   0x0c); /* OFF */
     
     /* Unknown. Defaults:
      * iPod Video = 0xe3 = 1.8V ON
      * iPod nano  = 0xe3 = 1.8V ON */
-    pcf50605_write(PCF5060X_DCUDC1,  0xe3); /* 1.8V ON */
+    INIT_WRITE(PCF5060X_DCUDC1,  0xe3); /* 1.8V ON */
     
     /* Codec voltage supply. ECO not allowed as max. current of 5mA is not
      * sufficient. Defaults:
      * iPod Video = 0xf5 = 3.0V ON
      * iPod nano  = 0xef = 2.4V ON */
-    pcf50605_write(PCF5060X_D1REGC1, 0xf0); /* 2.5V ON */
+    INIT_WRITE(PCF5060X_D1REGC1, 0xf0); /* 2.5V ON */
     
     /* PCF5060X_D2REGC1 is set in accordance to the accessory power setting */
     
 #if  defined (IPOD_VIDEO)
     /* LCD voltage supply. Defaults:
      * iPod Video = 0xf5 = 3.0V ON */
-    pcf50605_write(PCF5060X_D3REGC1, 0xf1); /* 2.6V ON */
+    INIT_WRITE(PCF5060X_D3REGC1, 0xf1); /* 2.6V ON */
 #elif defined (IPOD_NANO)
     /* D3REGC has effect on LCD and ATA, leave it unchanged due to possible ATA
      * failures. Defaults:
      * iPod nano  = 0xf5 = 3.0V ON */
-    pcf50605_write(PCF5060X_D3REGC1, 0xf5); /* 3.0V ON */
+    INIT_WRITE(PCF5060X_D3REGC1, 0xf5); /* 3.0V ON */
 #endif
     
     /* PCF5060X_LPREGC1 is leaved untouched as the setting varies over the 
@@ -130,7 +141,9 @@ void pcf50605_init(void)
      * iPod nano  = 0xf6 = 3.1V ON */
 #else
     /* keep initialization from svn for other iPods */
-    pcf50605_write(PCF5060X_D1REGC1, 0xf5); /* 3.0V ON */
-    pcf50605_write(PCF5060X_D3REGC1, 0xf5); /* 3.0V ON */
+    INIT_WRITE(PCF5060X_D1REGC1, 0xf5); /* 3.0V ON */
+    INIT_WRITE(PCF5060X_D3REGC1, 0xf5); /* 3.0V ON */
 #endif
+#undef INIT_WRITE
+    return rc;
 }
