@@ -5132,8 +5132,7 @@ static bool load_tagcache(void)
                     goto failure;
                 }
 
-                if ((idx->flag & FLAG_DELETED)
-                    IFN_DIRCACHE( || !global_settings.tagcache_autoupdate ))
+                if (idx->flag & FLAG_DELETED)
                 {
                     /* seek over tag data instead of reading */
                     if (!tagcache_reader_skip(&reader, fe->tag_length))
@@ -5151,6 +5150,11 @@ static bool load_tagcache(void)
                     logf("read error #12");
                     goto failure;
                 }
+#ifdef HAVE_DIRCACHE
+                if (dircache_search(DCS_CACHED_PATH | DCS_UPDATE_FILEREF,
+                                    &tcrc_dcfrefs[idx_id], filename) > 0)
+                    idx->flag |= FLAG_DIRCACHE;
+#endif
                 continue;
             }
 
@@ -5959,8 +5963,9 @@ static void tagcache_thread(void)
                 if (!tc_stat.ramcache && global_settings.tagcache_ram)
                 {
                     load_ramcache();
-                    if (global_settings.tagcache_ram == TAGCACHE_RAM_ON)
-                        check_file_refs(global_settings.tagcache_autoupdate);
+                    if (global_settings.tagcache_ram == TAGCACHE_RAM_ON &&
+                        global_settings.tagcache_autoupdate)
+                        check_file_refs(true);
                     if (tc_stat.ramcache && global_settings.tagcache_autoupdate)
                         tagcache_build();
                 }
