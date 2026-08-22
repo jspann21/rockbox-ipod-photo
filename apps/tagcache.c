@@ -6049,7 +6049,6 @@ static void tagcache_thread(void)
 {
     struct queue_event ev;
     bool check_done = false;
-    cpu_boost(true);
     bool rebuild_database = sealed_database_needs_rebuild();
     /* If the previous cache build/update was interrupted, commit
      * the changes first in foreground. */
@@ -6064,9 +6063,11 @@ static void tagcache_thread(void)
                                     &message, NULL, NULL) == YESNO_YES)
 #endif
         {
+            cpu_boost(true);
             allocate_tempbuf();
             commit();
             free_tempbuf();
+            cpu_boost(false);
         }
     }
 
@@ -6089,7 +6090,6 @@ static void tagcache_thread(void)
         allocate_tagcache();
 #endif /* HAVE_TC_RAMCACHE */
 
-    cpu_boost(false);
     tc_stat.initialized = true;
 
     /* Don't delay bootup with the header check but do it on background. */
