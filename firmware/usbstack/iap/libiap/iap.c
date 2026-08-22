@@ -59,15 +59,33 @@ IAPBool iap_init_ctx(struct IAPContext* ctx, struct IAPOpts opts, void* platform
     ctx->platform = platform;
 
     ctx->hid_recv_buf = iap_platform_malloc(ctx, HID_BUFFER_SIZE, 0);
-    check_ret(ctx->hid_recv_buf != NULL, iap_false);
+    if(ctx->hid_recv_buf == NULL) {
+        goto error;
+    }
     ctx->send_buf = iap_platform_malloc(ctx, SEND_BUFFER_SIZE, 0);
-    check_ret(ctx->send_buf != NULL, iap_false);
+    if(ctx->send_buf == NULL) {
+        goto error;
+    }
     ctx->handling_trans_id    = -1;
     ctx->trans_id_support     = TransIDUnknown;
     ctx->hid_send_staging_buf = iap_platform_malloc(ctx, max_input_hid_desc_size + 1 /* report id */, IAPPlatformMallocFlags_Uncached);
-    check_ret(ctx->hid_send_staging_buf != NULL, iap_false);
+    if(ctx->hid_send_staging_buf == NULL) {
+        goto error;
+    }
     ctx->phase = IAPPhase_Connected;
     return iap_true;
+
+error:
+    if(ctx->hid_send_staging_buf != NULL) {
+        iap_platform_free(ctx, ctx->hid_send_staging_buf);
+    }
+    if(ctx->send_buf != NULL) {
+        iap_platform_free(ctx, ctx->send_buf);
+    }
+    if(ctx->hid_recv_buf != NULL) {
+        iap_platform_free(ctx, ctx->hid_recv_buf);
+    }
+    return iap_false;
 }
 
 IAPBool iap_deinit_ctx(struct IAPContext* ctx) {
