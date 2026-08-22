@@ -3288,14 +3288,11 @@ static void set_initial_slide(const char* selected_file)
 
 static void reselect(unsigned int hash_album, unsigned int hash_artist)
 {
-    int i, album_idx, artist_idx;
+    int i;
     for (i = 0; i < pf_idx.album_ct; i++ )
     {
-        album_idx = pf_idx.album_index[i].name_idx;
-        artist_idx = pf_idx.album_index[i].artist_idx;
-
-        if(hash_album == mfnv(pf_idx.album_names + album_idx) &&
-           hash_artist == mfnv(pf_idx.artist_names + artist_idx))
+        if(hash_album == mfnv(get_album_name(i)) &&
+           hash_artist == mfnv(get_album_artist(i)))
         {
             set_current_slide(i);
             pf_cfg.last_album = i;
