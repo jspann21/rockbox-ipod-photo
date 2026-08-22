@@ -2982,9 +2982,8 @@ static inline struct dim *surface(const int slide_index)
         } while (i != pf_sldcache.used && j < SLIDE_CACHE_SIZE);
     }
     if (is_initial_slide && slide_index == center_index)
-        return NULL;
-    else
-        return get_slide(empty_slide_hid);
+        is_initial_slide = false;
+    return get_slide(empty_slide_hid);
 }
 
 /**
