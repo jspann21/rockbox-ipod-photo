@@ -1196,20 +1196,51 @@ int STORAGE_INIT_ATTR ata_init(void)
 
 #ifdef HAVE_LBA48
         if (identify_info[83] & 0x0400 && total_sectors == 0x0FFFFFFF) {
-            total_sectors = ((uint64_t)identify_info[103] << 48) |
+            uint64_t lba48_sectors = ((uint64_t)identify_info[103] << 48) |
                     ((uint64_t)identify_info[102] << 32) |
                     ((uint64_t)identify_info[101] << 16) |
                     identify_info[100];
-            ata_lba48 = true; /* use BigLBA */
+            if (lba48_sectors != 0) {
+                total_sectors = lba48_sectors;
+                ata_lba48 = true; /* use BigLBA */
+            }
         }
 #endif /* HAVE_LBA48 */
 
+        if (total_sectors == 0) {
+            rc = -44;
+            goto error;
+        }
+
         /* Logical sector size > 512B ? */
-        if ((identify_info[106] & 0xd000) == 0x5000) /* B14, B12 */
-            log_sector_size = (identify_info[117] |
-                              ((uint32_t)identify_info[118] << 16)) * 2;
-        else
+        if ((identify_info[106] & 0xd000) == 0x5000) { /* B14, B12 */
+            uint32_t sector_words = identify_info[117] |
+                                    ((uint32_t)identify_info[118] << 16);
+            if (sector_words > UINT32_MAX / 2) {
+                rc = -45;
+                goto error;
+            }
+            log_sector_size = sector_words * 2;
+        }
+        else {
             log_sector_size = 512;
+        }
+
+        if (log_sector_size < 512 || (log_sector_size & 1)) {
+            rc = -45;
+            goto error;
+        }
+#ifndef MAX_VARIABLE_LOG_SECTOR
+        if (log_sector_size != SECTOR_SIZE) {
+            rc = -45;
+            goto error;
+        }
+#elif defined(MAX_VARIABLE_LOG_SECTOR)
+        if (log_sector_size > MAX_VARIABLE_LOG_SECTOR) {
+            rc = -45;
+            goto error;
+        }
+#endif
 
         rc = freeze_lock();
         if (rc) {
