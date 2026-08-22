@@ -1164,7 +1164,8 @@ int STORAGE_INIT_ATTR ata_init(void)
 
         DEBUGF("ata: max %d sectors per DRQ\n", multisectors);
 
-        total_sectors = (identify_info[61] << 16) | identify_info[60];
+        total_sectors = ((uint32_t)identify_info[61] << 16) |
+                        identify_info[60];
 
 #ifdef HAVE_LBA48
         if (identify_info[83] & 0x0400 && total_sectors == 0x0FFFFFFF) {
@@ -1178,7 +1179,8 @@ int STORAGE_INIT_ATTR ata_init(void)
 
         /* Logical sector size > 512B ? */
         if ((identify_info[106] & 0xd000) == 0x5000) /* B14, B12 */
-            log_sector_size = (identify_info[117] | (identify_info[118] << 16)) * 2;
+            log_sector_size = (identify_info[117] |
+                              ((uint32_t)identify_info[118] << 16)) * 2;
         else
             log_sector_size = 512;
 
