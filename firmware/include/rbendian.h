@@ -199,7 +199,8 @@ static inline uint16_t _generic_load_le16(const void* p)
 static inline uint32_t _generic_load_le32(const void* p)
 {
     const uint8_t* d = p;
-    return d[0] | (d[1] << 8) | (d[2] << 16) | (d[3] << 24);
+    return (uint32_t)d[0] | ((uint32_t)d[1] << 8) |
+           ((uint32_t)d[2] << 16) | ((uint32_t)d[3] << 24);
 }
 
 static inline uint64_t _generic_load_le64(const void* p)
@@ -220,7 +221,8 @@ static inline uint16_t _generic_load_be16(const void* p)
 static inline uint32_t _generic_load_be32(const void* p)
 {
     const uint8_t* d = p;
-    return (d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3];
+    return ((uint32_t)d[0] << 24) | ((uint32_t)d[1] << 16) |
+           ((uint32_t)d[2] << 8) | (uint32_t)d[3];
 }
 
 static inline uint64_t _generic_load_be64(const void* p)
