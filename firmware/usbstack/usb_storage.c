@@ -1177,7 +1177,8 @@ static void handle_scsi(struct command_block_wrapper* cbw)
 
             logf("scsi read %llu %d", cur_cmd.sector, cur_cmd.count);
 
-            if((cur_cmd.sector + cur_cmd.count) > block_count) {
+            if (cur_cmd.sector > block_count ||
+                cur_cmd.count > block_count - cur_cmd.sector) {
                 send_csw(UMS_STATUS_FAIL);
                 cur_sense_data.sense_key=SENSE_ILLEGAL_REQUEST;
                 cur_sense_data.asc=ASC_LBA_OUT_OF_RANGE;
@@ -1228,7 +1229,8 @@ static void handle_scsi(struct command_block_wrapper* cbw)
 
             logf("scsi read %llu %d", cur_cmd.sector, cur_cmd.count);
 
-            if((cur_cmd.sector + cur_cmd.count) > block_count) {
+            if (cur_cmd.sector > block_count ||
+                cur_cmd.count > block_count - cur_cmd.sector) {
                 send_csw(UMS_STATUS_FAIL);
                 cur_sense_data.sense_key=SENSE_ILLEGAL_REQUEST;
                 cur_sense_data.asc=ASC_LBA_OUT_OF_RANGE;
@@ -1272,7 +1274,8 @@ static void handle_scsi(struct command_block_wrapper* cbw)
             cur_cmd.block_size = block_size;
 
             /* expect data */
-            if((cur_cmd.sector + cur_cmd.count) > block_count) {
+            if (cur_cmd.sector > block_count ||
+                cur_cmd.count > block_count - cur_cmd.sector) {
                 send_csw(UMS_STATUS_FAIL);
                 cur_sense_data.sense_key=SENSE_ILLEGAL_REQUEST;
                 cur_sense_data.asc=ASC_LBA_OUT_OF_RANGE;
@@ -1313,7 +1316,8 @@ static void handle_scsi(struct command_block_wrapper* cbw)
             cur_cmd.block_size = block_size;
 
             /* expect data */
-            if((cur_cmd.sector + cur_cmd.count) > block_count) {
+            if (cur_cmd.sector > block_count ||
+                cur_cmd.count > block_count - cur_cmd.sector) {
                 send_csw(UMS_STATUS_FAIL);
                 cur_sense_data.sense_key=SENSE_ILLEGAL_REQUEST;
                 cur_sense_data.asc=ASC_LBA_OUT_OF_RANGE;
