@@ -50,6 +50,14 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       and refresh or discard stale RAM caches after database updates.
 - [x] Write an atomic, low-overhead database build profile with scan, metadata,
       checkpoint, commit, per-index, outcome, and size metrics.
+- [x] Clamp dynamic list state after item-count changes and avoid full redraws
+      when click-wheel input cannot move the selection.
+- [x] Harden USB/iAP audio-interface state, reconnect retries, playlist access,
+      tuner packets, battery reporting, and album-art dimensions.
+- [x] Validate ATA IDENTIFY capacity and logical-sector geometry, and back off
+      failed idle flush/standby retries on marginal adapters.
+- [x] Allow realistic capacity settings for modern iPod Photo replacement
+      batteries without changing the target's voltage calibration.
 
 ## Reliability and maintainability
 
@@ -64,7 +72,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 ## Storage and iFlash compatibility
 
 - [ ] Test the unchanged firmware after installing the iFlash ATA1.
-- [ ] Audit ATA IDENTIFY capability handling, LBA48, and unusual adapter replies.
+- [x] Audit and harden ATA IDENTIFY capability handling and LBA48 geometry;
+      retain unusual-adapter reply checks for iFlash hardware validation.
 - [x] Improve DMA timeout fallback, reset recovery, and bounded retry behavior.
 - [ ] Check cold boot, wake, sleep, shutdown, and storage power sequencing.
 - [x] Harden initial database scan and commit I/O; retain hardware timing and
@@ -77,7 +86,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 
 - [x] Refine wheel acceleration and selection behavior on long lists; reserve
       hardware testing for final sensitivity tuning.
-- [ ] Reduce remaining redundant redraws and visible flicker.
+- [ ] Reduce remaining redundant redraws and visible flicker; generic list edge
+      redraws are now eliminated, while PictureFlow idle redraws remain.
 - [ ] Improve menu, browser, and now-playing geometry for 220x176 rather than
       shrinking layouts designed for 320x240.
 - [ ] Improve typography, spacing, icons, focus indication, and status layout.
