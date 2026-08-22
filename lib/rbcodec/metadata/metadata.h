@@ -26,6 +26,7 @@
 #define METADATA_EXCLUDE_ID3_PATH  (0x01) /* don't copy filename path to the id3 path buffer */
 #define METADATA_CLOSE_FD_ON_EXIT  (0x02) /* close the filedescriptor when finished */
 #define METADATA_EXCLUDE_NORMALIZE (0x04) /* don't normalize id3 text entries */
+#define METADATA_EXCLUDE_ALBUMART  (0x08) /* don't inspect embedded album art */
 /* Audio file types. */
 /* NOTE: The values of the AFMT_* items are used for the %fc tag in the WPS
          - so new entries MUST be added to the end to maintain compatibility.

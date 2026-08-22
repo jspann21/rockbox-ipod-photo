@@ -429,6 +429,7 @@ unsigned int probe_file_format(const char *filename)
  * METADATA_EXCLUDE_ID3_PATH  won't copy filename path to the id3 path buffer
  * METADATA_CLOSE_FD_ON_EXIT closes the open filedescriptor on exit
  * METADATA_EXCLUDE_NORMALIZE won't utf8 normalize the string type id3 entries
+ * METADATA_EXCLUDE_ALBUMART won't inspect embedded album art
  */
 bool get_metadata_afmt(struct mp3entry* id3, int fd, const char* trackname, int audio_fmt, int flags)
 {
@@ -472,12 +473,23 @@ bool get_metadata_afmt(struct mp3entry* id3, int fd, const char* trackname, int 
         res_str = " - [No parser]\n";
         success = false;
     }
-    else if (!entry->parse_func(fd, id3))
+    else
     {
-        DEBUGF("parsing %s failed (format: %s)\n", trackname, entry->label);
-        res_str = " - [Parser failed]\n";
-        success = false;
-        wipe_mp3entry(id3); /* ensure the mp3entry is clear */
+        bool parsed;
+
+        if ((flags & METADATA_EXCLUDE_ALBUMART) &&
+            entry->parse_func == get_mp3_metadata)
+            parsed = get_mp3_metadata_ex(fd, id3, false);
+        else
+            parsed = entry->parse_func(fd, id3);
+
+        if (!parsed)
+        {
+            DEBUGF("parsing %s failed (format: %s)\n", trackname, entry->label);
+            res_str = " - [Parser failed]\n";
+            success = false;
+            wipe_mp3entry(id3); /* ensure the mp3entry is clear */
+        }
     }
 
 #ifdef UTF8PROC_EXPORTS

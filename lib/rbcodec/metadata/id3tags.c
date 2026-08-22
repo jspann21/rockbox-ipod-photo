@@ -770,7 +770,7 @@ static bool is_cuesheet(char *tag, unsigned char *char_enc, unsigned char *cuesh
  * Assumes that the offset of file is at the start of the ID3 header.
  * (if the header is at the begining of the file getid3v2len() will ensure this.)
  */
-void setid3v2title(int fd, struct mp3entry *entry)
+void setid3v2title_ex(int fd, struct mp3entry *entry, bool parse_albumart)
 {
     int minframesize;
     int size;
@@ -974,6 +974,25 @@ retry_with_limit:
 
         /* Keep track of the remaining frame size */
         totframelen = framelen;
+
+#ifdef HAVE_ALBUMART
+        if (!parse_albumart &&
+            ((version == ID3_VER_2_2 && !memcmp(header, "PIC", 3)) ||
+             (version > ID3_VER_2_2 && !memcmp(header, "APIC", 4))))
+        {
+            if (global_unsynch && version <= ID3_VER_2_3)
+                size -= skip_unsynched(fd, totframelen);
+            else
+            {
+                size -= totframelen;
+                if (lseek(fd, totframelen, SEEK_CUR) == -1)
+                    return;
+            }
+            continue;
+        }
+#else
+        (void)parse_albumart;
+#endif
 
         /* If the frame is larger than the remaining buffer space we try
            to read as much as would fit in the buffer */
@@ -1186,6 +1205,11 @@ retry_with_limit:
             }
         }
     }
+}
+
+void setid3v2title(int fd, struct mp3entry *entry)
+{
+    setid3v2title_ex(fd, entry, true);
 }
 
 /*

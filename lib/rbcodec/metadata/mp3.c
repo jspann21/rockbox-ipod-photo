@@ -162,7 +162,7 @@ static int getsonglength(int fd, struct mp3entry *entry)
  * about an MP3 file and updates it's entry accordingly.
  *
   Note, that this returns true for successful, false for error! */
-bool get_mp3_metadata(int fd, struct mp3entry *entry)
+bool get_mp3_metadata_ex(int fd, struct mp3entry *entry, bool parse_albumart)
 {
     entry->title = NULL;
     entry->filesize = filesize(fd);
@@ -170,7 +170,7 @@ bool get_mp3_metadata(int fd, struct mp3entry *entry)
     entry->id3v2len = getid3v2len(fd);
 
     if (entry->id3v2len)
-        setid3v2title(fd, entry);
+        setid3v2title_ex(fd, entry, parse_albumart);
     int len = getsonglength(fd, entry);
     if (len < 0)
         return false;
@@ -187,4 +187,9 @@ bool get_mp3_metadata(int fd, struct mp3entry *entry)
         return false;
 
     return true;
+}
+
+bool get_mp3_metadata(int fd, struct mp3entry *entry)
+{
+    return get_mp3_metadata_ex(fd, entry, true);
 }
