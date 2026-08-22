@@ -425,6 +425,11 @@ static int ata_transfer_sectors(uint64_t start,
  retry:
     buf = inbuf;
     count = incount;
+#ifdef HAVE_ATA_DMA
+    /* A failed attempt may have selected DMA. Re-evaluate setup on every
+     * retry so a setup failure reliably falls back to PIO. */
+    usedma = false;
+#endif
     while (TIME_BEFORE(current_tick, timeout)) {
         ret = 0;
         keep_ata_active();
