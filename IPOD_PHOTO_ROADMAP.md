@@ -92,10 +92,11 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [x] Sync playlist and control-file replacements, preserve the prior control
       file on publication failure, and reject corrupt replay positions.
 - [x] Reject truncated firmware images and malformed AAC, ADX, OMA/ATRAC, ASF,
-      WAVE/Wave64, and MP4 metadata before unsafe reads or duration arithmetic.
-- [x] Validate buffering file sizes and tagcache search/index inputs, and clear
-      the complete database unique-result buffer rather than only one byte per
-      entry.
+      WAVE/Wave64, and MP4 metadata before unsafe reads or duration arithmetic,
+      and bound ASF/WMA packet payload assembly during playback.
+- [x] Validate buffering file sizes, release codec readers after storage
+      failures, validate tagcache search/index inputs, and clear the complete
+      database unique-result buffer rather than only one byte per entry.
 - [x] Let the idle backlight worker sleep indefinitely, make startup ADC scans
       immediate, recover failed USB-iAP HID transactions, and leave serial iAP
       disabled rather than panicking when its worker cannot be created.
