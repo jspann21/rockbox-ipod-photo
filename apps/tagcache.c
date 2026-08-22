@@ -1158,10 +1158,16 @@ static bool check_all_headers(void)
     if ( (fd = open_master_fd(&myhdr, false)) < 0)
         return false;
 
+    off_t master_size = filesize(fd);
     close(fd);
-    if (myhdr.dirty)
+    if (myhdr.dirty || myhdr.tch.entry_count < 0 || myhdr.tch.datasize < 0 ||
+        (size_t)myhdr.tch.entry_count >
+            (SIZE_MAX - sizeof(struct master_header)) /
+            sizeof(struct index_entry) ||
+        master_size != (off_t)(sizeof(struct master_header) +
+            (size_t)myhdr.tch.entry_count * sizeof(struct index_entry)))
     {
-        logf("tagcache is dirty!");
+        logf("tagcache master is dirty or malformed");
         return false;
     }
 
@@ -1175,7 +1181,16 @@ static bool check_all_headers(void)
         if ( (fd = open_tag_fd(&tch, tag, false)) < 0)
             return false;
 
+        off_t tag_size = filesize(fd);
         close(fd);
+        if (tch.entry_count < 0 || tch.datasize < 0 ||
+            tag_size != (off_t)sizeof(tch) + tch.datasize ||
+            (size_t)tch.entry_count >
+                (size_t)tch.datasize / sizeof(struct tagfile_entry))
+        {
+            logf("malformed tag index: %d", tag);
+            return false;
+        }
     }
 
     return true;
