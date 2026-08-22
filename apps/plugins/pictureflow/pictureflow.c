@@ -3677,7 +3677,7 @@ static void cleanup(void)
         buf_ctx_unlock();
 
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
-    rb->cpu_boost(false);
+    rb->cancel_cpu_boost();
 #endif
     end_pf_thread();
 
@@ -4783,7 +4783,7 @@ static bool init(void)
     size_t buf_size;
 
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
-    rb->cpu_boost(true); /* revert in cleanup */
+    rb->trigger_cpu_boost(); /* revert in cleanup */
 #endif
 
     wants_to_quit = false;
@@ -5020,6 +5020,11 @@ static int pictureflow_main(void)
 
         bool scroll_changed = update_scroll_lines();
 
+#ifdef HAVE_ADJUSTABLE_CPU_FREQ
+        if (pf_state != pf_idle)
+            rb->trigger_cpu_boost();
+#endif
+
         /* Handle states */
         switch ( pf_state ) {
             case pf_scrolling:
@@ -5056,7 +5061,12 @@ static int pictureflow_main(void)
                     display_dirty = true;
                 }
                 if (display_dirty)
+                {
+#ifdef HAVE_ADJUSTABLE_CPU_FREQ
+                    rb->trigger_cpu_boost();
+#endif
                     render_all_slides();
+                }
                 break;
         }
 
@@ -5103,6 +5113,10 @@ static int pictureflow_main(void)
         /* Copy offscreen buffer to LCD and give time to other threads */
         if (display_dirty && is_initial_slide == false)
             mylcd_update();
+#ifdef HAVE_ADJUSTABLE_CPU_FREQ
+        if (pf_state == pf_idle)
+            rb->cancel_cpu_boost();
+#endif
         rb->yield();
 
         /*/ Handle buttons */
