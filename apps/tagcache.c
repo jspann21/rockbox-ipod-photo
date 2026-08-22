@@ -4682,14 +4682,33 @@ static bool allocate_tagcache(void)
 
     close(fd);
 
+    if (tcmh.tch.datasize < 0 || tcmh.tch.entry_count < 0)
+    {
+        logf("tagcache: invalid allocation sizes");
+        return false;
+    }
+
     /**
      * Now calculate the required cache size plus
      * some extra space for alignment fixes.
      */
-    size_t alloc_size = tcmh.tch.datasize + 256 + TAGCACHE_RESERVE +
+    const size_t fixed_size = 256 + TAGCACHE_RESERVE +
         sizeof(struct ramcache_header) + TAG_COUNT*sizeof(void *);
+    size_t alloc_size = (size_t)tcmh.tch.datasize;
+    if (alloc_size > SIZE_MAX - fixed_size)
+    {
+        logf("tagcache: allocation size overflow");
+        return false;
+    }
+    alloc_size += fixed_size;
 #ifdef HAVE_DIRCACHE
-    alloc_size += tcmh.tch.entry_count*sizeof(struct dircache_fileref);
+    size_t ref_count = (size_t)tcmh.tch.entry_count;
+    if (ref_count > (SIZE_MAX - alloc_size) / sizeof(struct dircache_fileref))
+    {
+        logf("tagcache: dircache allocation overflow");
+        return false;
+    }
+    alloc_size += ref_count*sizeof(struct dircache_fileref);
 #endif
 
     int handle = core_alloc_ex(alloc_size, &ops);
