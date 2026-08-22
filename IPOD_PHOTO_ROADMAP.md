@@ -48,6 +48,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       path lengths before accepting or publishing an index.
 - [x] Propagate recursive scan and storage errors, retry interrupted verification,
       and refresh or discard stale RAM caches after database updates.
+- [x] Write an atomic, low-overhead database build profile with scan, metadata,
+      checkpoint, commit, per-index, outcome, and size metrics.
 
 ## Reliability and maintainability
 
