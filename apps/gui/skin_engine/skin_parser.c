@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits.h>
 #include "config.h"
 #ifndef __PCTOOL__
 #include "core_alloc.h"
@@ -337,6 +338,7 @@ static int parse_image_display(struct skin_element *element,
     }
     id->label = img->label;
     id->offset = 0;
+    id->subimage = 0;
     id->token = PTRTOSKINOFFSET(skin_buffer, NULL);
     if (img->using_preloaded_icons)
     {
@@ -353,7 +355,11 @@ static int parse_image_display(struct skin_element *element,
             id->token = get_param_code(element, 1)->data;
         /* specify a number. 1 being the first subimage (i.e top) NOT 0 */
         else if (param1->type == INTEGER)
+        {
             id->subimage = param1->data.number - 1;
+            if (id->subimage < 0 || id->subimage >= img->num_subimages)
+                return WPS_ERROR_INVALID_PARAM;
+        }
         if (element->params_count > 2)
             id->offset = get_param(element, 2)->data.number;
     }
@@ -411,6 +417,8 @@ static int parse_image_load(struct skin_element *element,
         if (element->params_count == 5)
             subimages = get_param(element, 4)->data.number;
     }
+    if (subimages < 1 || subimages > SHRT_MAX)
+        return WPS_ERROR_INVALID_PARAM;
     /* check the image number and load state */
     if(skin_find_item(id, SKIN_FIND_IMAGE, wps_data))
     {
@@ -461,6 +469,7 @@ struct skin_font {
     int glyphs;  /* how many glyphs to reserve room for */
 };
 static struct skin_font skinfonts[MAXUSERFONTS];
+#define MAX_SKIN_FONT_GLYPHS 65540
 static int parse_font_load(struct skin_element *element,
                            struct wps_token *token,
                            struct wps_data *wps_data)
@@ -475,9 +484,10 @@ static int parse_font_load(struct skin_element *element,
         glyphs = get_param(element, 2)->data.number;
     else
         glyphs = global_settings.glyphs_to_cache;
-    if (id < 2)
+    if (id < 2 || id >= MAXUSERFONTS + 2 ||
+        glyphs < 0 || glyphs > MAX_SKIN_FONT_GLYPHS)
     {
-        DEBUGF("font id must be >= 2 (%d)\n", id);
+        DEBUGF("invalid font id or glyph count (%d, %d)\n", id, glyphs);
         return -1;
     }
 #if defined(DEBUG) || defined(SIMULATOR)
@@ -606,6 +616,8 @@ static int parse_viewporttextstyle(struct skin_element *element,
     (void)wps_data;
     char *mode = get_param_text(element, 0);
     struct line_desc *line = skin_buffer_alloc(sizeof(*line));
+    if (!line)
+        return 1;
     *line = (struct line_desc)LINE_DESC_DEFINIT;
     unsigned colour;
 
@@ -2166,6 +2178,11 @@ static bool skin_load_fonts(struct wps_data *data)
         struct viewport *vp = &skin_vp->vp;
 
         font_id = skin_vp->parsed_fontid;
+        if (font_id >= MAXUSERFONTS + 2)
+        {
+            success = false;
+            continue;
+        }
         if (font_id == 1)
         {   /* the usual case -> built-in fonts */
             vp->font = screens[curr_screen].getuifont();
@@ -2360,7 +2377,10 @@ static int convert_viewport(struct wps_data *data, struct skin_element* element)
     /* font */
     if (!isdefault(param))
         skin_vp->parsed_fontid = param->data.number;
+    if (skin_vp->parsed_fontid >= MAXUSERFONTS + 2)
+        return CALLBACK_ERROR;
     if ((unsigned) skin_vp->vp.x >= (unsigned) display->lcdwidth ||
+        skin_vp->vp.width <= 0 || skin_vp->vp.height <= 0 ||
         skin_vp->vp.width + skin_vp->vp.x > display->lcdwidth ||
         (unsigned) skin_vp->vp.y >= (unsigned) display->lcdheight ||
         skin_vp->vp.height + skin_vp->vp.y > display->lcdheight)
@@ -2387,6 +2407,8 @@ static int skin_element_callback(struct skin_element* element, void* data)
         case TAG:
         {
             token = skin_buffer_alloc(sizeof(*token));
+            if (!token)
+                return CALLBACK_ERROR;
             memset(token, 0, sizeof(*token));
             token->type = element->tag->type;
             token->value.data = INVALID_OFFSET;
@@ -2556,6 +2578,8 @@ static int skin_element_callback(struct skin_element* element, void* data)
         case LINE:
         {
             curr_line = skin_buffer_alloc(sizeof(*curr_line));
+            if (!curr_line)
+                return CALLBACK_ERROR;
             curr_line->update_mode = SKIN_REFRESH_STATIC;
             element->data = PTRTOSKINOFFSET(skin_buffer, curr_line);
         }
@@ -2563,6 +2587,8 @@ static int skin_element_callback(struct skin_element* element, void* data)
         case LINE_ALTERNATOR:
         {
             struct line_alternator *alternator = skin_buffer_alloc(sizeof(*alternator));
+            if (!alternator)
+                return CALLBACK_ERROR;
             alternator->current_line = 0;
 #ifndef __PCTOOL__
             alternator->next_change_tick = current_tick;
@@ -2573,6 +2599,8 @@ static int skin_element_callback(struct skin_element* element, void* data)
         case CONDITIONAL:
         {
             struct conditional *conditional = skin_buffer_alloc(sizeof(*conditional));
+            if (!conditional)
+                return CALLBACK_ERROR;
             conditional->last_value = -1;
             conditional->token = element->data;
             element->data = PTRTOSKINOFFSET(skin_buffer, conditional);
