@@ -1504,7 +1504,7 @@ retry_artist_lookup:
 
         for (j = i + 1; j < pf_idx.album_ct; j++)
         {
-            if (idxi > 0 &&
+            if (idxi >= 0 &&
             idxi == pf_idx.album_index[j].artist_idx &&
             seeki == pf_idx.album_index[j].seek)
             {
