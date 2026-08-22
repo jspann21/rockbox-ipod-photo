@@ -898,12 +898,6 @@ static void sof_received(void) {
 /* manual: 32.14.5.2 */
 static int prime_transfer(int ep_num, void* ptr, int len, bool send, bool wait)
 {
-    if (len < 0 || len > NUM_TDS_PER_EP * 16384)
-    {
-        logf("usb: invalid transfer length %d", len);
-        return -5;
-    }
-
     int rc = 0;
     int pipe = ep_num * 2 + (send ? 1 : 0);
     unsigned int mask = pipe2mask[pipe];
