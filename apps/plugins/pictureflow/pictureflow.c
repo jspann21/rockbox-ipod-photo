@@ -1910,24 +1910,29 @@ static bool track_buffer_avail(size_t needed)
 {
     size_t total_out = 0;
     size_t out = 0;
+    size_t available;
     if (pf_tracks.borrowed == 0 && pf_tracks.used == 0)
     {
         pf_tracks.names = rb->buflib_buffer_out(&buf_ctx, &out);
         pf_tracks.borrowed = out;
     }
 
-    if (needed <= pf_tracks.borrowed - pf_tracks.used)
+    available = pf_tracks.borrowed;
+    if (pf_tracks.used <= available && needed <= available - pf_tracks.used)
         return true;
 
-    while (needed > (pf_tracks.borrowed + total_out) - pf_tracks.used)
+    while (pf_tracks.used > available || needed > available - pf_tracks.used)
     {
         if (!free_slide_prio(0))
             break;
         out = 0;
         rb->buflib_buffer_out(&buf_ctx, &out);
+        if (out > SIZE_MAX - available)
+            return false;
+        available += out;
         total_out += out;
     }
-    pf_tracks.borrowed += total_out;
+    pf_tracks.borrowed = available;
 
     // have to move already stored track_data structs
     if (pf_tracks.count)
@@ -1937,7 +1942,8 @@ static bool track_buffer_avail(size_t needed)
         rb->memmove(new_tracks, pf_tracks.index, bytes);
     }
 
-    if (needed > pf_tracks.borrowed - pf_tracks.used)
+    if (pf_tracks.used > pf_tracks.borrowed ||
+        needed > pf_tracks.borrowed - pf_tracks.used)
         return false;
 
     return true;
