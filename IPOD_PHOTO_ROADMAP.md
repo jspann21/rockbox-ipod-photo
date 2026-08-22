@@ -14,6 +14,21 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [x] Make PictureFlow animation timing frame-rate independent.
 - [x] Coalesce redundant iPod Color list redraws during wheel input.
 - [x] Make PictureFlow honor the configured list selector style.
+- [x] Validate legacy and USB iAP packet lengths, transaction data, playback
+      indices, and missing metadata strings.
+- [x] Bound iAP string replies and clean up partial USB-iAP allocations.
+- [x] Validate PictureFlow album, track, and image-cache data loaded from disk.
+- [x] Make PictureFlow index, artwork, and placeholder replacement failure-safe.
+- [x] Guard PictureFlow buffer accounting, metadata offsets, sort fields, text
+      animation, large-font track-list geometry, and corrupt configuration.
+- [x] Show an immediate PictureFlow placeholder and discard stale launch input.
+- [x] Saturate click-wheel acceleration arithmetic and protect list offsets.
+- [x] Reset click-wheel timing correctly when a new touch begins.
+- [x] Validate ATA transfer ranges and retry setup, and stop when controller
+      reset recovery fails.
+- [x] Detect and propagate ATA flush failures and detect failed standby commands.
+- [x] Validate USB mass-storage LUNs, sector ranges, descriptor lengths, transfer
+      sizes, controller descriptors, and SMART read results.
 
 ## Reliability and maintainability
 
@@ -29,7 +44,7 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 
 - [ ] Test the unchanged firmware after installing the iFlash ATA1.
 - [ ] Audit ATA IDENTIFY capability handling, LBA48, and unusual adapter replies.
-- [ ] Improve DMA timeout fallback, reset recovery, and bounded retry behavior.
+- [x] Improve DMA timeout fallback, reset recovery, and bounded retry behavior.
 - [ ] Check cold boot, wake, sleep, shutdown, and storage power sequencing.
 - [ ] Check database scans, album-art caching, USB writes, eject, and reconnect.
 - [ ] Avoid retry storms and unnecessary storage wakeups that hurt responsiveness
@@ -37,7 +52,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 
 ## Responsiveness and native 220x176 UI
 
-- [ ] Refine wheel acceleration and selection behavior on long lists.
+- [x] Refine wheel acceleration and selection behavior on long lists; reserve
+      hardware testing for final sensitivity tuning.
 - [ ] Reduce remaining redundant redraws and visible flicker.
 - [ ] Improve menu, browser, and now-playing geometry for 220x176 rather than
       shrinking layouts designed for 320x240.
@@ -45,7 +61,7 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [ ] Evaluate configurable center-button behavior.
 - [ ] Profile PictureFlow slide count, cache size, clipping, scaling, and storage
       activity on the Photo hardware.
-- [ ] Add graceful PictureFlow fallback when artwork or memory is unavailable.
+- [x] Add graceful PictureFlow fallback when artwork or its cache is unavailable.
 - [ ] Port album-art-derived dynamic colors as an optional setting, initially
       disabled by default.
 - [ ] Make dynamic-color extraction portable to the Photo's byte-swapped RGB565
@@ -79,7 +95,7 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 
 ## Practical validation loop
 
-- [ ] Build after each useful batch of changes.
+- [x] Build the `ipodcolor` target after each useful software batch.
 - [ ] Install and smoke-test boot, playback, wheel, hold, shutdown, and USB.
 - [ ] Test the behavior that actually changed; use a broader pass for storage,
       power, USB, or other hardware-sensitive changes.
