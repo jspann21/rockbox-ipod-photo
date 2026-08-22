@@ -1830,7 +1830,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
         {
             unsigned char data[70] = {0x04, 0x00, 0xFF};
             struct mp3entry id3;
-            size_t len;
+            size_t text_len;
             CHECKLEN(7);
             uint32_t requested_track = get_u32(&buf[3]);
             if (requested_track >= (uint32_t)playlist_amount())
@@ -1862,25 +1862,25 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             switch(cmd)
             {
                 case 0x20:
-                    len = strlcpy((char *)&data[3],
-                                  id3.title ? id3.title : "", 64);
-                    if (len > 63)
-                        len = 63;
-                    iap_send_pkt(data, 4+len);
+                    text_len = strlcpy((char *)&data[3],
+                                       id3.title ? id3.title : "", 64);
+                    if (text_len > 63)
+                        text_len = 63;
+                    iap_send_pkt(data, 4+text_len);
                     break;
                 case 0x22:
-                    len = strlcpy((char *)&data[3],
-                                  id3.artist ? id3.artist : "", 64);
-                    if (len > 63)
-                        len = 63;
-                    iap_send_pkt(data, 4+len);
+                    text_len = strlcpy((char *)&data[3],
+                                       id3.artist ? id3.artist : "", 64);
+                    if (text_len > 63)
+                        text_len = 63;
+                    iap_send_pkt(data, 4+text_len);
                     break;
                 case 0x24:
-                    len = strlcpy((char *)&data[3],
-                                  id3.album ? id3.album : "", 64);
-                    if (len > 63)
-                        len = 63;
-                    iap_send_pkt(data, 4+len);
+                    text_len = strlcpy((char *)&data[3],
+                                       id3.album ? id3.album : "", 64);
+                    if (text_len > 63)
+                        text_len = 63;
+                    iap_send_pkt(data, 4+text_len);
                     break;
             }
             break;
