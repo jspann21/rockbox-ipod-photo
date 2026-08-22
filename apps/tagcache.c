@@ -815,6 +815,9 @@ static void tagfile_writer_abort(int fd)
 static ssize_t write_tagfile_record(int fd, const struct tagfile_entry *entry,
                                     const char *tag, size_t tag_size)
 {
+    if (entry->tag_length < 0)
+        return -1;
+
     if (tag_size > (size_t)entry->tag_length)
         return -1;
 
@@ -848,7 +851,7 @@ read_tagfile_entry_and_tag(int fd, struct tagfile_entry *tfe,
         return e_ENTRY_SIZEMISMATCH;
 
     long tag_length = tfe->tag_length;
-    if (tag_length >= bufsz)
+    if (tag_length < 0 || tag_length >= bufsz)
         return e_TAG_TOOLONG;
 
     if (tag_length > 0 && read(fd, buf, tag_length) != tag_length)
