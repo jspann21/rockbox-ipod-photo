@@ -845,8 +845,13 @@ void setid3v2title_ex(int fd, struct mp3entry *entry, bool parse_albumart)
             framelen =
                 bytes2int(header[0], header[1], header[2], header[3]) + 4;
 
+            if (framelen < 10 || framelen > size)
+                return;
+
             /* Skip the rest of the header */
-            lseek(fd, framelen - 10, SEEK_CUR);
+            if (lseek(fd, framelen - 10, SEEK_CUR) == -1)
+                return;
+            size -= framelen;
         }
 
         if(version >= ID3_VER_2_4) {
@@ -858,7 +863,12 @@ void setid3v2title_ex(int fd, struct mp3entry *entry, bool parse_albumart)
             framelen = unsync(header[0], header[1],
                               header[2], header[3]);
 
-            lseek(fd, framelen - 4, SEEK_CUR);
+            if (framelen < 4 || framelen > size)
+                return;
+
+            if (lseek(fd, framelen - 4, SEEK_CUR) == -1)
+                return;
+            size -= framelen;
         }
     }
 
@@ -928,19 +938,30 @@ retry_with_limit:
                 continue;
         }
 
+        if (framelen < 0 || framelen > size)
+            return;
+
         unsynch = false;
 
         if(flags)
         {
             if (version >= ID3_VER_2_4) {
                 if(flags & 0x0040) { /* Grouping identity */
-                    lseek(fd, 1, SEEK_CUR); /* Skip 1 byte */
+                    if (framelen < 1)
+                        return;
+                    if (lseek(fd, 1, SEEK_CUR) == -1) /* Skip 1 byte */
+                        return;
                     framelen--;
+                    size--;
                 }
             } else {
                 if(flags & 0x0020) { /* Grouping identity */
-                    lseek(fd, 1, SEEK_CUR); /* Skip 1 byte */
+                    if (framelen < 1)
+                        return;
+                    if (lseek(fd, 1, SEEK_CUR) == -1) /* Skip 1 byte */
+                        return;
                     framelen--;
+                    size--;
                 }
             }
 
@@ -948,7 +969,8 @@ retry_with_limit:
             {
                 /* Skip it */
                 size -= framelen;
-                lseek(fd, framelen, SEEK_CUR);
+                if (lseek(fd, framelen, SEEK_CUR) == -1)
+                    return;
                 continue;
             }
 
@@ -957,11 +979,14 @@ retry_with_limit:
 
             if (version >= ID3_VER_2_4) {
                 if(flags & 0x0001) { /* Data length indicator */
+                    if (framelen < 4)
+                        return;
                     if(4 != read(fd, tmp, 4))
                         return;
 
                     /* We don't need the data length */
                     framelen -= 4;
+                    size -= 4;
                 }
             }
         }
@@ -1246,6 +1271,7 @@ int getid3v2len(int fd)
 {
     char buf[6];
     int offset;
+    off_t file_size = filesize(fd);
 
     /* Make sure file has a ID3 tag */
     if((-1 == lseek(fd, 0, SEEK_SET)) ||
@@ -1258,12 +1284,15 @@ int getid3v2len(int fd)
     {
         if(read(fd, buf, 4) != 4)
             offset = 0;
-        else
+        else {
             offset = unsync(buf[0], buf[1], buf[2], buf[3]) + 10;
+            if (file_size < 10 || offset > file_size)
+                offset = 0;
+        }
     }
 
     logf("ID3V2 Length: 0x%x", offset);
-    lseek(fd, -10, SEEK_CUR);
+    lseek(fd, 0, SEEK_SET);
     return offset;
 }
 
