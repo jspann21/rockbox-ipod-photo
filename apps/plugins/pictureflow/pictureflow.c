@@ -983,10 +983,10 @@ static const struct button_mapping* get_context_map(int context)
 static void init_scroll_lines(void)
 {
     int i;
-    static const char scroll_tick_table[16] = {
+    static const char scroll_tick_table[18] = {
      /* Hz values:
-        1, 1.25, 1.55, 2, 2.5, 3.12, 4, 5, 6.25, 8.33, 10, 12.5, 16.7, 20, 25, 33 */
-        100, 80, 64, 50, 40, 32, 25, 20, 16, 12, 10, 8, 6, 5, 4, 3
+        1, 1.25, 1.55, 2, 2.5, 3.12, 4, 5, 6.25, 8.33, 10, 12.5, 16.7, 20, 25, 33, 49.2, 96.2 */
+        100, 80, 64, 50, 40, 32, 25, 20, 16, 12, 10, 8, 6, 5, 4, 3, 2, 1
     };
 
     scroll_line_info.ticks = scroll_tick_table[rb->global_settings->scroll_speed];
