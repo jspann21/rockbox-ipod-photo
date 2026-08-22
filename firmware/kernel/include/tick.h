@@ -50,9 +50,13 @@ static inline void call_tick_tasks(void)
 
     current_tick++;
 
-    for(fn = *p; fn != NULL; fn = *(++p))
+    while ((fn = *p) != NULL)
     {
         fn();
+        /* A callback may remove itself, compacting the array. Process the
+         * replacement at this slot instead of skipping it. */
+        if (*p == fn)
+            p++;
     }
 }
 #endif
