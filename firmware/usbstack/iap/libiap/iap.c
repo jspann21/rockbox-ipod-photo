@@ -152,16 +152,18 @@ static IAPBool send_artwork_chunk_cb(struct IAPContext* ctx) {
 
         payload->index = swap_16(ctx->artwork_chunk_index);
     }
-    struct IAPSpan artwork;
-    size_t         copy_size = 0;
-    if(!ctx->opts.artwork_single_report || ctx->artwork_chunk_index != 0) {
+    const IAPBool header_only = ctx->opts.artwork_single_report &&
+                                ctx->artwork_chunk_index == 0;
+    struct IAPSpan artwork = {0};
+    size_t copy_size = 0;
+    if(!header_only) {
         check_ret(iap_platform_get_artwork_ptr(ctx, &ctx->artwork, &artwork), iap_false);
         check_ret(iap_span_read(&artwork, ctx->artwork_cursor) != NULL, iap_false); /* skip already read chunk */
         copy_size = min((ctx->opts.artwork_single_report ? 48 : request.size), artwork.size);
         memcpy(iap_span_alloc(&request, copy_size), iap_span_read(&artwork, copy_size), copy_size);
     }
     check_ret(_iap_send_packet(ctx, ctx->artwork_data_lingo, ctx->artwork_data_command, ctx->artwork_trans_id, request.ptr), iap_false);
-    if(artwork.size > 0) {
+    if(header_only || artwork.size > 0) {
         /* more to send, ask to call again */
         ctx->artwork_cursor += copy_size;
         ctx->artwork_chunk_index += 1;
