@@ -473,7 +473,12 @@ static void iap_start(void)
             IF_PRIO(, PRIORITY_SYSTEM)
             IF_COP(, CPU));
     if (!tid)
-        panicf("Could not create iap thread");
+    {
+        /* An accessory must not make the player unusable when the fixed
+         * thread table is exhausted. Leave iAP stopped and retry on a later
+         * sync byte. */
+        return;
+    }
     timeout_register(&iap_task_tmo, iap_task, MS_TO_TICKS(100), (intptr_t)NULL);
     add_event(PLAYBACK_EVENT_TRACK_CHANGE, iap_track_changed);
 
