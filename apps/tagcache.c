@@ -854,7 +854,13 @@ read_tagfile_entry_and_tag(int fd, struct tagfile_entry *tfe,
     if (tag_length < 0 || tag_length >= bufsz)
         return e_TAG_TOOLONG;
 
-    if (tag_length > 0 && read(fd, buf, tag_length) != tag_length)
+    if (tag_length == 0)
+        return e_TAG_SIZEMISMATCH;
+
+    if (read(fd, buf, tag_length) != tag_length)
+        return e_TAG_SIZEMISMATCH;
+
+    if (!memchr(buf, '\0', tag_length))
         return e_TAG_SIZEMISMATCH;
 
     str_setlen(buf, tag_length);
@@ -874,8 +880,13 @@ tagcache_reader_entry_and_tag(struct tagcache_reader *reader,
     if (tag_length < 0 || tag_length >= bufsz)
         return e_TAG_TOOLONG;
 
-    if (tag_length > 0 &&
-        tagcache_reader_read(reader, buf, tag_length) != tag_length)
+    if (tag_length == 0)
+        return e_TAG_SIZEMISMATCH;
+
+    if (tagcache_reader_read(reader, buf, tag_length) != tag_length)
+        return e_TAG_SIZEMISMATCH;
+
+    if (!memchr(buf, '\0', tag_length))
         return e_TAG_SIZEMISMATCH;
 
     str_setlen(buf, tag_length);
@@ -5295,6 +5306,12 @@ static bool load_tagcache(void)
                     logf("read error #12");
                     goto failure;
                 }
+                if (fe->tag_length == 0 ||
+                    !memchr(filename, '\0', fe->tag_length))
+                {
+                    logf("invalid filename tag");
+                    goto failure;
+                }
 #ifdef HAVE_DIRCACHE
                 if (global_settings.tagcache_ram == TAGCACHE_RAM_ON &&
                     !global_settings.tagcache_autoupdate &&
@@ -5323,6 +5340,11 @@ static bool load_tagcache(void)
                 logf("len=0x%04" PRIx32, fe->tag_length); // 0x4000
                 logf("pos=0x%04lx", (unsigned long)reader.file_position); // 0x433
                 logf("tag=0x%02x", tag); // 0x00
+                goto failure;
+            }
+            if (fe->tag_length == 0 || !memchr(p, '\0', fe->tag_length))
+            {
+                logf("unterminated tag data");
                 goto failure;
             }
             p += rc;
