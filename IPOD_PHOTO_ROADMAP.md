@@ -58,6 +58,16 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       failed idle flush/standby retries on marginal adapters.
 - [x] Allow realistic capacity settings for modern iPod Photo replacement
       batteries without changing the target's voltage calibration.
+- [x] Propagate PMU I2C/RTC failures and wait for the final PMU write before
+      entering standby.
+- [x] Flush ATA/iFlash media on shutdown, USB cache sync, eject, and disconnect;
+      preserve the sleeping/off state when wakeup fails.
+- [x] Validate USB mass-storage command completions and make USB-iAP allocation,
+      artwork, callback, reset, and teardown paths failure-safe.
+- [x] Bound legacy BMP and SMAF media parsing, persisted random-folder lists,
+      and custom-skin fonts, images, dimensions, and parser allocations.
+- [x] Time PictureFlow cover transitions by elapsed ticks, pace background art
+      caching, skip unchanged idle frames, and release the CPU boost while idle.
 
 ## Reliability and maintainability
 
@@ -79,15 +89,15 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [x] Harden initial database scan and commit I/O; retain hardware timing and
       power-loss checks for the installed iPod.
 - [ ] Check album-art caching, USB writes, eject, and reconnect.
-- [ ] Avoid retry storms and unnecessary storage wakeups that hurt responsiveness
-      and battery life.
+- [x] Back off failed ATA idle commands, stop storage ticks after power-off, and
+      pace PictureFlow background cache work to avoid retry/wakeup storms.
 
 ## Responsiveness and native 220x176 UI
 
 - [x] Refine wheel acceleration and selection behavior on long lists; reserve
       hardware testing for final sensitivity tuning.
-- [ ] Reduce remaining redundant redraws and visible flicker; generic list edge
-      redraws are now eliminated, while PictureFlow idle redraws remain.
+- [x] Eliminate unchanged generic-list edge redraws and unchanged PictureFlow
+      idle framebuffer transfers.
 - [ ] Improve menu, browser, and now-playing geometry for 220x176 rather than
       shrinking layouts designed for 320x240.
 - [ ] Improve typography, spacing, icons, focus indication, and status layout.
@@ -120,8 +130,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 ## Power, USB, and accessories
 
 - [ ] Establish replacement-battery runtime after the hardware upgrade.
-- [ ] Reduce unnecessary CPU boosting and storage activity where measurements
-      show a real benefit.
+- [x] Release PictureFlow's CPU boost while idle and stop its background cache
+      from continuously resetting the poweroff timer.
 - [ ] Check charging, suspend, resume, and shutdown behavior after power changes.
 - [ ] Exercise serial remotes, docks, and car accessories against the iAP fixes.
 - [ ] Leave USB digital audio and bootloader changes as later research work.
