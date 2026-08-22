@@ -800,12 +800,22 @@ static void handle_scsi(struct command_block_wrapper* cbw)
      * to trigger a second execution of the same command with
      * bogus data */
     cbw->signature=0;
+    cur_cmd.tag = cbw->tag;
+
+    if (cbw->command_length < 1 || cbw->command_length > 16 ||
+        (cbw->flags & 0x7f) != 0)
+    {
+        cur_sense_data.sense_key = SENSE_ILLEGAL_REQUEST;
+        cur_sense_data.asc = ASC_INVALID_FIELD_IN_CBD;
+        cur_sense_data.ascq = 0;
+        send_csw(UMS_STATUS_FAIL);
+        return;
+    }
 
 #if defined(HAVE_MULTIDRIVE)
     if(skip_first) lun++;
 #endif
 
-    cur_cmd.tag = cbw->tag;
     cur_cmd.lun = lun;
     cur_cmd.cur_cmd = cbw->command_block[0];
 
