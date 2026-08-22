@@ -1196,7 +1196,10 @@ unsigned int create_thread(void (*function)(void),
 
     unsigned int stack_words = stack_size / sizeof (uintptr_t);
     if (stack_words == 0)
+    {
+        thread_free(thread);
         return 0;
+    }
 
     /* Munge the stack to make it easy to spot stack overflows */
     for (unsigned int i = 0; i < stack_words; i++)
