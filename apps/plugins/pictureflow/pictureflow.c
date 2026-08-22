@@ -4082,6 +4082,26 @@ static void track_list_yh(int char_height)
                            (needs_space ? char_height : 0);
             break;
     }
+
+    /* A large UI font can consume all rows reserved around the list on
+     * short displays. Preserve one usable track row, allowing metadata to
+     * overlap rather than leaving selection logic with zero visible rows. */
+    if (char_height >= LCD_HEIGHT)
+    {
+        pf_tracks.list_y = 0;
+        pf_tracks.list_h = LCD_HEIGHT;
+    }
+    else
+    {
+        if (pf_tracks.list_y < 0)
+            pf_tracks.list_y = 0;
+        if (pf_tracks.list_y > LCD_HEIGHT - char_height)
+            pf_tracks.list_y = LCD_HEIGHT - char_height;
+        if (pf_tracks.list_h < char_height)
+            pf_tracks.list_h = char_height;
+        if (pf_tracks.list_h > LCD_HEIGHT - pf_tracks.list_y)
+            pf_tracks.list_h = LCD_HEIGHT - pf_tracks.list_y;
+    }
 }
 
 /**
