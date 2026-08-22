@@ -22,6 +22,7 @@
  *
  ****************************************************************************/
 #include <inttypes.h>
+#include <limits.h>
 #include "codeclib.h"
 #include "asf.h"
 
@@ -73,6 +74,7 @@ int asf_read_packet(uint8_t** audiobuf, int* audiobufsize, int* packetlength,
     uint32_t bytesread = 0;
     uint8_t* buf;
     size_t bufsize;
+    size_t payload_remaining;
     int i;
     /*DEBUGF("Reading new packet at %d bytes ", (int)ci->curpos);*/
 
@@ -120,7 +122,7 @@ int asf_read_packet(uint8_t** audiobuf, int* audiobufsize, int* packetlength,
     }
 #endif
 
-    if (ci->read_filebuf(data, datalen) == 0) {
+    if (ci->read_filebuf(data, datalen) != (size_t)datalen) {
         return ASF_ERROR_EOF;
     }
 
@@ -178,6 +180,9 @@ int asf_read_packet(uint8_t** audiobuf, int* audiobufsize, int* packetlength,
         /* FIXME: should this be checked earlier? */
         return ASF_ERROR_INVALID_LENGTH;
     }
+    if (padding_length > length - bytesread ||
+        length - bytesread > INT_MAX)
+        return ASF_ERROR_INVALID_LENGTH;
 
 
     /* We now parse the individual payloads, and move all payloads
@@ -189,37 +194,27 @@ int asf_read_packet(uint8_t** audiobuf, int* audiobufsize, int* packetlength,
     *audiobufsize = 0;
     *packetlength = length - bytesread;
 
-    buf = ci->request_buffer(&bufsize, length);
+    buf = ci->request_buffer(&bufsize, *packetlength);
     datap = buf;
-
-#define ASF_MAX_REQUEST (1L<<15) /* 32KB */
-    if (bufsize != length && length >= ASF_MAX_REQUEST) {
-        /* This should only happen with packets larger than 32KB (the
-           guard buffer size).  All the streams I've seen have
-           relatively small packets less than about 8KB), but I don't
-           know what is expected.
-        */
-        DEBUGF("Could not read packet (requested %d bytes, received %d), curpos=%d, aborting\n",
-               (int)length,(int)bufsize,(int)ci->curpos);
-        return -1;
-    }
+    if (bufsize < (size_t)*packetlength)
+        return ASF_ERROR_EOF;
+    payload_remaining = (size_t)*packetlength - padding_length;
 
     for (i=0; i<payload_count; i++) {
+        if (payload_remaining < 1)
+            return ASF_ERROR_INVALID_LENGTH;
         stream_id = datap[0]&0x7f;
         datap++;
         bytesread++;
+        payload_remaining--;
 
         payload_hdrlen = GETLEN2b(packet_property & 0x03) +
                          GETLEN2b((packet_property >> 2) & 0x03) +
                          GETLEN2b((packet_property >> 4) & 0x03);
 
         //DEBUGF("payload_hdrlen = %d\n",payload_hdrlen);
-#if 0
-        /* TODO */
-        if (payload_hdrlen > size) {
+        if (payload_hdrlen > payload_remaining)
             return ASF_ERROR_INVALID_LENGTH;
-        }
-#endif
         if (payload_hdrlen > sizeof(data)) {
             DEBUGF("Unexpectedly long datalen in data - %d\n",datalen);
             return ASF_ERROR_OUTOFMEM;
@@ -232,11 +227,13 @@ int asf_read_packet(uint8_t** audiobuf, int* audiobufsize, int* packetlength,
         datap += GETLEN2b((packet_property >> 2) & 0x03);
         replicated_length = GETVALUE2b(packet_property & 0x03, datap);
         datap += GETLEN2b(packet_property & 0x03);
+        payload_remaining -= payload_hdrlen;
 
-        /* TODO: Validate replicated_length */
-        /* TODO: Is the content of this important for us? */
+        if (replicated_length > payload_remaining)
+            return ASF_ERROR_INVALID_LENGTH;
         datap += replicated_length;
         bytesread += replicated_length;
+        payload_remaining -= replicated_length;
 
         multiple = packet_flags & 0x01;
 
@@ -251,21 +248,28 @@ int asf_read_packet(uint8_t** audiobuf, int* audiobufsize, int* packetlength,
                 return ASF_ERROR_INVALID_VALUE;
             }
 
-#if 0
-            if (skip + tmp > datalen) {
-                /* not enough data */
+            if ((size_t)x > payload_remaining)
                 return ASF_ERROR_INVALID_LENGTH;
-            }
-#endif
             payload_datalen = GETVALUE2b(payload_length_type, datap);
             datap += x;
             bytesread += x;
+            payload_remaining -= x;
         } else {
             payload_datalen = length - bytesread - padding_length;
         }
 
-        if (replicated_length==1)
+        if (replicated_length==1) {
+            if (payload_remaining < 1 || payload_datalen <= 0)
+                return ASF_ERROR_INVALID_LENGTH;
             datap++;
+            bytesread++;
+            payload_remaining--;
+            payload_datalen--;
+        }
+
+        if (payload_datalen < 0 ||
+            (size_t)payload_datalen > payload_remaining)
+            return ASF_ERROR_INVALID_LENGTH;
 
         if (stream_id == wfx->audiostream)
         {
@@ -284,6 +288,7 @@ int asf_read_packet(uint8_t** audiobuf, int* audiobufsize, int* packetlength,
         }
         datap += payload_datalen;
         bytesread += payload_datalen;
+        payload_remaining -= payload_datalen;
     }
 
     if (*audiobuf != NULL)
