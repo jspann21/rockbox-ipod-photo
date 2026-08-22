@@ -239,7 +239,8 @@ void put_u32(unsigned char *buf, const uint32_t data)
 
 uint32_t get_u32(const unsigned char *buf)
 {
-    return (buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
+    return ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
+           ((uint32_t)buf[2] << 8) | (uint32_t)buf[3];
 }
 
 uint16_t get_u16(const unsigned char *buf)
