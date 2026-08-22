@@ -354,7 +354,11 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
              * So just route it through the handler again, with 0x00 as the
              * command
              */
-            memcpy(repeatbuf, buf, 6);
+            /* Bytes 1-3 of the button status are optional, so a valid
+             * accessory packet can be shorter than repeatbuf. Do not read
+             * beyond the received packet while translating the command. */
+            memcpy(repeatbuf, buf, (len < sizeof(repeatbuf))
+                                      ? len : sizeof(repeatbuf));
             repeatbuf[1] = 0x00;
             iap_handlepkt_mode2((len<6)?len:6, repeatbuf);
 
