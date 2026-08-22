@@ -6539,7 +6539,13 @@ static void tagcache_thread(void)
     {
         run_command_queue(false);
 
-        queue_wait_w_tmo(&tagcache_queue, &ev, HZ);
+        /* The timeout is only needed until the deferred database check has
+         * run.  Afterwards all work is explicitly queued, so sleep until an
+         * event arrives instead of waking once per second for no reason. */
+        if (check_done || !tc_stat.ready)
+            queue_wait(&tagcache_queue, &ev);
+        else
+            queue_wait_w_tmo(&tagcache_queue, &ev, HZ);
 
         switch (ev.id)
         {
