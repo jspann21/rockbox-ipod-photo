@@ -1170,12 +1170,12 @@ static void handle_scsi(struct command_block_wrapper* cbw)
             cur_cmd.data[1] = &tb.transfer_buffer[READ_BUFFER_SIZE];
             cur_cmd.data_select=0;
             cur_cmd.sector = block_size_mult *
-                (cbw->command_block[2] << 24 |
-                 cbw->command_block[3] << 16 |
-                 cbw->command_block[4] << 8  |
+                ((uint32_t)cbw->command_block[2] << 24 |
+                 (uint32_t)cbw->command_block[3] << 16 |
+                 (uint32_t)cbw->command_block[4] << 8  |
                  cbw->command_block[5] );
             cur_cmd.count = block_size_mult *
-                (cbw->command_block[7] << 8 |
+                ((uint32_t)cbw->command_block[7] << 8 |
                  cbw->command_block[8]);
             cur_cmd.block_size = block_size;
 
@@ -1220,14 +1220,14 @@ static void handle_scsi(struct command_block_wrapper* cbw)
                  (uint64_t)cbw->command_block[3] << 48 |
                  (uint64_t)cbw->command_block[4] << 40 |
                  (uint64_t)cbw->command_block[5] << 32 |
-                 cbw->command_block[6] << 24 |
-                 cbw->command_block[7] << 16 |
-                 cbw->command_block[8] << 8  |
+                 (uint64_t)cbw->command_block[6] << 24 |
+                 (uint64_t)cbw->command_block[7] << 16 |
+                 (uint64_t)cbw->command_block[8] << 8  |
                  cbw->command_block[9]);
             cur_cmd.count = block_size_mult *
-                (cbw->command_block[10] << 24 |
-                 cbw->command_block[11] << 16 |
-                 cbw->command_block[12] << 8 |
+                ((uint32_t)cbw->command_block[10] << 24 |
+                 (uint32_t)cbw->command_block[11] << 16 |
+                 (uint32_t)cbw->command_block[12] << 8 |
                  cbw->command_block[13]);
             cur_cmd.block_size = block_size;
 
@@ -1268,12 +1268,12 @@ static void handle_scsi(struct command_block_wrapper* cbw)
             cur_cmd.data[1] = &tb.transfer_buffer[WRITE_BUFFER_SIZE];
             cur_cmd.data_select=0;
             cur_cmd.sector = block_size_mult *
-                (cbw->command_block[2] << 24 |
-                 cbw->command_block[3] << 16 |
-                 cbw->command_block[4] << 8  |
+                ((uint32_t)cbw->command_block[2] << 24 |
+                 (uint32_t)cbw->command_block[3] << 16 |
+                 (uint32_t)cbw->command_block[4] << 8  |
                  cbw->command_block[5] );
             cur_cmd.count = block_size_mult *
-                (cbw->command_block[7] << 8 |
+                ((uint32_t)cbw->command_block[7] << 8 |
                  cbw->command_block[8]);
             cur_cmd.block_size = block_size;
 
@@ -1309,14 +1309,14 @@ static void handle_scsi(struct command_block_wrapper* cbw)
                  (uint64_t)cbw->command_block[3] << 48 |
                  (uint64_t)cbw->command_block[4] << 40 |
                  (uint64_t)cbw->command_block[5] << 32 |
-                 cbw->command_block[6] << 24 |
-                 cbw->command_block[7] << 16 |
-                 cbw->command_block[8] << 8  |
+                 (uint64_t)cbw->command_block[6] << 24 |
+                 (uint64_t)cbw->command_block[7] << 16 |
+                 (uint64_t)cbw->command_block[8] << 8  |
                  cbw->command_block[9]);
             cur_cmd.count = block_size_mult *
-                (cbw->command_block[10] << 24 |
-                 cbw->command_block[11] << 16 |
-                 cbw->command_block[12] << 8 |
+                ((uint32_t)cbw->command_block[10] << 24 |
+                 (uint32_t)cbw->command_block[11] << 16 |
+                 (uint32_t)cbw->command_block[12] << 8 |
                  cbw->command_block[13]);
             cur_cmd.block_size = block_size;
 
