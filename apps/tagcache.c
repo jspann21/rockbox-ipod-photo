@@ -544,6 +544,17 @@ static inline void str_setlen(char *buf, size_t len)
     buf[len] = '\0';
 }
 
+static bool string_record_is_terminated(const char *buf, size_t len)
+{
+    while (len-- > 0)
+    {
+        if (*buf++ == '\0')
+            return true;
+    }
+
+    return false;
+}
+
 const char* tagcache_tag_to_str(int tag)
 {
     return tags_str[tag];
@@ -878,7 +889,7 @@ read_tagfile_entry_and_tag(int fd, struct tagfile_entry *tfe,
     if (read_exact(fd, buf, tag_length) != tag_length)
         return e_TAG_SIZEMISMATCH;
 
-    if (!memchr(buf, '\0', tag_length))
+    if (!string_record_is_terminated(buf, tag_length))
         return e_TAG_SIZEMISMATCH;
 
     str_setlen(buf, tag_length);
@@ -904,7 +915,7 @@ tagcache_reader_entry_and_tag(struct tagcache_reader *reader,
     if (tagcache_reader_read(reader, buf, tag_length) != tag_length)
         return e_TAG_SIZEMISMATCH;
 
-    if (!memchr(buf, '\0', tag_length))
+    if (!string_record_is_terminated(buf, tag_length))
         return e_TAG_SIZEMISMATCH;
 
     str_setlen(buf, tag_length);
@@ -5383,7 +5394,7 @@ static bool load_tagcache(void)
                     goto failure;
                 }
                 if (fe->tag_length == 0 ||
-                    !memchr(filename, '\0', fe->tag_length))
+                    !string_record_is_terminated(filename, fe->tag_length))
                 {
                     logf("invalid filename tag");
                     goto failure;
@@ -5420,7 +5431,8 @@ static bool load_tagcache(void)
                 logf("tag=0x%02x", tag); // 0x00
                 goto failure;
             }
-            if (fe->tag_length == 0 || !memchr(p, '\0', fe->tag_length))
+            if (fe->tag_length == 0 ||
+                !string_record_is_terminated(p, fe->tag_length))
             {
                 logf("unterminated tag data");
                 goto failure;
