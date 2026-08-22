@@ -266,6 +266,7 @@ typedef fb_data pix_t;
 #define EV_WAKEUP 1337
 
 #define EMPTY_SLIDE CACHE_PREFIX "/emptyslide.pfraw"
+#define EMPTY_SLIDE_TMP EMPTY_SLIDE ".tmp"
 #define EMPTY_SLIDE_BMP PLUGIN_DEMOS_DIR "/pictureflow_emptyslide.bmp"
 #define SPLASH_BMP PLUGIN_DEMOS_DIR "/pictureflow_splash.bmp"
 
@@ -2425,8 +2426,13 @@ static int create_empty_slide(bool force)
         scaled_read_bmp_file(EMPTY_SLIDE_BMP, &aa_cache.input_bmp,
                              aa_cache.buf_sz, format, &format_transposed);
 
-        if (!save_pfraw(EMPTY_SLIDE, &aa_cache.input_bmp))
+        if (!save_pfraw(EMPTY_SLIDE_TMP, &aa_cache.input_bmp) ||
+            (rb->file_exists(EMPTY_SLIDE) && rb->remove(EMPTY_SLIDE) < 0) ||
+            rb->rename(EMPTY_SLIDE_TMP, EMPTY_SLIDE) < 0)
+        {
+            rb->remove(EMPTY_SLIDE_TMP);
             return false;
+        }
     }
 
     return true;
