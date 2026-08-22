@@ -510,8 +510,9 @@ static void usb_storage_transfer_complete(int ep,int dir,int status,int length)
             }
             logf("scsi write %llu %d", cur_cmd.sector, cur_cmd.count);
             if(status==0) {
-                if((unsigned int)length!=(cur_cmd.block_size* cur_cmd.count)
-                  && (unsigned int)length!=WRITE_BUFFER_SIZE) {
+                if((unsigned int)length !=
+                   MIN(WRITE_BUFFER_SIZE / cur_cmd.block_size,
+                       cur_cmd.count) * cur_cmd.block_size) {
                     logf("unexpected length :%d",length);
                     break;
                 }
@@ -525,7 +526,8 @@ static void usb_storage_transfer_complete(int ep,int dir,int status,int length)
                 if(next_count!=0) {
                     /* Ask the host to send more, to the other buffer */
                     receive_block_data(cur_cmd.data[next_select],
-                                       MIN(WRITE_BUFFER_SIZE,next_count*cur_cmd.block_size));
+                                       MIN(WRITE_BUFFER_SIZE / cur_cmd.block_size,
+                                           next_count) * cur_cmd.block_size);
                 }
 
                 /* Now write the data that just came in, while the host is
@@ -739,7 +741,8 @@ static void send_and_read_next(void)
         cur_cmd.last_result = result;
 
     send_block_data(cur_cmd.data[cur_cmd.data_select],
-                    MIN(READ_BUFFER_SIZE,cur_cmd.count*cur_cmd.block_size));
+                    MIN(READ_BUFFER_SIZE / cur_cmd.block_size,
+                        cur_cmd.count) * cur_cmd.block_size);
 
     /* Switch buffers for the next one */
     cur_cmd.data_select=!cur_cmd.data_select;
@@ -1283,7 +1286,8 @@ static void handle_scsi(struct command_block_wrapper* cbw)
             }
             else {
                 receive_block_data(cur_cmd.data[0],
-                        MIN(WRITE_BUFFER_SIZE, cur_cmd.count*cur_cmd.block_size));
+                        MIN(WRITE_BUFFER_SIZE / cur_cmd.block_size,
+                            cur_cmd.count) * cur_cmd.block_size);
             }
             break;
 #ifdef STORAGE_64BIT_SECTOR
@@ -1325,7 +1329,8 @@ static void handle_scsi(struct command_block_wrapper* cbw)
             }
             else {
                 receive_block_data(cur_cmd.data[0],
-                        MIN(WRITE_BUFFER_SIZE, cur_cmd.count*cur_cmd.block_size));
+                        MIN(WRITE_BUFFER_SIZE / cur_cmd.block_size,
+                            cur_cmd.count) * cur_cmd.block_size);
             }
             break;
 #endif
