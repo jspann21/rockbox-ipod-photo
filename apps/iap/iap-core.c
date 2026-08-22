@@ -286,6 +286,9 @@ void iap_tx_strlcpy(const unsigned char *str)
     ptrdiff_t txfree;
     int r;
 
+    if (!str)
+        str = (const unsigned char *)"";
+
     txfree = TX_BUFLEN - (iap_txnext - iap_txstart);
     r = strlcpy(iap_txnext, str, txfree);
 
