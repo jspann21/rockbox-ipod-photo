@@ -2488,9 +2488,12 @@ bool tagcache_fill_tags(struct mp3entry *id3, const char *filename)
 #endif /* defined(HAVE_TC_RAMCACHE) && defined(HAVE_DIRCACHE) */
 
 #define TEMPDB_WRITE_BUFSZ 4096
-#define TEMPDB_CHECKPOINT_INTERVAL 128
+#define TEMPDB_CHECKPOINT_MIN_ENTRIES 128
+#define TEMPDB_CHECKPOINT_MAX_ENTRIES 512
+#define TEMPDB_CHECKPOINT_TICKS (10 * HZ)
 static unsigned char tempdb_write_buf[TEMPDB_WRITE_BUFSZ];
 static size_t tempdb_write_used;
+static long tempdb_checkpoint_tick;
 
 static bool tempdb_flush(void)
 {
@@ -5453,11 +5456,18 @@ static bool check_dir(const char *dirname, int add_files)
             /* Add a new entry to the temporary db file. */
             add_tagcache(curpath, info.mtime);
 
-            if (!build_write_error && total_entry_count > 0 &&
-                total_entry_count != checkpointed_entry_count &&
-                total_entry_count % TEMPDB_CHECKPOINT_INTERVAL == 0 &&
-                tempdb_checkpoint())
+            int entries_since_checkpoint = total_entry_count -
+                                           checkpointed_entry_count;
+            bool checkpoint_due =
+                entries_since_checkpoint >= TEMPDB_CHECKPOINT_MAX_ENTRIES ||
+                (entries_since_checkpoint >= TEMPDB_CHECKPOINT_MIN_ENTRIES &&
+                 TIME_AFTER(current_tick, tempdb_checkpoint_tick +
+                            TEMPDB_CHECKPOINT_TICKS));
+            if (!build_write_error && checkpoint_due && tempdb_checkpoint())
+            {
                 checkpointed_entry_count = total_entry_count;
+                tempdb_checkpoint_tick = current_tick;
+            }
 
             if (build_write_error)
             {
@@ -5505,6 +5515,7 @@ void do_tagcache_build(const char *path[])
     processed_dir_count = 0;
     build_write_error = false;
     checkpointed_entry_count = 0;
+    tempdb_checkpoint_tick = current_tick;
     tempdb_write_used = 0;
 
 #ifdef HAVE_DIRCACHE
