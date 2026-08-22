@@ -323,6 +323,9 @@ static int asf_parse_header(int fd, struct mp3entry* id3,
                         //DEBUGF("Found stream properties for non audio stream, skipping\n");
                         lseek(fd,current.size - 24 - 50,SEEK_CUR);
                     } else if (wfx->audiostream == -1) {
+                        if (current.size < 24 + 72 ||
+                            propdatalen > current.size - 24 - 54)
+                            return ASF_ERROR_INVALID_LENGTH;
                         lseek(fd, 4, SEEK_CUR);
                         //DEBUGF("Found stream properties for audio stream %d\n",flags&0x7f);
 
@@ -343,6 +346,9 @@ static int asf_parse_header(int fd, struct mp3entry* id3,
                         read_uint16le(fd, &wfx->blockalign);
                         read_uint16le(fd, &wfx->bitspersample);
                         read_uint16le(fd, &wfx->datalen);
+                        if (wfx->datalen > sizeof(wfx->data) ||
+                            wfx->datalen > propdatalen - 18)
+                            return ASF_ERROR_INVALID_LENGTH;
 
                         /*sanity check the included bitrate by comparing to file size and length*/
                         unsigned int estimated_bitrate = id3->length ? (wfx->packet_size*wfx->numpackets)/id3->length*8000 : 0;
@@ -363,22 +369,26 @@ static int asf_parse_header(int fd, struct mp3entry* id3,
                         id3->frequency = wfx->rate;
 
                         if (wfx->codec_id == ASF_CODEC_ID_WMAV1) {
-                            read(fd, wfx->data, 4);
+                            if (wfx->datalen < 4 || read(fd, wfx->data, 4) != 4)
+                                return ASF_ERROR_EOF;
                             lseek(fd,current.size - 24 - 72 - 4,SEEK_CUR);
                             wfx->audiostream = flags&0x7f;
                         } else if (wfx->codec_id == ASF_CODEC_ID_WMAV2) {
-                            read(fd, wfx->data, 6);
+                            if (wfx->datalen < 6 || read(fd, wfx->data, 6) != 6)
+                                return ASF_ERROR_EOF;
                             lseek(fd,current.size - 24 - 72 - 6,SEEK_CUR);
                             wfx->audiostream = flags&0x7f;
                         } else if (wfx->codec_id == ASF_CODEC_ID_WMAPRO) {
                             /* wma pro decoder needs the extra-data */
-                            read(fd, wfx->data, wfx->datalen);
+                            if (read(fd, wfx->data, wfx->datalen) != wfx->datalen)
+                                return ASF_ERROR_EOF;
                             lseek(fd,current.size - 24 - 72 - wfx->datalen,SEEK_CUR);
                             wfx->audiostream = flags&0x7f;
                             /* Correct codectype to redirect playback to the proper .codec */
                             id3->codectype = AFMT_WMAPRO;
                         } else if (wfx->codec_id == ASF_CODEC_ID_WMAVOICE) {
-                            read(fd, wfx->data, wfx->datalen);
+                            if (read(fd, wfx->data, wfx->datalen) != wfx->datalen)
+                                return ASF_ERROR_EOF;
                             lseek(fd,current.size - 24 - 72 - wfx->datalen,SEEK_CUR);
                             wfx->audiostream = flags&0x7f;
                             id3->codectype = AFMT_WMAVOICE;
