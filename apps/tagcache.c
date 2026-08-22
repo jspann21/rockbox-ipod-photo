@@ -456,15 +456,6 @@ static bool tagcache_reader_skip(struct tagcache_reader *reader, size_t size)
     return true;
 }
 
-static ssize_t tagcache_reader_entry(struct tagcache_reader *reader,
-                                     struct tagfile_entry *entry)
-{
-    ssize_t rc = tagcache_reader_read(reader, entry, sizeof(*entry));
-    if (rc == sizeof(*entry))
-        swap_tagfile_entry(entry);
-    return rc;
-}
-
 static inline void tcrc_buffer_lock(void)
 {
     core_pin(tcramcache.handle);
@@ -585,6 +576,17 @@ static void swap_tagfile_entry(struct tagfile_entry *buf) { (void)buf; }
 static void swap_index_entry(struct index_entry *buf) { (void)buf; }
 static void swap_tagcache_header(struct tagcache_header *buf) { (void)buf; }
 static void swap_master_header(struct master_header *buf) { (void)buf; }
+#endif
+
+#ifdef HAVE_TC_RAMCACHE
+static ssize_t tagcache_reader_entry(struct tagcache_reader *reader,
+                                     struct tagfile_entry *entry)
+{
+    ssize_t rc = tagcache_reader_read(reader, entry, sizeof(*entry));
+    if (rc == sizeof(*entry))
+        swap_tagfile_entry(entry);
+    return rc;
+}
 #endif
 
 static ssize_t read_tagfile_entry(int fd, struct tagfile_entry *buf)
