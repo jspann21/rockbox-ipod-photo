@@ -791,6 +791,19 @@ static void handle_scsi(struct command_block_wrapper* cbw)
     if(skip_first) lun++;
 #endif
 
+    cur_cmd.tag = cbw->tag;
+    cur_cmd.lun = lun;
+    cur_cmd.cur_cmd = cbw->command_block[0];
+
+    if (lun >= NUM_DRIVES || lun >= storage_num_drives())
+    {
+        cur_sense_data.sense_key = SENSE_ILLEGAL_REQUEST;
+        cur_sense_data.asc = ASC_INVALID_FIELD_IN_CBD;
+        cur_sense_data.ascq = 0;
+        send_csw(UMS_STATUS_FAIL);
+        return;
+    }
+
     storage_get_info(lun,&info);
 #ifdef USB_USE_RAMDISK
     block_size = SECTOR_SIZE;
@@ -813,10 +826,6 @@ static void handle_scsi(struct command_block_wrapper* cbw)
 
     uint32_t bsize = block_size*block_size_mult;
     sector_t bcount = block_count/block_size_mult;
-
-    cur_cmd.tag = cbw->tag;
-    cur_cmd.lun = lun;
-    cur_cmd.cur_cmd = cbw->command_block[0];
 
     switch (cbw->command_block[0]) {
         case SCSI_TEST_UNIT_READY:
