@@ -1087,9 +1087,11 @@ void iap_periodic(void)
     {
         unsigned char power_state;
         unsigned char battery_l;
+        int battery_percent;
 
         power_state = charger_input_state;
-        battery_l = battery_level();
+        battery_percent = battery_level();
+        battery_l = MAX(0, MIN(battery_percent, 100));
 
         if ((device.power_state != power_state) || (device.battery_level != battery_l))
         {
@@ -1472,9 +1474,11 @@ void iap_fill_power_state(void)
 {
     unsigned char power_state;
     unsigned char battery_l;
+    int battery_percent;
 
     power_state = charger_input_state;
-    battery_l = battery_level();
+    battery_percent = battery_level();
+    battery_l = MAX(0, MIN(battery_percent, 100));
 
     if (power_state == NO_CHARGER) {
         if (battery_l < 30) {

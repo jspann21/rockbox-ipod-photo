@@ -483,6 +483,7 @@ uint8_t _iap_convert_repeat_state(int rb_state) {
 }
 
 uint8_t _iap_convert_battery_level(int rb_battery_level) {
+    rb_battery_level = MAX(0, MIN(rb_battery_level, 100));
     return 0xFF * rb_battery_level / 100;
 }
 
