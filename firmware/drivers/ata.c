@@ -280,12 +280,14 @@ static int ata_perform_flush_cache(void)
 
 int ata_flush(void)
 {
+    int ret = 0;
+
     if (ata_state >= ATA_SPINUP) {
         mutex_lock(&ata_mutex);
-        ata_perform_flush_cache();
+        ret = ata_perform_flush_cache();
         mutex_unlock(&ata_mutex);
     }
-    return 0;
+    return ret;
 }
 
 static ICODE_ATTR int wait_for_start_of_transfer(void)
