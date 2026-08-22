@@ -1666,7 +1666,7 @@ static bool get_index(int masterfd, int idxid,
 {
     bool localfd = false;
 
-    if (idxid < 0)
+    if (idxid < 0 || idxid >= current_tcmh.tch.entry_count)
     {
         logf("Incorrect idxid: %d", idxid);
         return false;
@@ -2438,6 +2438,8 @@ bool tagcache_search(struct tagcache_search *tcs, int tag)
     memset(tcs, 0, sizeof(struct tagcache_search));
     if (tc_stat.commit_step > 0 || !tc_stat.ready)
         return false;
+    if (tag < 0 || tag >= TAG_COUNT)
+        return false;
 
     tcs->position = sizeof(struct tagcache_header);
     tcs->type = tag;
@@ -2510,7 +2512,8 @@ void tagcache_search_set_uniqbuf(struct tagcache_search *tcs,
 bool tagcache_search_add_filter(struct tagcache_search *tcs,
                                 int tag, int seek)
 {
-    if (tcs->filter_count == TAGCACHE_MAX_FILTERS)
+    if (tcs->filter_count == TAGCACHE_MAX_FILTERS ||
+        tag < 0 || tag >= TAG_COUNT)
         return false;
 
     if (TAGCACHE_IS_NUMERIC_OR_NONUNIQUE(tag))
@@ -2537,6 +2540,8 @@ bool tagcache_search_add_clause(struct tagcache_search *tcs,
 
     if (clause->type != clause_logical_or)
     {
+        if (clause->tag < 0 || clause->tag >= TAG_COUNT_ALL)
+            return false;
         /* BUGFIX OR'd clauses seem to be mishandled once made into a filter */
         if (clause_count <= 1 || tcs->clause[clause_count - 1]->type != clause_logical_or)
         {
@@ -2552,12 +2557,14 @@ bool tagcache_search_add_clause(struct tagcache_search *tcs,
             }
         }
 
-        if (!TAGCACHE_IS_NUMERIC(clause->tag) && tcs->idxfd[clause->tag] < 0)
+        int file_tag = clause->tag == tag_virt_basename ?
+                       tag_filename : clause->tag;
+        if (!TAGCACHE_IS_NUMERIC(clause->tag) && tcs->idxfd[file_tag] < 0)
         {
             char fname[MAX_PATH];
-            tcs->idxfd[clause->tag] = open_pathfmt(fname, sizeof(fname), O_RDONLY,
-                                                   "%s/" TAGCACHE_FILE_INDEX,
-                                                   tc_stat.db_path, clause->tag);
+            tcs->idxfd[file_tag] = open_pathfmt(fname, sizeof(fname), O_RDONLY,
+                                                "%s/" TAGCACHE_FILE_INDEX,
+                                                tc_stat.db_path, file_tag);
         }
     }
 
