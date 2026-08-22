@@ -63,6 +63,9 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
 #if CONFIG_TUNER
     static bool remote_mute = false;
 #endif
+    if (len < 2)
+        return;
+
     unsigned int cmd = buf[1];
 
     /* We expect at least three bytes in the buffer, one for the

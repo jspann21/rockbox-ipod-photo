@@ -76,6 +76,9 @@ static void cmd_ack(const unsigned char cmd, const unsigned char status)
 
 void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
 {
+    if (len < 2)
+        return;
+
     unsigned int cmd = buf[1];
 
     /* We expect at least two bytes in the buffer, one for the

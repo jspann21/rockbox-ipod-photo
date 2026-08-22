@@ -68,6 +68,9 @@ bool iap_record(bool onoff)
 
 void iap_handlepkt_mode1(const unsigned int len, const unsigned char *buf)
 {
+    if (len < 2)
+        return;
+
     unsigned int cmd = buf[1];
 
     /* Lingo 0x04 commands are at least 4 bytes in length */

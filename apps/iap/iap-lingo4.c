@@ -137,6 +137,9 @@ static unsigned long nbr_total_playlists(void)
 
 void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
 {
+    if (len < 3)
+        return;
+
     unsigned int cmd = (buf[1] << 8) | buf[2];
     /* Lingo 0x04 commands are at least 3 bytes in length */
     CHECKLEN(3);

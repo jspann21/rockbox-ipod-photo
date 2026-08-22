@@ -1263,7 +1263,9 @@ void iap_interface_state_change(const enum interface_state new)
 
 static void iap_handlepkt_mode5(const unsigned int len, const unsigned char *buf)
 {
-    (void) len;
+    if (len < 2)
+        return;
+
     unsigned int cmd = buf[1];
     switch (cmd)
     {

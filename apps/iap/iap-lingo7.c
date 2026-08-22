@@ -64,6 +64,9 @@ void iap_handlepkt_mode7(const unsigned int len, const unsigned char *inbuffer)
      * commands are sourced with the remote as the master with the ipod acting
      * as the slave.
      */
+    if (len < 2)
+        return;
+
     unsigned char cmd = inbuffer[1];
     unsigned char statusnotifymaskbyte = 0;
 
