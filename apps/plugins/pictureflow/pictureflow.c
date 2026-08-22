@@ -558,6 +558,7 @@ static struct buflib_context buf_ctx;
 static struct pf_index_t pf_idx;
 
 static struct pf_track_t pf_tracks;
+static unsigned long aa_cache_next_tick;
 
 static struct mp3entry id3;
 
@@ -2304,8 +2305,10 @@ static bool incremental_albumart_cache(bool verbose)
     if (aa_cache.inspected >= pf_idx.album_ct)
         return false;
 
-    /* Prevent idle poweroff */
-    rb->reset_poweroff_timer();
+    /* A foreground rebuild is explicit user activity. Background caching must
+     * not keep the player awake indefinitely while it walks a large library. */
+    if (verbose)
+        rb->reset_poweroff_timer();
 
     int idx, ret;
     unsigned int hash_artist, hash_album;
@@ -5033,11 +5036,13 @@ static int pictureflow_main(void)
             case pf_idle:
                 show_tracks_while_browsing = false;
                 render_all_slides();
-                if (aa_cache.inspected < pf_idx.album_ct)
+                if (aa_cache.inspected < pf_idx.album_ct &&
+                    !TIME_BEFORE(*rb->current_tick, aa_cache_next_tick))
                 {
                     buf_ctx_lock();
                     incremental_albumart_cache(false);
                     buf_ctx_unlock();
+                    aa_cache_next_tick = (unsigned long)*rb->current_tick + HZ/10;
                 }
                 break;
         }
