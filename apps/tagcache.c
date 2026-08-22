@@ -5181,6 +5181,9 @@ static bool check_file_refs(bool auto_update)
     if (fd < 0)
     {
         logf(TAGCACHE_FILE_INDEX " open fail", tag_filename);
+#ifdef HAVE_DIRCACHE
+        tcrc_buffer_unlock();
+#endif
         return false;
     }
 
@@ -5212,6 +5215,12 @@ static bool check_file_refs(bool auto_update)
         }
 
         int idx_id = tfe.idx_id; /* dircache reference clobbers *tfe */
+        if (idx_id < 0 || idx_id >= current_tcmh.tch.entry_count)
+        {
+            logf("invalid filename index: %d", idx_id);
+            ret = false;
+            goto wend_finished;
+        }
 #ifdef HAVE_DIRCACHE
         struct index_entry *idx = &tcramcache.hdr->indices[idx_id];
         unsigned int searchflag;
