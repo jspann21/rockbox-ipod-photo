@@ -329,6 +329,9 @@ IAPBool iap_platform_get_indexed_track_info(struct IAPContext* iap_ctx, uint32_t
 
 IAPBool iap_platform_set_playing_track(struct IAPContext* iap_ctx, uint32_t index) {
     (void)iap_ctx;
+    if(index >= (uint32_t)playlist_amount()) {
+        return iap_false;
+    }
     audio_skip((int)index - playlist_next(0));
     return iap_true;
 }
