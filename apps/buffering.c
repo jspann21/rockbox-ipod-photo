@@ -691,14 +691,10 @@ static bool buffer_handle(int handle_id, size_t to_buffer)
         ssize_t rc = read(h->fd, ringbuf_ptr(widx), copy_n);
 
         if (rc <= 0) {
-            /* Some kind of filesystem error, maybe recoverable if not codec */
-            if (h->type == TYPE_CODEC) {
-                logf("Partial codec");
-                break;
-            }
-
             logf("File ended %lu bytes early\n",
                  (unsigned long)(h->filesize - h->end));
+            /* Publish the truncated size so synchronous readers stop waiting.
+             * Codec loading will reject the incomplete image normally. */
             h->filesize = h->end;
             break;
         }
