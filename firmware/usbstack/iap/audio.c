@@ -227,6 +227,7 @@ error:
             staging_buffers[i].buf.ptr = NULL;
         }
     }
+    usb_drv_batch_deinit();
     return false;
 }
 
