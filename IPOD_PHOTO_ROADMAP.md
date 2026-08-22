@@ -40,6 +40,14 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       writes, and cache the temporary database during commit when RAM permits.
 - [x] Reject incomplete database writes, checkpoint long scans, publish durable
       database headers last, and recover interrupted initial or update commits.
+- [x] Bulk-load RAM database indexes, reuse filename references, buffer generated
+      indexes, and batch native-endian master-index writes.
+- [x] Hash duplicate tags, reuse measured metadata lengths, and skip Unicode
+      normalization work for ASCII-only metadata.
+- [x] Validate database dimensions, record boundaries, strings, scan roots, and
+      path lengths before accepting or publishing an index.
+- [x] Propagate recursive scan and storage errors, retry interrupted verification,
+      and refresh or discard stale RAM caches after database updates.
 
 ## Reliability and maintainability
 
