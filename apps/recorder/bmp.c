@@ -574,7 +574,11 @@ int read_bmp_fd(int fd,
     hdr_size = letoh32(bmph.struct_size);
     compression = letoh32(bmph.compression);
     uint32_t off_bits = letoh32(bmph.off_bits);
+#ifdef PLUGIN
+    off_t file_size = rb->filesize(fd);
+#else
     off_t file_size = filesize(fd);
+#endif
 
     if (letoh16(bmph.type) != 0x4d42 || letoh16(bmph.planes) != 1 ||
         source_width <= 0 || source_width > SHRT_MAX ||

@@ -43,7 +43,6 @@
 #endif
 #define yield rb->yield
 #define file_exists rb->file_exists
-#define filesize rb->filesize
 #define snprintf rb->snprintf
 #define strcat rb->strcat
 #define strchr rb->strchr
