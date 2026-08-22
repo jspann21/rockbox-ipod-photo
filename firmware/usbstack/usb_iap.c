@@ -375,6 +375,7 @@ static int usb_iap_get_config_descriptor(unsigned char* dest, int max_packet_siz
 
 static int usb_iap_init_connection(void) {
     stream.sample_rate     = 48000;
+    stream.alt             = 0;
     last_charge_state      = -1;
     last_minute            = -1;
     last_hold_switch_state = -1;
@@ -433,6 +434,7 @@ static int usb_iap_set_interface(int intf, int alt) {
         ERROR("invalid alt %d", alt);
         return -1;
     }
+    stream.alt = alt;
     return 0;
 }
 
@@ -448,6 +450,7 @@ static void usb_iap_init(void) {
 
 static void usb_iap_disconnect(void) {
     iap_initialized = false;
+    stream.alt = 0;
     audio_pause();
     mixer_switch_sink(PCM_SINK_BUILTIN);
     timeout_cancel(&tick_tmo);
