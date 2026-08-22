@@ -5363,7 +5363,7 @@ static bool check_file_refs(bool auto_update)
     struct tagcache_reader reader;
 #endif
 #ifdef HAVE_DIRCACHE
-    bool ram_refs = tcramcache.handle > 0;
+    bool ram_refs = tc_stat.ramcache && tcramcache.handle > 0;
 #endif
 
     logf("reverse scan...");
@@ -5406,8 +5406,21 @@ static bool check_file_refs(bool auto_update)
 
     processed_dir_count = 0;
 
-    while (!check_event_queue())
+    if (hdr.entry_count < 0 ||
+        hdr.entry_count != current_tcmh.tch.entry_count)
     {
+        ret = false;
+        goto wend_finished;
+    }
+
+    for (int entry = 0; entry < hdr.entry_count; entry++)
+    {
+        if (check_event_queue())
+        {
+            ret = false;
+            break;
+        }
+
         int res;
 #ifdef HAVE_TC_RAMCACHE
         res = tagcache_reader_entry_and_tag(&reader, &tfe, buf, bufsz);
