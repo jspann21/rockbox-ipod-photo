@@ -5190,6 +5190,18 @@ static bool load_tagcache(void)
         goto failure;
     }
 
+    off_t master_size = filesize(fd);
+    if (tcmh.dirty || tcmh.tch.entry_count < 0 || tcmh.tch.datasize < 0 ||
+        (size_t)tcmh.tch.entry_count >
+            (SIZE_MAX - sizeof(struct master_header)) /
+            sizeof(struct index_entry) ||
+        master_size != (off_t)(sizeof(struct master_header) +
+            (size_t)tcmh.tch.entry_count * sizeof(struct index_entry)))
+    {
+        logf("invalid RAM tagcache master");
+        goto failure;
+    }
+
     /* Master header copy should already match, this can be redundant to do. */
     current_tcmh = tcmh;
 
