@@ -196,7 +196,11 @@ static int32_t start_artwork_data(struct IAPContext* ctx, struct IAPSpan* reques
         ctx->artwork_data_lingo   = IAPLingoID_DisplayRemote;
         ctx->artwork_data_command = IAPDisplayRemoteCommandID_RetTrackArtworkData;
     }
-    check_ret(send_artwork_chunk_cb(ctx), -IAPAckStatus_ECommandFailed);
+    if(!send_artwork_chunk_cb(ctx)) {
+        iap_platform_close_artwork(ctx, &ctx->artwork);
+        ctx->artwork.valid = iap_false;
+        return -IAPAckStatus_ECommandFailed;
+    }
     return 0;
 }
 
