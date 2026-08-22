@@ -75,6 +75,8 @@ static void get_playlist_name(unsigned char *dest,
     struct dirent* playlist_file = NULL;
 
     dp = opendir(global_settings.playlist_catalog_dir);
+    if (dp == NULL)
+        return;
 
     char *extension;
     unsigned long nbr = 0;
@@ -119,6 +121,9 @@ static unsigned long nbr_total_playlists(void)
     struct dirent* playlist_file = NULL;
     char *extension;
     dp = opendir(global_settings.playlist_catalog_dir);
+    if (dp == NULL)
+        return 0;
+
     while ((playlist_file = readdir(dp)) != NULL)
     {
         /*Increment only if there is a playlist extension*/
