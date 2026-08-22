@@ -35,6 +35,10 @@ bool get_adx_metadata(int fd, struct mp3entry* id3)
     unsigned char * buf = (unsigned char *)id3->path;
     int chanstart, channels;
     int looping = 0, start_adr = 0, end_adr = 0;
+    uint32_t samples;
+    uint64_t bitrate;
+    uint64_t length;
+    off_t file_size;
     
     /* try to get the basic header */
     if ((lseek(fd, 0, SEEK_SET) < 0)
@@ -65,11 +69,23 @@ bool get_adx_metadata(int fd, struct mp3entry* id3)
     }
     
     id3->frequency = get_long_be(&buf[8]);
+    if (id3->frequency == 0)
+        return false;
     /* 32 samples per 18 bytes */
-    id3->bitrate = id3->frequency * channels * 18 * 8 / 32 / 1000;
-    id3->length = get_long_be(&buf[12]) / id3->frequency * 1000;
+    bitrate = (uint64_t)id3->frequency * channels * 18 * 8 / 32 / 1000;
+    if (bitrate == 0 || bitrate > UINT32_MAX)
+        return false;
+    id3->bitrate = bitrate;
+    samples = get_long_be(&buf[12]);
+    length = (uint64_t)samples * 1000 / id3->frequency;
+    if (length > UINT32_MAX)
+        return false;
+    id3->length = length;
     id3->vbr = false;
-    id3->filesize = filesize(fd);
+    file_size = filesize(fd);
+    if (file_size < 0 || (uint64_t)file_size > UINT32_MAX)
+        return false;
+    id3->filesize = file_size;
     
     /* get loop info */
     if (!memcmp(buf+0x10,"\x01\xF4\x03",3)) {
@@ -104,9 +120,16 @@ bool get_adx_metadata(int fd, struct mp3entry* id3)
     }
     
     if (looping) {
+        if (start_adr < chanstart || end_adr < start_adr ||
+            (uint64_t)end_adr > (uint64_t)id3->filesize)
+            return false;
         /* 2 loops, 10 second fade */
-        id3->length = (start_adr-chanstart + 2*(end_adr-start_adr))
-                      *8 / id3->bitrate + 10000;
+        length = ((uint64_t)(start_adr - chanstart) +
+                  2ULL * (end_adr - start_adr)) * 8 /
+                 id3->bitrate + 10000;
+        if (length > UINT32_MAX)
+            return false;
+        id3->length = length;
     }
         
     /* try to get the channel header */
