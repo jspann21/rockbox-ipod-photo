@@ -68,6 +68,37 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       and custom-skin fonts, images, dimensions, and parser allocations.
 - [x] Time PictureFlow cover transitions by elapsed ticks, pace background art
       caching, skip unchanged idle frames, and release the CPU boost while idle.
+- [x] Preserve serial-iAP buffers across relocation, make stopped-playback
+      replies null-safe, serialize USB-iAP notifications and teardown, reject
+      short control writes, and preserve in-flight accessory transactions.
+- [x] Bound generated statusbar skins and keep simple lists, quickscreens, and
+      oversized themed rows usable on the native 220x176 display.
+- [x] Flush already-awake iFlash media during critical shutdown, report flush
+      failures, retry PMU standby/accessory writes, and validate ADC/RTC writes.
+- [x] Validate APE tags and embedded artwork, and propagate playlist import,
+      control-file, seek, and short-write failures.
+- [x] Publish directory caches and settings through synced temporary files so a
+      failed write does not destroy the last valid state.
+- [x] Enforce partition, BPB, FSInfo, FAT-chain, and GPT bounds before issuing
+      filesystem I/O, including modern large-media layouts.
+- [x] Fail safely when database, buffering, or storage worker threads cannot be
+      created instead of hanging startup or synchronous queue users.
+- [x] Clip native Color LCD rectangle updates and include temporary backlight
+      use in battery runtime estimates.
+- [x] Reduce database-ready polling latency during startup and skip WPS/status
+      LCD transfers when skin rendering did not alter any viewport.
+- [x] Make the iPod formatter preserve 32-bit partition offsets and reject
+      partial destructive writes rather than reporting a successful format.
+- [x] Sync playlist and control-file replacements, preserve the prior control
+      file on publication failure, and reject corrupt replay positions.
+- [x] Reject truncated firmware images and malformed AAC, ADX, OMA/ATRAC, ASF,
+      WAVE/Wave64, and MP4 metadata before unsafe reads or duration arithmetic.
+- [x] Validate buffering file sizes and tagcache search/index inputs, and clear
+      the complete database unique-result buffer rather than only one byte per
+      entry.
+- [x] Let the idle backlight worker sleep indefinitely, make startup ADC scans
+      immediate, recover failed USB-iAP HID transactions, and leave serial iAP
+      disabled rather than panicking when its worker cannot be created.
 
 ## Reliability and maintainability
 
@@ -85,6 +116,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [x] Audit and harden ATA IDENTIFY capability handling and LBA48 geometry;
       retain unusual-adapter reply checks for iFlash hardware validation.
 - [x] Improve DMA timeout fallback, reset recovery, and bounded retry behavior.
+- [x] Validate FAT/GPT geometry against the physical partition and make FAT32
+      FSInfo optional and recoverable for broader host/iFlash compatibility.
 - [ ] Check cold boot, wake, sleep, shutdown, and storage power sequencing.
 - [x] Harden initial database scan and commit I/O; retain hardware timing and
       power-loss checks for the installed iPod.
@@ -97,7 +130,7 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [x] Refine wheel acceleration and selection behavior on long lists; reserve
       hardware testing for final sensitivity tuning.
 - [x] Eliminate unchanged generic-list edge redraws and unchanged PictureFlow
-      idle framebuffer transfers.
+      idle framebuffer transfers, and suppress clean skin-engine LCD updates.
 - [ ] Improve menu, browser, and now-playing geometry for 220x176 rather than
       shrinking layouts designed for 320x240.
 - [ ] Improve typography, spacing, icons, focus indication, and status layout.
