@@ -2792,6 +2792,10 @@ static inline bool load_and_prepare_surface(const int slide_index,
                                             const int cache_index,
                                             const int prio)
 {
+    if (slide_index < 0 || slide_index >= number_of_slides ||
+        cache_index < 0 || cache_index >= SLIDE_CACHE_SIZE)
+        return false;
+
     char pfraw_file[MAX_PATH];
     unsigned int hash_artist = mfnv(get_album_artist(slide_index));
     unsigned int hash_album = mfnv(get_album_name(slide_index));
@@ -2804,10 +2808,7 @@ static inline bool load_and_prepare_surface(const int slide_index,
         return false;
 
     pf_sldcache.cache[cache_index].hid = hid;
-
-    if ( cache_index < SLIDE_CACHE_SIZE ) {
-        pf_sldcache.cache[cache_index].index = slide_index;
-    }
+    pf_sldcache.cache[cache_index].index = slide_index;
 
     return true;
 }
