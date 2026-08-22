@@ -982,7 +982,6 @@ static const struct button_mapping* get_context_map(int context)
 /* scrolling */
 static void init_scroll_lines(void)
 {
-    int i;
     static const char scroll_tick_table[18] = {
      /* Hz values:
         1, 1.25, 1.55, 2, 2.5, 3.12, 4, 5, 6.25, 8.33, 10, 12.5, 16.7, 20, 25, 33, 49.2, 96.2 */
@@ -993,8 +992,7 @@ static void init_scroll_lines(void)
     scroll_line_info.step = rb->global_settings->scroll_step;
     scroll_line_info.delay = rb->global_settings->scroll_delay / (HZ / 10);
     scroll_line_info.next_scroll = *rb->current_tick;
-    for (i = 0; i < PF_MAX_SCROLL_LINES; i++)
-        scroll_lines[i].step = 0;
+    rb->memset(scroll_lines, 0, sizeof(scroll_lines));
 }
 
 static void set_scroll_line(const char *str, enum pf_scroll_line_type type)
@@ -4632,7 +4630,9 @@ static void draw_album_text(void)
         rb->snprintf(album_and_year, sizeof(album_and_year), "%s", albumtxt);
 
     mylcd_set_foreground(G_BRIGHT(c));
-    if (albumtxt_index != prev_albumtxt_index || pf_cfg.show_year != prev_show_year) {
+    if (scroll_lines[PF_SCROLL_ALBUM].width == 0 ||
+        albumtxt_index != prev_albumtxt_index ||
+        pf_cfg.show_year != prev_show_year) {
         set_scroll_line(album_and_year, PF_SCROLL_ALBUM);
         prev_albumtxt_index = albumtxt_index;
         prev_show_year = pf_cfg.show_year;
@@ -4663,7 +4663,8 @@ static void draw_album_text(void)
             mylcd_putsxy(albumtxt_x, albumtxt_y, album_and_year);
 
         artisttxt = get_album_artist(albumtxt_index);
-        if (albumtxt_index != prev_artisttxt_index ||
+        if (scroll_lines[PF_SCROLL_ARTIST].width == 0 ||
+            albumtxt_index != prev_artisttxt_index ||
             pf_cfg.show_album_name != prev_artist_mode)
         {
             set_scroll_line(artisttxt, PF_SCROLL_ARTIST);
