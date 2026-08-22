@@ -23,6 +23,7 @@
  */
 
 #include <stdlib.h>
+#include <limits.h>
 #include "config.h"
 #include "system.h"
 #include "button.h"
@@ -636,10 +637,16 @@ int button_apply_acceleration(const unsigned int data)
     if ((data & (1 << 31)) != 0)
     {
         /* read driver's velocity from data */
-        unsigned int v = data & 0xffffff;
+        unsigned long long v = data & 0xffffff;
 
         /* v = 28.4 fixed point */
         v = (WHEEL_ACCEL_FACTOR * v)>>(16-4);
+
+        /* Higher acceleration curves overflow 32-bit arithmetic at fast
+         * wheel speeds. 2048 is already enough to saturate any useful list
+         * movement while keeping the fourth power inside 64 bits. */
+        if (v > 2048)
+            v = 2048;
 
         /* Calculate real numbers item to scroll based upon acceleration
          * setting, use correct roundoff */
@@ -652,7 +659,10 @@ int button_apply_acceleration(const unsigned int data)
 #endif
 
         if (v > 1)
-            delta *= v;
+        {
+            v *= delta;
+            delta = v > INT_MAX ? INT_MAX : (int)v;
+        }
     }
 
     return delta;
