@@ -500,7 +500,10 @@ static int ata_transfer_sectors(uint64_t start,
                 ret = -7;
 
             if (ret != 0) {
-                perform_soft_reset();
+                if (perform_soft_reset()) {
+                    ret = -8;
+                    goto error;
+                }
                 goto retry;
             }
 
@@ -527,7 +530,10 @@ static int ata_transfer_sectors(uint64_t start,
 
                        We choose alternative 2.
                     */
-                    perform_soft_reset();
+                    if (perform_soft_reset()) {
+                        ret = -8;
+                        goto error;
+                    }
                     ret = -5;
                     goto retry;
                 }
@@ -562,7 +568,10 @@ static int ata_transfer_sectors(uint64_t start,
                     -- ATA specification
                 */
                 if ( status & (STATUS_BSY | STATUS_ERR | STATUS_DF) ) {
-                    perform_soft_reset();
+                    if (perform_soft_reset()) {
+                        ret = -8;
+                        goto error;
+                    }
                     ret = -6;
                     /* no point retrying IDNF, sector no. was invalid */
                     if (error & ERROR_IDNF)
@@ -581,7 +590,10 @@ static int ata_transfer_sectors(uint64_t start,
             int error;
 
             error = ATA_IN8(ATA_ERROR);
-            perform_soft_reset();
+            if (perform_soft_reset()) {
+                ret = -8;
+                goto error;
+            }
             ret = -4;
             /* no point retrying IDNF, sector no. was invalid */
             if (error & ERROR_IDNF)
