@@ -1168,7 +1168,7 @@ bool get_sleep_timer_active(void)
 
 int get_sleep_timer(void)
 {
-    if (sleeptimer_active && (sleeptimer_endtick >= current_tick))
+    if (sleeptimer_active && !TIME_AFTER(current_tick, sleeptimer_endtick))
         return (sleeptimer_endtick - current_tick) / HZ;
     else
         return 0;
