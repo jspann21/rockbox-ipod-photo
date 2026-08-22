@@ -71,6 +71,9 @@ static void cmd_pending(const unsigned char cmd, const uint32_t msdelay)
 
 void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
 {
+    if (len < 2)
+        return;
+
     unsigned int cmd = buf[1];
 
     /* We expect at least two bytes in the buffer, one for the
@@ -115,12 +118,11 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
          */
         case 0x01:
         {
-            unsigned char lingo = buf[2];
-
             /* This is sufficient even for Lingo 0x05, as we are
              * not actually reading from the extended bits for now
              */
             CHECKLEN(3);
+            unsigned char lingo = buf[2];
 
             /* Issuing this command exits any extended interface states
              * and resets authentication
@@ -431,9 +433,8 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
          */
         case 0x0F:
         {
-            unsigned char lingo = buf[2];
-
             CHECKLEN(3);
+            unsigned char lingo = buf[2];
 
             /* Supported lingos and versions are read from the lingo_versions
              * array
@@ -476,13 +477,12 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
          */
         case 0x13:
         {
+            CHECKLEN(14);
             uint32_t lingoes = get_u32(&buf[2]);
             uint32_t options = get_u32(&buf[6]);
             uint32_t deviceid = get_u32(&buf[0x0A]);
             bool seen_unsupported = false;
             unsigned char i;
-
-            CHECKLEN(14);
 
             /* Issuing this command exits any extended interface states */
             iap_interface_state_change(IST_STANDARD);
