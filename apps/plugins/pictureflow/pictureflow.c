@@ -5213,6 +5213,9 @@ enum plugin_status plugin_start(const void *parameter)
     if (init())
     {
         set_initial_slide(file_id3 ? file : NULL); /* may call splash */
+        /* Do not interpret the launch button's queued release/repeat or
+         * wheel events as PictureFlow navigation. */
+        rb->button_clear_queue();
 #ifdef USEGSLIB
         grey_show(true);
 #endif
