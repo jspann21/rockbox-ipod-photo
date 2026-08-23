@@ -215,6 +215,7 @@ void ICODE_ATTR ata_dma_irq_handler(void)
 /* This waits for an ATA interrupt using polling.
    In ATA_CONTROL, CONTROL_nIEN must be cleared.
  */
+#ifndef HAVE_ATA_DMA_IRQ
 static ICODE_ATTR int ata_wait_intrq(void)
 {
     long timeout = current_tick + HZ*ATA_DMA_TIMEOUT_SECONDS;
@@ -237,6 +238,7 @@ static ICODE_ATTR int ata_wait_intrq(void)
 
     return 0; /* timeout */
 }
+#endif
 
 /* This function checks if parameters are appropriate for DMA,
    and if they are, it sets up for DMA.
