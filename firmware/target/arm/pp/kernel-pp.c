@@ -27,13 +27,14 @@ void TIMER1(void)
     /* Run through the list of tick tasks (using main core) */
     TIMER1_VAL; /* Read value to ack IRQ */
 
-    /* Run through the list of tick tasks using main CPU core - 
-       wake up the COP through its control interface to provide pulse */
+    /* Run through the list of tick tasks using the main CPU core. */
     call_tick_tasks();
 
 #if NUM_CORES > 1
-    /* Pulse the COP */
-    core_wake(COP);
+    /* The COP has no periodic tick interrupt. Runnable work wakes it
+     * directly; only pulse it here when one of its bounded waits is due. */
+    if (core_has_expired_timeout(COP))
+        core_wake(COP);
 #endif /* NUM_CORES */
 }
 #endif

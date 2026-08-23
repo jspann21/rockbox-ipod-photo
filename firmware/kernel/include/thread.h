@@ -134,6 +134,9 @@ struct blocker_splay
 
 void core_idle(void);
 void core_wake(IF_COP_VOID(unsigned int core));
+#if NUM_CORES > 1
+bool core_has_expired_timeout(unsigned int core);
+#endif
 
 /* Allocate a thread in the scheduler */
 #define CREATE_THREAD_FROZEN   0x00000001 /* Thread is frozen at create time */

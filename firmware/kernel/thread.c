@@ -967,6 +967,17 @@ static FORCE_INLINE void check_tmo_expired(struct core_entry *corep)
         check_tmo_expired_inner(corep);
 }
 
+#if NUM_CORES > 1
+/* Return true when a sleeping thread on another core may be due to run.
+ * Runnable work is woken directly by core_schedule_wakeup(); this helper is
+ * for targets whose periodic timer belongs to only one processor. */
+bool core_has_expired_timeout(unsigned int core)
+{
+    return !TIME_BEFORE(current_tick,
+                        __core_id_entry(core)->next_tmo_check);
+}
+#endif
+
 /*---------------------------------------------------------------------------
  * Prepares a the current thread to sleep forever or for the given duration.
  *---------------------------------------------------------------------------
