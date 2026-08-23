@@ -821,7 +821,7 @@ static int ata_transfer_sectors(uint64_t start,
     /* The storage thread can block indefinitely while ATA is fully off. Once
      * a client has successfully woken the device, wake that thread so it can
      * arm the new exact idle deadline instead of leaving the adapter on. */
-    if (ret == 0 && woke_from_low_power)
+    if (woke_from_low_power && ata_state == ATA_ON)
         storage_post_event(Q_STORAGE_REEVALUATE, 0);
 
     return ret;
