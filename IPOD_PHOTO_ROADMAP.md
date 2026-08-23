@@ -127,10 +127,9 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       controller after timeouts; reduce PMU polling to 1 Hz while retaining
       faster accessory detection; and include temporary backlight use in runtime
       estimates.
-- [x] **Development baseline and continuous validation:** base development
-      directly on official Rockbox history, build `ipodcolor` after each useful
-      software batch, and install development builds to exercise boot, database
-      generation, iFlash storage, and USB transfer on the physical target.
+- [x] **Development baseline:** base development directly on official Rockbox
+      history and retain target-specific changes behind explicit configuration
+      guards.
 
 ## Reliability and maintainability
 
@@ -141,7 +140,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [ ] Keep Photo-specific behavior isolated from generic Rockbox code while
       removing avoidable allocations and large stack buffers on the 32 MB target.
 - [ ] Extend useful crash information without continuous disk logging; the disk
-      debug screen now provides volatile A1099 cache, ATA, IRQ, and storage-wakeup
+      debug screen provides ATA recovery state and the separate PP5020
+      performance page provides volatile cache, DMA, IRQ, and storage-wakeup
       counters.
 
 ## Storage and iFlash compatibility
@@ -186,6 +186,9 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 
 ## Practical validation loop
 
+- [ ] Build and package the current `ipodcolor` HEAD, then record its source
+      commit and artifact hashes before treating the new IRQ/deadline path as
+      qualified.
 - [ ] Smoke-test playback, wheel, hold, shutdown, suspend/resume, and USB after
       the latest kernel, power, LCD, and ATA batch; test each changed behavior
       directly and use a broader pass for storage, power, USB, or other
