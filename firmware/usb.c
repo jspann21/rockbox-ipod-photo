@@ -616,7 +616,17 @@ void usb_status_event(int current_status)
         timeout_register(&tmo, usb_status_tmo_callback, USB_DEBOUNCE_TIME,
                          (intptr_t)&last_status);
 #else
+        /* Status events can be queued behind transfer notifications.  Remove
+         * both states from the whole queue before posting the newest one so
+         * a rapid cable bounce cannot replay an obsolete transition after
+         * the notification that delayed it. */
+#ifdef HAVE_EXTENDED_MESSAGING_AND_NAME
+        while (queue_peek_ex(&usb_queue, NULL, QPEEK_REMOVE_EVENTS,
+                             QPEEK_FILTER2(USB_EXTRACTED, USB_INSERTED)))
+            ;
+#else
         queue_remove_from_head(&usb_queue, current_status);
+#endif
         queue_post(&usb_queue, current_status, 0);
 #endif
         restore_irq(oldstatus);

@@ -330,7 +330,7 @@ static void send_battery_level_event(int percent)
 
 #if CONFIG_BATTERY_MEASURE & VOLTAGE_MEASURE
 /* Look into the percent_to_volt_* table and estimate the battery level. */
-static int voltage_to_percent(int voltage, const short* table)
+static int voltage_to_percent(int voltage, const unsigned short* table)
 {
     if (voltage <= table[0]) {
         return 0;
@@ -344,6 +344,10 @@ static int voltage_to_percent(int voltage, const short* table)
 
         while (i < 10 && table[i+1] < voltage)
             i++;
+
+        /* Skip a malformed/flat interval instead of dividing by zero. */
+        if (table[i+1] <= table[i])
+            return i * 10;
 
         /* interpolate linear between the smaller and greater value */
         /* Tens digit, 10% per entry,  ones digit: interpolated */
