@@ -109,6 +109,17 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [x] Keep short PP5020 ATA DMA completions responsive without yielding, fall
       back to PIO after DMA timeouts, and tolerate rejected optional adapter
       features without weakening required transfer-mode checks.
+- [x] Validate tagtree navigation state, release invalid cache entries safely,
+      propagate dynamic-entry failures, and initialize only the shuffle records
+      actually used rather than clearing the full plugin buffer.
+- [x] Serialize ATA power-off and wake recovery, reset negotiated DMA state after
+      reconnect, and power down a cold-start rail when device probing fails.
+- [x] Bound and retry PP502x USB controller resets, harden USB-storage reconnect
+      and media-removal handling, and reject malformed USB-iAP controls during
+      teardown.
+- [x] Reclaim list width when no icon column is needed, redraw PictureFlow track
+      lists only when their visible state changes, and schedule car-adapter
+      delayed resume without a permanent 100 Hz callback.
 
 ## Reliability and maintainability
 
@@ -139,6 +150,9 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [ ] Check album-art caching, USB writes, eject, and reconnect.
 - [x] Back off failed ATA idle commands, stop storage ticks after power-off, and
       pace PictureFlow background cache work to avoid retry/wakeup storms.
+- [x] Revalidate ATA power state under the storage mutex before cutting power,
+      restore failed USB wake attempts, and renegotiate DMA cleanly after a new
+      IDENTIFY response.
 - [ ] Measure the current 5 ms ATA DMA busy-poll threshold on the installed
       ATA1 before changing its USB-throughput/UI-responsiveness tradeoff.
 
@@ -148,6 +162,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       hardware testing for final sensitivity tuning.
 - [x] Eliminate unchanged generic-list edge redraws and unchanged PictureFlow
       idle framebuffer transfers, and suppress clean skin-engine LCD updates.
+- [x] Avoid reserving a blank icon column in native lists and suppress unchanged
+      PictureFlow track-list framebuffer transfers.
 - [ ] Improve menu, browser, and now-playing geometry for 220x176 rather than
       shrinking layouts designed for 320x240.
 - [ ] Improve typography, spacing, icons, focus indication, and status layout.
@@ -188,6 +204,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       and reinitialize the I2C controller after a stuck transaction.
 - [x] Bound Color LCD controller waits so failed hardware handshakes cannot spin
       forever.
+- [x] Replace continuous car-adapter resume polling with a cancelable one-shot
+      deadline and recover cleanly from failed USB controller reset attempts.
 - [ ] Check charging, suspend, resume, and shutdown behavior after power changes.
 - [ ] Exercise serial remotes, docks, and car accessories against the iAP fixes.
 - [ ] Leave USB digital audio and bootloader changes as later research work.
