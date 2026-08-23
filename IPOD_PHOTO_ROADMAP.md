@@ -117,8 +117,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [x] **A1099 performance telemetry:** retain RAM-only aggregate measurements
       for whole-cache maintenance, ATA DMA latency and busy polling, IRQ quality,
       PIO recovery, and storage wakeup sources; expose the counters and detected
-      adapter policy in the existing disk debug screen without continuous writes
-      to the SD card.
+      adapter policy as per-boot debug data without continuous writes to the SD
+      card or an unsafe single-core reset of dual-core counters.
 - [x] **PMU, battery, and I2C robustness:** preserve the last valid ADC value
       after I2C failure; allow realistic modern replacement-battery capacities
       without changing voltage calibration; propagate I2C/RTC failures; validate

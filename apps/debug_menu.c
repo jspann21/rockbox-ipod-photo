@@ -1930,8 +1930,7 @@ static int pp5020_perf_callback(int btn, struct gui_synclist *lists)
     struct pp5020_perf_stats perf;
 
     (void)lists;
-    if (btn == ACTION_STD_CONTEXT)
-        pp5020_perf_reset();
+    (void)btn;
 
     pp5020_perf_get(&perf);
     simplelist_reset_lines();
@@ -1972,7 +1971,7 @@ static int pp5020_perf_callback(int btn, struct gui_synclist *lists)
 static bool dbg_pp5020_perf(void)
 {
     struct simplelist_info info;
-    simplelist_info_init(&info, "PP5020 perf [CONTEXT resets]", 1, NULL);
+    simplelist_info_init(&info, "PP5020 performance since boot", 1, NULL);
     info.action_callback = pp5020_perf_callback;
     info.scroll_all = true;
     return simplelist_show_list(&info);

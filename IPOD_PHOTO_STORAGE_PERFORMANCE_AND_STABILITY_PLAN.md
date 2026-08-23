@@ -27,10 +27,10 @@ The implementation deliberately stays narrower than the experimental roadmap:
 - The ATA-only storage thread waits for exact idle, retry, and delayed-power-off
   deadlines, blocks when no work is pending, and is reawakened after a client
   powers the adapter back on.
-- The existing Debug > View disk info screen reports configured/current DMA
-  mode, active policy, recovery results, DMA/cache timing, IRQ quality, and
-  storage wakeup sources using RAM-only aggregate counters. No event log or
-  persistent logging was added.
+- Debug > View disk info reports configured/current DMA mode, active policy,
+  and recovery results. A separate View PP5020 performance page reports
+  per-boot DMA/cache timing, IRQ quality, and storage wakeup sources using
+  RAM-only aggregate counters. No event log or persistent logging was added.
 - UDMA2, Apple PIO timings, whole-cache DMA maintenance, write-cache behavior,
   and card formatting are unchanged.
 

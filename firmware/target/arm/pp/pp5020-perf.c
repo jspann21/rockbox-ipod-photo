@@ -10,7 +10,6 @@
 #include "system.h"
 #include "pp5020-perf.h"
 #include <limits.h>
-#include <string.h>
 
 static struct pp5020_perf_stats perf_core[NUM_CORES] NOCACHEBSS_ATTR;
 static struct pp5020_perf_stats perf_device NOCACHEBSS_ATTR;
@@ -40,13 +39,6 @@ static inline void record_timing(uint64_t *calls, uint64_t *total,
     add_u64_sat(total, elapsed);
     if (elapsed > *maximum)
         *maximum = elapsed;
-}
-
-void pp5020_perf_reset(void)
-{
-    int oldlevel = disable_interrupt_save(IRQ_FIQ_STATUS);
-    memset(perf_core, 0, sizeof(perf_core));
-    restore_interrupt(oldlevel);
 }
 
 void pp5020_perf_get(struct pp5020_perf_stats *stats)

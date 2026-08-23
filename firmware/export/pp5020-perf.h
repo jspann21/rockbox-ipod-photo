@@ -43,7 +43,6 @@ struct pp5020_perf_stats
 
 };
 
-void pp5020_perf_reset(void);
 void pp5020_perf_get(struct pp5020_perf_stats *stats);
 
 void pp5020_perf_set_ata_info(const uint16_t *identify, bool is_ssd,
