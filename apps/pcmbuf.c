@@ -200,6 +200,9 @@ static int codec_thread_priority = PRIORITY_PLAYBACK;
 extern void audio_pcmbuf_position_callback(unsigned long elapsed,
                                            off_t offset, unsigned int key);
 extern void audio_pcmbuf_track_change(bool pcmbuf);
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+extern void audio_pcmbuf_underrun(void);
+#endif
 extern bool audio_pcmbuf_may_play(void);
 extern void audio_pcmbuf_sync_position(void);
 
@@ -798,10 +801,11 @@ static void pcmbuf_pcm_callback(const void **start, size_t *size)
     /*- Process the chunk that just finished -*/
     size_t index = chunk_ridx;
     struct chunkdesc *desc = current_desc;
+    bool track_change = false;
 
     if (desc)
     {
-        bool track_change = index == chunk_transidx;
+        track_change = index == chunk_transidx;
 
         /* If last chunk in the track, notify of track change */
         if (track_change)
@@ -836,6 +840,14 @@ static void pcmbuf_pcm_callback(const void **start, size_t *size)
                                            desc->pos_key);
         }
     }
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+    else if (desc && !track_change && !fade_out_complete)
+    {
+        /* The active PCM stream exhausted queued audio without reaching a
+         * marked track boundary. Defer logging out of FIQ context. */
+        audio_pcmbuf_underrun();
+    }
+#endif
 }
 
 static void pcmbuf_sampr_callback(uint32_t sampr)

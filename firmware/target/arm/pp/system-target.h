@@ -52,6 +52,14 @@ bool usb_plugged(void);
 void firewire_insert_int(void);
 void usb_insert_int(void);
 
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+typedef void (*pcm_track_change_irq_callback_type)(void);
+void pp5020_pcm_track_change_irq_init(
+    pcm_track_change_irq_callback_type callback);
+void pp5020_defer_pcm_track_change(void);
+void pp5020_clear_pcm_track_change_irq(void);
+#endif
+
 static inline void udelay(unsigned usecs)
 {
     unsigned stop = USEC_TIMER + usecs;

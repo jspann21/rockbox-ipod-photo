@@ -34,6 +34,36 @@
 #include "pp5020-perf.h"
 #endif
 
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+/* PP5020 low interrupt bit 29 is unassigned in Rockbox's PP5020 interrupt
+ * definitions. Reserve it only for the Photo build's forced normal IRQ; the
+ * real inter-core mailbox source is bit 4 and must not be repurposed. */
+#define PCM_TRACK_CHANGE_IRQ  29
+#define PCM_TRACK_CHANGE_MASK (1ul << PCM_TRACK_CHANGE_IRQ)
+
+static pcm_track_change_irq_callback_type pcm_track_change_irq_callback;
+
+void pp5020_pcm_track_change_irq_init(
+    pcm_track_change_irq_callback_type callback)
+{
+    CPU_INT_DIS = PCM_TRACK_CHANGE_MASK;
+    INT_FORCED_CLR = PCM_TRACK_CHANGE_MASK;
+    CPU_INT_PRIORITY &= ~PCM_TRACK_CHANGE_MASK;
+    pcm_track_change_irq_callback = callback;
+    CPU_INT_EN = PCM_TRACK_CHANGE_MASK;
+}
+
+void ICODE_ATTR pp5020_defer_pcm_track_change(void)
+{
+    INT_FORCED_SET = PCM_TRACK_CHANGE_MASK;
+}
+
+void pp5020_clear_pcm_track_change_irq(void)
+{
+    INT_FORCED_CLR = PCM_TRACK_CHANGE_MASK;
+}
+#endif
+
 /* Bit 0 - 20: Cached Address */
 #define CACHE_ADDRESS_MASK ((1<<21)-1)
 /* Bit 22: Cache line dirty */
@@ -81,6 +111,13 @@ void __attribute__((interrupt("IRQ"))) irq_handler(void)
 #ifdef HAVE_ATA_DMA_IRQ
         else if (CPU_INT_STAT & IDE_MASK) {
             ata_dma_irq_handler();
+        }
+#endif
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+        else if (INT_FORCED_STAT & PCM_TRACK_CHANGE_MASK) {
+            INT_FORCED_CLR = PCM_TRACK_CHANGE_MASK;
+            if (pcm_track_change_irq_callback)
+                pcm_track_change_irq_callback();
         }
 #endif
 #if defined(IPOD_MINI) /* Mini 1st gen only, mini 2nd gen uses iPod 4G code */

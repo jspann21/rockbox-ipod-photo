@@ -49,6 +49,9 @@
 #include "general.h"
 #include "iap-usb.h"
 #include "string-extra.h"
+#ifdef HAVE_PP5020_PERF
+#include "pp5020-perf.h"
+#endif
 #include <stdio.h>
 
 #ifdef HAVE_TAGCACHE
@@ -339,9 +342,15 @@ static bool pause_on_track_change = false;
 /* Track change notification */
 static struct
 {
-    unsigned int in;  /* Number of pcmbuf posts (audio isr) */
+    volatile unsigned int in; /* Number of pcmbuf posts (audio FIQ) */
     unsigned int out; /* Number of times audio has read the difference */
-} track_change = { 0, 0 };
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+    volatile unsigned int underrun_in;
+    unsigned int underrun_out;
+    uint32_t notify_us;
+    bool notify_valid;
+#endif
+} track_change = { 0 };
 
 /** Codec status **/
 /* Did the codec notify us it finished while we were paused or while still
@@ -1175,6 +1184,20 @@ static inline bool audio_pcmbuf_track_change_scan(void)
     if (track_change.out != track_change.in)
     {
         track_change.out++;
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+        if (track_change.notify_valid)
+        {
+            pp5020_perf_record_pcm_notify(USEC_TIMER - track_change.notify_us);
+            if (track_change.out == track_change.in)
+                track_change.notify_valid = false;
+        }
+        else
+        {
+            /* An unrelated event beat the forced IRQ to the audio thread. */
+            pp5020_perf_record_pcm_notify(0);
+            pp5020_perf_record_pcm_missed();
+        }
+#endif
         return true;
     }
 
@@ -1184,14 +1207,35 @@ static inline bool audio_pcmbuf_track_change_scan(void)
 /* Clear outstanding track change posts */
 static inline void audio_pcmbuf_track_change_clear(void)
 {
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+    int oldlevel = disable_interrupt_save(IRQ_FIQ_STATUS);
+    pp5020_clear_pcm_track_change_irq();
+#endif
     track_change.out = track_change.in;
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+    track_change.underrun_out = track_change.underrun_in;
+    track_change.notify_valid = false;
+    restore_interrupt(oldlevel);
+#endif
 }
 
 /* Post a track change notification - called by audio ISR */
 static inline void audio_pcmbuf_track_change_post(void)
 {
     track_change.in++;
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+    asm volatile ("" ::: "memory");
+    pp5020_defer_pcm_track_change();
+#endif
 }
+
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+/* The system layer calls this from a normal IRQ, never from the PCM FIQ. */
+static void audio_pcmbuf_track_change_irq(void)
+{
+    audio_queue_post(Q_AUDIO_PCM_DEFERRED, USEC_TIMER);
+}
+#endif
 
 
 /** --- Helper functions --- **/
@@ -1209,6 +1253,9 @@ static void audio_clear_track_notifications(void)
         { Q_AUDIO_CODEC_SEEK_COMPLETE, Q_AUDIO_CODEC_COMPLETE },
         /* track change messages */
         { Q_AUDIO_TRACK_CHANGED, Q_AUDIO_TRACK_CHANGED },
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+        { Q_AUDIO_PCM_DEFERRED, Q_AUDIO_PCM_DEFERRED },
+#endif
     };
 
     const int filter_count = ARRAYLEN(filter_list) - 1;
@@ -3595,6 +3642,37 @@ void audio_playback_handler(struct queue_event *ev)
             audio_on_track_changed();
             break;
 
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+        case Q_AUDIO_PCM_DEFERRED:
+        {
+            unsigned int pending = track_change.in - track_change.out;
+            unsigned int underruns =
+                track_change.underrun_in - track_change.underrun_out;
+
+            pp5020_perf_record_pcm_deferred();
+            if (pending == 0 && underruns == 0)
+                pp5020_perf_record_pcm_duplicate();
+
+            /* Coalescing is safe because the audio loop consumes every
+             * producer count; record transitions without a dedicated wake. */
+            while (pending > 1)
+            {
+                pp5020_perf_record_pcm_missed();
+                pending--;
+            }
+
+            while (track_change.underrun_out != track_change.underrun_in)
+            {
+                track_change.underrun_out++;
+                pp5020_perf_record_pcm_underrun();
+            }
+
+            track_change.notify_us = (uint32_t)ev->data;
+            track_change.notify_valid = track_change.out != track_change.in;
+            break;
+        }
+#endif
+
         /** Control messages **/
         case Q_AUDIO_PLAY:
             LOGFQUEUE("playback < Q_AUDIO_PLAY");
@@ -3726,10 +3804,14 @@ void audio_playback_handler(struct queue_event *ev)
             }
             else
             {
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+                queue_wait(&audio_queue, ev);
+#else
                 /* If doing auto skip, poll pcmbuf track notifications a bit
                    faster to promply detect the transition */
                 queue_wait_w_tmo(&audio_queue, ev,
                     skip_pending == TRACK_SKIP_NONE ? HZ/2 : HZ/10);
+#endif
             }
             break;
 
@@ -3874,9 +3956,22 @@ void audio_pcmbuf_track_change(bool pcmbuf)
     {
         /* Safe to post directly to the queue */
         LOGFQUEUE("pcmbuf > audio Q_AUDIO_TRACK_CHANGED");
+#ifdef HAVE_PP5020_PERF
+        pp5020_perf_record_pcm_notify(0);
+#endif
         audio_queue_post(Q_AUDIO_TRACK_CHANGED, 0);
     }
 }
+
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+/* Record a genuine mixer runout without calling the logger from FIQ. */
+void audio_pcmbuf_underrun(void)
+{
+    track_change.underrun_in++;
+    asm volatile ("" ::: "memory");
+    pp5020_defer_pcm_track_change();
+}
+#endif
 
 /* May pcmbuf start PCM playback when the buffer is full enough? */
 bool audio_pcmbuf_may_play(void)
@@ -4343,6 +4438,10 @@ unsigned int playback_status(void)
 void INIT_ATTR playback_init(void)
 {
     logf("playback: initializing");
+
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+    pp5020_pcm_track_change_irq_init(audio_pcmbuf_track_change_irq);
+#endif
 
     /* Initialize the track buffering system */
     mutex_init(&id3_mutex);

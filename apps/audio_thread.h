@@ -43,6 +43,9 @@ enum
 
     /* pcmbuf -> audio */
     Q_AUDIO_TRACK_CHANGED,
+#ifdef HAVE_PCM_TRACK_CHANGE_IRQ
+    Q_AUDIO_PCM_DEFERRED,
+#endif
 
     /* audio -> audio */
     Q_AUDIO_FILL_BUFFER,        /* continue buffering next track */
