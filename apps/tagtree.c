@@ -1989,6 +1989,12 @@ static int load_root(struct tree_context *c)
     if (c->dirlevel == 0)
         c->currextra = rootmenu;
 
+    if (c->currextra < 0 || c->currextra >= menu_count)
+    {
+        logf("tagtree menu index out of range: %d", c->currextra);
+        return 0;
+    }
+
     menu = menus[c->currextra];
     if (menu == NULL)
         return 0;
@@ -2135,6 +2141,8 @@ int tagtree_enter(struct tree_context* c, bool is_visible)
     bool adjust_selection = true;
 
     dptr = tagtree_get_entry(c, c->selected_item);
+    if (!dptr)
+        return 0;
 
     c->dirfull = false;
     seek = dptr->extraseek;
@@ -2145,9 +2153,29 @@ int tagtree_enter(struct tree_context* c, bool is_visible)
             return 0;
         srand(current_tick);
         dptr = (tagtree_get_entry(c, c->special_entry_count+(rand() % (c->filesindir-c->special_entry_count))));
+        if (!dptr)
+            return 0;
         seek = dptr->extraseek;
     }
     newextra = dptr->newtable;
+
+    if (c->currtable == TABLE_ROOT)
+    {
+        if (newextra == TABLE_ROOT &&
+            (seek < 0 || seek >= menu_count || !menus[seek]))
+        {
+            logf("tagtree linked menu index out of range: %d", seek);
+            return 0;
+        }
+
+        if (newextra == TABLE_NAVIBROWSE &&
+            (!menu || seek < 0 || seek >= menu->itemcount ||
+             !menu->items[seek]))
+        {
+            logf("tagtree item index out of range: %d", seek);
+            return 0;
+        }
+    }
 
     if (c->dirlevel >= MAX_DIR_LEVELS)
         return 0;
