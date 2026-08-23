@@ -76,13 +76,13 @@ static void read_id3_tags(int fd, struct mp3entry* id3)
     id3->title    = NULL;
     id3->filesize = filesize(fd);
     id3->id3v2len = getid3v2len(fd);
+    id3->first_frame_offset = id3->id3v2len;
     id3->vbr      = false;   /* All TTA files are CBR */
 
     /* first get id3v2 tags. if no id3v2 tags ware found, get id3v1 tags */
     if (id3->id3v2len)
     {
         setid3v2title(fd, id3);
-        id3->first_frame_offset = id3->id3v2len;
         return;
     }
     setid3v1title(fd, id3);
