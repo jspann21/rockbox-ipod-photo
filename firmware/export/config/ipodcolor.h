@@ -212,11 +212,12 @@
 #define HAVE_IAP_MULTIPORT
 #define HAVE_SERIAL
 
-/* DMA is used only for reading on PP502x because although reads are ~8x faster
- * writes appear to be ~25% slower.
- */
+/* Enable the PP5020 DMA path. Reads and suitably aligned writes to devices
+ * classified as solid-state can use DMA; unstable DMA is quarantined to PIO
+ * for the remainder of the current firmware boot. */
 #ifndef BOOTLOADER
 #define HAVE_ATA_DMA
+#define HAVE_ATA_DMA_RECOVERY
 #endif
 
 /* Define this, if you can switch on/off the lineout */

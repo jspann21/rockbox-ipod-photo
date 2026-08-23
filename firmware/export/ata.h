@@ -224,9 +224,24 @@ static inline int ata_disk_can_sleep(void)
 int ata_flush(void);
 
 #ifdef HAVE_ATA_DMA
-/* Returns current DMA mode */
+/* Returns the DMA mode most recently configured by set_features(). */
 int ata_get_dma_mode(void);
 #endif /* HAVE_ATA_DMA */
+
+#ifdef HAVE_ATA_DMA_RECOVERY
+/* Small, RAM-only failure diagnostics. Counters saturate and reset at boot. */
+struct ata_dma_recovery_stats
+{
+    uint32_t dma_finish_failures;
+    uint32_t pio_recovery_successes;
+    uint32_t pio_recovery_failures;
+    int configured_dma_mode;
+    int identify_current_dma_mode;
+    bool dma_quarantined;
+};
+
+void ata_get_dma_recovery_stats(struct ata_dma_recovery_stats *stats);
+#endif /* HAVE_ATA_DMA_RECOVERY */
 
 #ifdef HAVE_ATA_SMART
 /* Returns current S.M.A.R.T. data */

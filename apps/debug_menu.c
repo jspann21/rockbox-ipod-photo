@@ -1425,6 +1425,19 @@ static int disk_callback(int btn, struct gui_synclist *lists)
     return btn;
 }
 #elif  (CONFIG_STORAGE & STORAGE_ATA)
+#ifdef HAVE_ATA_DMA_RECOVERY
+static void ata_format_dma_mode(char *buf, size_t size, int mode)
+{
+    if (mode == 0)
+        strmemccpy(buf, "none", size);
+    else if (mode == 0xff)
+        strmemccpy(buf, "CE-ATA", size);
+    else
+        snprintf(buf, size, "%s%d", (mode & 0x40) ? "UDMA" : "MDMA",
+                 mode & 7);
+}
+#endif
+
 static int disk_callback(int btn, struct gui_synclist *lists)
 {
     static const char atanums[] = { " 0 1 2 3 4 5 6" };
@@ -1497,7 +1510,7 @@ static int disk_callback(int btn, struct gui_synclist *lists)
             "Free: %lu MB", (unsigned long)(free / 1024));
 #endif
 
-    simplelist_addline("SSD detected: %s", ata_disk_isssd() ? "yes" : "no");
+    simplelist_addline("SSD heuristic: %s", ata_disk_isssd() ? "yes" : "no");
     simplelist_addline(
              "Spinup time: %d ms", storage_spinup_time() * (1000/HZ));
     i = identify_info[82] & (1<<3);
@@ -1584,6 +1597,31 @@ static int disk_callback(int btn, struct gui_synclist *lists)
     simplelist_addline(
              "Cluster size: %d bytes", volume_get_cluster_size(IF_MV(0)));
 #ifdef HAVE_ATA_DMA
+#ifdef HAVE_ATA_DMA_RECOVERY
+    struct ata_dma_recovery_stats dma_stats;
+    char configured_mode[12];
+    char identify_mode[12];
+
+    ata_get_dma_recovery_stats(&dma_stats);
+    ata_format_dma_mode(configured_mode, sizeof(configured_mode),
+                        dma_stats.configured_dma_mode);
+    ata_format_dma_mode(identify_mode, sizeof(identify_mode),
+                        dma_stats.identify_current_dma_mode);
+    simplelist_addline("DMA configured/current: %s/%s",
+                       configured_mode, identify_mode);
+    if (dma_stats.dma_quarantined) {
+        simplelist_addline("DMA active policy: PIO (timeout quarantine)");
+    } else {
+        simplelist_addline("DMA active policy: %s",
+                           dma_stats.configured_dma_mode ?
+                           configured_mode : "PIO");
+    }
+    simplelist_addline("DMA timeouts: %lu",
+        (unsigned long)dma_stats.dma_finish_failures);
+    simplelist_addline("PIO recovery ok/fail: %lu/%lu",
+        (unsigned long)dma_stats.pio_recovery_successes,
+        (unsigned long)dma_stats.pio_recovery_failures);
+#else
     i = ata_get_dma_mode();
     if (i == 0) {
         simplelist_setline("DMA not enabled");
@@ -1595,6 +1633,7 @@ static int disk_callback(int btn, struct gui_synclist *lists)
                 (i & 0x40) ? "UDMA" : "MDMA",
                 '0' + (i & 7));
     }
+#endif /* HAVE_ATA_DMA_RECOVERY */
 #endif /* HAVE_ATA_DMA */
     i = identify_info[83] & (1 << 2);
     simplelist_addline(

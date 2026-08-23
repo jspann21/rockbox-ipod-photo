@@ -111,6 +111,37 @@ static uint8_t  multisectors; /* number of supported multisectors */
 static int dma_mode = 0;
 #endif
 
+#ifdef HAVE_ATA_DMA_RECOVERY
+static bool dma_quarantined;
+static struct ata_dma_recovery_stats dma_recovery_stats;
+
+/* Photo transfer and PIO-recovery polls share one absolute phase deadline.
+ * This state is only changed while ata_mutex is held. */
+static bool ata_wait_deadline_active;
+static long ata_wait_deadline;
+
+static inline void ata_set_wait_deadline(long deadline)
+{
+    ata_wait_deadline = deadline;
+    ata_wait_deadline_active = true;
+}
+
+static inline long ata_limit_wait_timeout(long timeout)
+{
+    if (ata_wait_deadline_active &&
+        TIME_BEFORE(ata_wait_deadline, timeout))
+        return ata_wait_deadline;
+
+    return timeout;
+}
+
+static inline void ata_saturating_increment(uint32_t *counter)
+{
+    if (*counter != UINT32_MAX)
+        (*counter)++;
+}
+#endif /* HAVE_ATA_DMA_RECOVERY */
+
 #ifdef HAVE_ATA_POWER_OFF
 static int ata_power_on(void);
 #endif
@@ -146,6 +177,10 @@ static ICODE_ATTR int wait_for_bsy(void)
 {
     long timeout = current_tick + HZ*30;
 
+#ifdef HAVE_ATA_DMA_RECOVERY
+    timeout = ata_limit_wait_timeout(timeout);
+#endif
+
     do
     {
         if (!(ATA_IN8(ATA_STATUS) & STATUS_BSY))
@@ -165,6 +200,9 @@ static ICODE_ATTR int wait_for_rdy(void)
         return 0;
 
     timeout = current_tick + HZ*10;
+#ifdef HAVE_ATA_DMA_RECOVERY
+    timeout = ata_limit_wait_timeout(timeout);
+#endif
 
     do
     {
@@ -306,13 +344,36 @@ static ICODE_ATTR int wait_for_start_of_transfer(void)
             (STATUS_BSY|STATUS_DRQ|STATUS_ERR|STATUS_DF)) == STATUS_DRQ;
 }
 
-static ICODE_ATTR int wait_for_end_of_transfer(void)
+enum ata_end_result
 {
+    ATA_END_OK = 0,
+    ATA_END_STATUS_ERROR,
+    ATA_END_TIMEOUT,
+};
+
+static ICODE_ATTR enum ata_end_result
+wait_for_end_of_transfer(uint8_t *status, uint8_t *error,
+                         bool *error_valid)
+{
+    *status = 0;
+    *error = 0;
+    *error_valid = false;
+
     if (!wait_for_bsy())
-        return 0;
-    return (ATA_IN8(ATA_ALT_STATUS) &
-            (STATUS_BSY|STATUS_RDY|STATUS_DF|STATUS_DRQ|STATUS_ERR))
-           == STATUS_RDY;
+        return ATA_END_TIMEOUT;
+
+    *status = ATA_IN8(ATA_ALT_STATUS);
+    if (!(*status & STATUS_BSY) && (*status & STATUS_ERR))
+    {
+        *error = ATA_IN8(ATA_ERROR);
+        *error_valid = true;
+    }
+
+    if ((*status &
+         (STATUS_BSY|STATUS_RDY|STATUS_DF|STATUS_DRQ|STATUS_ERR)) == STATUS_RDY)
+        return ATA_END_OK;
+
+    return ATA_END_STATUS_ERROR;
 }
 
 #if (CONFIG_LED == LED_REAL)
@@ -397,14 +458,22 @@ static int ata_transfer_sectors(uint64_t start,
                                 void* inbuf,
                                 int write)
 {
-    int ret = 0;
-    long timeout;
+    int ret = -9; /* A positive-length request has not completed yet. */
+    long timeout = 0;
     int count;
     void* buf;
     long spinup_start = current_tick;
+    bool command_issued = false;
+    int sectors_completed = 0;
 #ifdef HAVE_ATA_DMA
     bool usedma = false;
     bool dma_failed = false;
+#endif
+#ifdef HAVE_ATA_DMA_RECOVERY
+    bool dma_recovery = false;
+    bool pio_recovery_issued = false;
+    bool saved_deadline_active = ata_wait_deadline_active;
+    long saved_deadline = ata_wait_deadline;
 #endif
 
     if (incount == 0)
@@ -440,6 +509,9 @@ static int ata_transfer_sectors(uint64_t start,
     logf("ata XFER (%d) %d @ %llu", write, incount, start);
 
     timeout = current_tick + READWRITE_TIMEOUT;
+#ifdef HAVE_ATA_DMA_RECOVERY
+    ata_set_wait_deadline(timeout);
+#endif
 
     ATA_OUT8(ATA_SELECT, ata_device);
     if (!wait_for_rdy())
@@ -451,18 +523,31 @@ static int ata_transfer_sectors(uint64_t start,
  retry:
     buf = inbuf;
     count = incount;
+    command_issued = false;
+    sectors_completed = 0;
 #ifdef HAVE_ATA_DMA
     /* A failed attempt may have selected DMA. Re-evaluate setup on every
      * retry so a setup failure reliably falls back to PIO. */
     usedma = false;
 #endif
     while (TIME_BEFORE(current_tick, timeout)) {
-        ret = 0;
+        ret = -9;
         keep_ata_active();
+
+#ifdef HAVE_ATA_DMA_RECOVERY
+        if (dma_recovery && pio_recovery_issued) {
+            ret = -10;
+            goto error;
+        }
+#endif
 
 #ifdef HAVE_ATA_DMA
         /* If DMA is supported and parameters are ok for DMA, use it */
-        if (!dma_failed && dma_mode &&
+        bool dma_allowed = !dma_failed && dma_mode;
+#ifdef HAVE_ATA_DMA_RECOVERY
+        dma_allowed = dma_allowed && !dma_quarantined;
+#endif
+        if (dma_allowed &&
             ata_dma_setup(inbuf, incount * log_sector_size, write))
             usedma = true;
 #endif
@@ -506,6 +591,12 @@ static int ata_transfer_sectors(uint64_t start,
 #endif
         }
 
+        command_issued = true;
+#ifdef HAVE_ATA_DMA_RECOVERY
+        if (dma_recovery)
+            pio_recovery_issued = true;
+#endif
+
         /* wait at least 400ns between writing command and reading status */
         __asm__ volatile ("nop");
         __asm__ volatile ("nop");
@@ -515,22 +606,35 @@ static int ata_transfer_sectors(uint64_t start,
 
 #ifdef HAVE_ATA_DMA
         if (usedma) {
-            if (!ata_dma_finish())
+            if (!ata_dma_finish()) {
                 ret = -7;
-
-            if (ret != 0) {
+#ifdef HAVE_ATA_DMA_RECOVERY
+                ata_saturating_increment(
+                    &dma_recovery_stats.dma_finish_failures);
+                dma_quarantined = true;
+#endif
                 /* Some flash adapters advertise a DMA mode that is unstable
                  * in practice. Recover the controller, then retry this
                  * request through PIO instead of repeating the same failed
                  * DMA transaction until the overall timeout expires. */
                 dma_failed = true;
+#ifdef HAVE_ATA_DMA_RECOVERY
+                dma_recovery = true;
+#endif
                 if (perform_soft_reset()) {
                     ret = -8;
                     goto error;
                 }
+#ifdef HAVE_ATA_DMA_RECOVERY
+                /* The one Photo PIO recovery gets a fresh transfer budget
+                 * after reset/reinitialization has succeeded. */
+                timeout = current_tick + READWRITE_TIMEOUT;
+                ata_set_wait_deadline(timeout);
+#endif
                 goto retry;
             }
 
+            sectors_completed = incount;
             if (ata_state == ATA_SPINUP) {
                 ata_state = ATA_ON;
                 spinup_time = current_tick - spinup_start;
@@ -543,7 +647,7 @@ static int ata_transfer_sectors(uint64_t start,
                 int sectors;
                 int wordcount;
                 int status;
-                int error;
+                int error = 0;
 
                 if (!wait_for_start_of_transfer()) {
                     /* We have timed out waiting for RDY and/or DRQ, possibly
@@ -559,6 +663,10 @@ static int ata_transfer_sectors(uint64_t start,
                         goto error;
                     }
                     ret = -5;
+#ifdef HAVE_ATA_DMA_RECOVERY
+                    if (dma_recovery)
+                        goto error;
+#endif
                     goto retry;
                 }
 
@@ -569,7 +677,8 @@ static int ata_transfer_sectors(uint64_t start,
 
                 /* read the status register exactly once per loop */
                 status = ATA_IN8(ATA_STATUS);
-                error = ATA_IN8(ATA_ERROR);
+                if (status & STATUS_ERR)
+                    error = ATA_IN8(ATA_ERROR);
 
                 if (count >= multisectors)
                     sectors = multisectors;
@@ -600,34 +709,73 @@ static int ata_transfer_sectors(uint64_t start,
                     /* no point retrying IDNF, sector no. was invalid */
                     if (error & ERROR_IDNF)
                         break;
+#ifdef HAVE_ATA_DMA_RECOVERY
+                    if (dma_recovery)
+                        goto error;
+#endif
                     goto retry;
                 }
 
                 buf += sectors * log_sector_size; /* Advance one chunk of sectors */
                 count -= sectors;
+                sectors_completed += sectors;
 
                 keep_ata_active();
             }
         }
 
-        if(!ret && !wait_for_end_of_transfer()) {
-            int error;
+        if (ret != -9)
+            break;
 
-            error = ATA_IN8(ATA_ERROR);
+        uint8_t status;
+        uint8_t error;
+        bool error_valid;
+        enum ata_end_result end_result =
+            wait_for_end_of_transfer(&status, &error, &error_valid);
+
+        if (end_result != ATA_END_OK) {
+            (void)status;
+
             if (perform_soft_reset()) {
                 ret = -8;
                 goto error;
             }
             ret = -4;
             /* no point retrying IDNF, sector no. was invalid */
-            if (error & ERROR_IDNF)
+            if (error_valid && (error & ERROR_IDNF))
                 break;
+#ifdef HAVE_ATA_DMA_RECOVERY
+            if (dma_recovery)
+                goto error;
+#endif
             goto retry;
         }
+
+        if (command_issued && sectors_completed == incount)
+            ret = 0;
         break;
     }
 
   error:
+    /* Success is only possible after one data command completed the entire
+     * requested range. */
+    if (ret == 0 && (!command_issued || sectors_completed != incount))
+        ret = -9;
+
+#ifdef HAVE_ATA_DMA_RECOVERY
+    if (dma_recovery) {
+        if (ret == 0)
+            ata_saturating_increment(
+                &dma_recovery_stats.pio_recovery_successes);
+        else
+            ata_saturating_increment(
+                &dma_recovery_stats.pio_recovery_failures);
+    }
+
+    ata_wait_deadline_active = saved_deadline_active;
+    ata_wait_deadline = saved_deadline;
+#endif
+
     ata_led(false);
 
     if (ret < 0 && ata_state == ATA_SPINUP) {
@@ -861,7 +1009,16 @@ static int perform_soft_reset(void)
  * last command.
  */
     int ret;
+    int result;
     int retry_count;
+#ifdef HAVE_ATA_DMA_RECOVERY
+    bool saved_deadline_active = ata_wait_deadline_active;
+    long saved_deadline = ata_wait_deadline;
+
+    /* Preserve the target's established reset timing. A transfer deadline
+     * must not truncate IDENTIFY or required feature restoration. */
+    ata_wait_deadline_active = false;
+#endif
 
     logf("ata SOFT RESET %ld", current_tick);
 
@@ -884,25 +1041,45 @@ static int perform_soft_reset(void)
         ret = wait_for_rdy();
     } while(!ret && retry_count--);
 
-    if (!ret)
-        return -1;
+    if (!ret) {
+        result = -1;
+        goto out;
+    }
 
-    if (identify())
-        return -5;
+    if (identify()) {
+        result = -5;
+        goto out;
+    }
 
-    if ((ret = set_features()))
-        return -60 + ret;
+    if ((ret = set_features())) {
+        result = -60 + ret;
+        goto out;
+    }
 
-    if (set_multiple_mode(multisectors))
-        return -3;
+    if (set_multiple_mode(multisectors)) {
+        result = -3;
+        goto out;
+    }
 
-    if (identify())
-        return -2;
+    if (identify()) {
+        result = -2;
+        goto out;
+    }
 
-    if (freeze_lock())
-        return -4;
+    if (freeze_lock()) {
+        result = -4;
+        goto out;
+    }
 
-    return 0;
+    result = 0;
+
+  out:
+#ifdef HAVE_ATA_DMA_RECOVERY
+    ata_wait_deadline_active = saved_deadline_active;
+    ata_wait_deadline = saved_deadline;
+#endif
+
+    return result;
 }
 
 int ata_soft_reset(void)
@@ -1337,11 +1514,42 @@ long ata_last_disk_activity(void)
 }
 
 #ifdef HAVE_ATA_DMA
-/* Returns last DMA mode as set by set_features() */
+/* Returns the DMA mode most recently configured by set_features(). */
 int ata_get_dma_mode(void)
 {
     return dma_mode;
 }
+
+#ifdef HAVE_ATA_DMA_RECOVERY
+static int ata_identify_current_dma_mode(void)
+{
+    int mode;
+
+    if (identify_info[53] & (1 << 2)) {
+        for (mode = 6; mode >= 0; mode--) {
+            if (identify_info[88] & (1 << (mode + 8)))
+                return 0x40 | mode;
+        }
+    }
+
+    for (mode = 2; mode >= 0; mode--) {
+        if (identify_info[63] & (1 << (mode + 8)))
+            return 0x20 | mode;
+    }
+
+    return 0;
+}
+
+void ata_get_dma_recovery_stats(struct ata_dma_recovery_stats *stats)
+{
+    mutex_lock(&ata_mutex);
+    *stats = dma_recovery_stats;
+    stats->configured_dma_mode = dma_mode;
+    stats->identify_current_dma_mode = ata_identify_current_dma_mode();
+    stats->dma_quarantined = dma_quarantined;
+    mutex_unlock(&ata_mutex);
+}
+#endif /* HAVE_ATA_DMA_RECOVERY */
 
 /* Needed to allow updating while waiting for DMA to complete */
 void ata_keep_active(void)
