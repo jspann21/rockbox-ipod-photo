@@ -32,7 +32,9 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       list offsets, reset timing on a new touch, clamp dynamic list state after
       count changes, avoid redraws when input cannot move the selection, tune
       long-list selection behavior, eliminate unchanged edge redraws, and
-      reclaim list width when no icon column is needed.
+      reclaim list width when no icon column is needed; keep pagination valid
+      when an oversized font leaves less than one row; and preserve a valid
+      zero selection when deleting the last item.
 - [x] **Native 220x176 skins and display updates:** bound generated statusbar and
       custom-skin fonts, images, dimensions, and allocations; keep simple lists,
       quickscreens, oversized themed rows, and the fallback WPS usable within
@@ -83,8 +85,9 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       per-index, outcome, and size metrics; fail safely if database, buffering,
       or storage workers cannot be created; release rejected kernel thread slots;
       stop idle database-worker polling; validate tagtree navigation and dynamic
-      entries; safely release invalid cache entries; and initialize only the
-      shuffle records actually used.
+      entries; guard low-cost WPS-return cache reuse with its navigation and
+      buffer signature; safely release invalid cache entries; and initialize
+      only the shuffle records actually used.
 - [x] **Filesystem and persistent-state durability:** restore persistent
       directory-cache loading and validate saved sizes; publish directory caches,
       settings, playlists, and control files through synced temporary files;

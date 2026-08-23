@@ -70,6 +70,15 @@ static int tagtree_play_folder(struct tree_context* c);
 /* tagtree_play_folder() leaves these buffers intact while the WPS runs, so
  * the first load on return can reuse them without scanning their full contents. */
 static bool reuse_loaded_entries = false;
+static struct
+{
+    struct tree_context *context;
+    int table;
+    int extra;
+    int dirlength;
+    int entries_handle;
+    int names_handle;
+} reuse_state;
 
 
 /* this needs to be same size as struct entry (tree.h) and name needs to be
@@ -2039,7 +2048,13 @@ int tagtree_load(struct tree_context* c)
 
     int count;
     int table = c->currtable;
-    bool reuse = reuse_loaded_entries;
+    bool reuse = reuse_loaded_entries &&
+                 reuse_state.context == c &&
+                 reuse_state.table == c->currtable &&
+                 reuse_state.extra == c->currextra &&
+                 reuse_state.dirlength == c->dirlength &&
+                 reuse_state.entries_handle == c->cache.entries_handle &&
+                 reuse_state.names_handle == c->cache.name_buffer_handle;
     reuse_loaded_entries = false;
 
     c->dirsindir = 0;
@@ -2819,6 +2834,12 @@ static int tagtree_play_folder(struct tree_context* c)
     }
 
     playlist_start(start_index, 0, 0);
+    reuse_state.context = c;
+    reuse_state.table = c->currtable;
+    reuse_state.extra = c->currextra;
+    reuse_state.dirlength = c->dirlength;
+    reuse_state.entries_handle = c->cache.entries_handle;
+    reuse_state.names_handle = c->cache.name_buffer_handle;
     reuse_loaded_entries = true;
     return 0;
 }

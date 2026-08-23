@@ -119,7 +119,9 @@ int list_get_nb_lines(struct gui_synclist *list, enum screen_type screen)
         if (list_display_title(list, screen))
             lines -= 1;
     }
-    return lines;
+    /* A custom viewport can be shorter than an oversized font. Keep list
+     * pagination arithmetic valid; drawing remains clipped to the viewport. */
+    return MAX(1, lines);
 }
 
 void list_init_item_height(struct gui_synclist *list, enum screen_type screen)
@@ -440,12 +442,7 @@ void gui_synclist_add_item(struct gui_synclist * gui_list)
 void gui_synclist_del_item(struct gui_synclist * gui_list)
 {
     if (gui_list->nb_items > 0)
-    {
-        if (gui_list->selected_item == gui_list->nb_items-1)
-            gui_list->selected_item--;
-        gui_list->nb_items--;
-        gui_synclist_select_item(gui_list, gui_list->selected_item);
-    }
+        gui_synclist_set_nb_items(gui_list, gui_list->nb_items - 1);
 }
 
 /*
