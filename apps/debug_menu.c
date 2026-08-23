@@ -66,6 +66,9 @@
 #endif
 #if (CONFIG_STORAGE & STORAGE_ATA)
 #include "ata.h"
+#ifdef HAVE_PP5020_PERF
+#include "pp5020-perf.h"
+#endif
 #endif
 #endif /* CONFIG_PLATFORM & PLATFORM_NATIVE */
 #include "power.h"
@@ -1616,11 +1619,12 @@ static int disk_callback(int btn, struct gui_synclist *lists)
                            dma_stats.configured_dma_mode ?
                            configured_mode : "PIO");
     }
-    simplelist_addline("DMA timeouts: %lu",
-        (unsigned long)dma_stats.dma_finish_failures);
-    simplelist_addline("PIO recovery ok/fail: %lu/%lu",
+    simplelist_addline("DMA timeouts: %lu; PIO recovery ok/fail: %lu/%lu",
+        (unsigned long)dma_stats.dma_finish_failures,
         (unsigned long)dma_stats.pio_recovery_successes,
         (unsigned long)dma_stats.pio_recovery_failures);
+    simplelist_addline("Expired before ATA data command: %lu",
+        (unsigned long)dma_stats.expired_before_command);
 #else
     i = ata_get_dma_mode();
     if (i == 0) {
@@ -1919,6 +1923,61 @@ static bool dbg_disk_info(void)
     info.scroll_all = true;
     return simplelist_show_list(&info);
 }
+
+#ifdef HAVE_PP5020_PERF
+static int pp5020_perf_callback(int btn, struct gui_synclist *lists)
+{
+    struct pp5020_perf_stats perf;
+
+    (void)lists;
+    if (btn == ACTION_STD_CONTEXT)
+        pp5020_perf_reset();
+
+    pp5020_perf_get(&perf);
+    simplelist_reset_lines();
+    simplelist_addline("ATA: %s", perf.ata_model);
+    simplelist_addline("Flash: %s; DMA mode: %#x",
+        perf.ata_is_ssd ? "yes" : "no", perf.ata_dma_mode);
+    simplelist_addline("LBA48/flush/sleep: %d/%d/%d",
+        perf.lba48, perf.flush_supported, perf.sleep_supported);
+    simplelist_addline("DMA requests: %llu", perf.dma_requests);
+    simplelist_addline("DMA bytes: %llu", perf.dma_bytes);
+    simplelist_addline("DMA avg/max us: %llu/%lu",
+        perf.dma_requests ? perf.dma_total_us / perf.dma_requests : 0,
+        (unsigned long)perf.dma_max_us);
+    simplelist_addline("DMA busy-poll us: %llu", perf.dma_busy_poll_us);
+    simplelist_addline("Timeouts/PIO fallback: %llu/%llu",
+        perf.dma_timeouts, perf.pio_fallbacks);
+    simplelist_addline("IRQ missing/late/spurious: %llu/%llu/%llu",
+        perf.dma_missing_irqs, perf.dma_late_irqs,
+        perf.dma_spurious_irqs);
+    simplelist_addline("Storage event wakes: %llu",
+        perf.storage_event_wakeups);
+    simplelist_addline("Storage deadline wakes: %llu",
+        perf.storage_deadline_wakeups);
+    simplelist_addline("Cache clean calls: %llu", perf.cache_clean_calls);
+    simplelist_addline("Cache clean avg/max us: %llu/%lu",
+        perf.cache_clean_calls ?
+            perf.cache_clean_total_us / perf.cache_clean_calls : 0,
+        (unsigned long)perf.cache_clean_max_us);
+    simplelist_addline("Cache discard calls: %llu",
+        perf.cache_discard_calls);
+    simplelist_addline("Cache discard avg/max us: %llu/%lu",
+        perf.cache_discard_calls ?
+            perf.cache_discard_total_us / perf.cache_discard_calls : 0,
+        (unsigned long)perf.cache_discard_max_us);
+    return btn;
+}
+
+static bool dbg_pp5020_perf(void)
+{
+    struct simplelist_info info;
+    simplelist_info_init(&info, "PP5020 perf [CONTEXT resets]", 1, NULL);
+    info.action_callback = pp5020_perf_callback;
+    info.scroll_all = true;
+    return simplelist_show_list(&info);
+}
+#endif /* HAVE_PP5020_PERF */
 #endif /* PLATFORM_NATIVE */
 
 #ifdef HAVE_DIRCACHE
@@ -2937,6 +2996,9 @@ static const struct {
         { "View disk info", dbg_disk_info },
 #if (CONFIG_STORAGE & STORAGE_ATA)
         { "Dump ATA identify info", dbg_identify_info},
+#ifdef HAVE_PP5020_PERF
+        { "View PP5020 performance", dbg_pp5020_perf },
+#endif
 #ifdef HAVE_ATA_SMART
         { "View/Dump S.M.A.R.T. data", dbg_ata_smart},
 #endif

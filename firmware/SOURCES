@@ -691,6 +691,9 @@ target/arm/vectors-arm-micro.S
 #if CONFIG_STORAGE & STORAGE_ATA
 # ifdef CPU_PP502x
 target/arm/pp/ata-pp5020.c
+#  ifdef HAVE_PP5020_PERF
+target/arm/pp/pp5020-perf.c
+#  endif
 # endif
 # if CONFIG_CPU == DM320 || defined(CPU_PP502x)
 target/arm/ata-as-arm.S

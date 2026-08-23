@@ -1,0 +1,64 @@
+/***************************************************************************
+ * PP5020 low-overhead performance counters.
+ ****************************************************************************/
+
+#ifndef PP5020_PERF_H
+#define PP5020_PERF_H
+
+#include "config.h"
+#include <stdbool.h>
+#include <stdint.h>
+
+#ifdef HAVE_PP5020_PERF
+
+struct pp5020_perf_stats
+{
+    char ata_model[41];
+    bool ata_is_ssd;
+    int ata_dma_mode;
+    bool lba48;
+    bool flush_supported;
+    bool sleep_supported;
+
+    uint64_t cache_clean_calls;
+    uint64_t cache_clean_total_us;
+    uint32_t cache_clean_max_us;
+    uint64_t cache_discard_calls;
+    uint64_t cache_discard_total_us;
+    uint32_t cache_discard_max_us;
+
+    uint64_t dma_requests;
+    uint64_t dma_bytes;
+    uint64_t dma_total_us;
+    uint32_t dma_max_us;
+    uint64_t dma_busy_poll_us;
+    uint64_t dma_timeouts;
+    uint64_t pio_fallbacks;
+    uint64_t dma_missing_irqs;
+    uint64_t dma_late_irqs;
+    uint64_t dma_spurious_irqs;
+
+    uint64_t storage_event_wakeups;
+    uint64_t storage_deadline_wakeups;
+
+};
+
+void pp5020_perf_reset(void);
+void pp5020_perf_get(struct pp5020_perf_stats *stats);
+
+void pp5020_perf_set_ata_info(const uint16_t *identify, bool is_ssd,
+                              int dma_mode, bool lba48,
+                              bool flush_supported, bool sleep_supported);
+void pp5020_perf_record_cache_clean(uint32_t elapsed_us);
+void pp5020_perf_record_cache_discard(uint32_t elapsed_us);
+void pp5020_perf_record_dma_request(uint32_t bytes);
+void pp5020_perf_record_dma_complete(uint32_t elapsed_us,
+                                     uint32_t busy_poll_us, bool success);
+void pp5020_perf_record_pio_fallback(void);
+void pp5020_perf_record_dma_missing_irq(void);
+void pp5020_perf_record_dma_late_irq(void);
+void pp5020_perf_record_dma_spurious_irq(void);
+void pp5020_perf_record_storage_wakeup(bool deadline);
+
+#endif /* HAVE_PP5020_PERF */
+#endif /* PP5020_PERF_H */

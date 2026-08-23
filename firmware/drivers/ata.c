@@ -34,6 +34,9 @@
 #include "fs_defines.h"
 #include "storage.h"
 #include "logf.h"
+#ifdef HAVE_PP5020_PERF
+#include "pp5020-perf.h"
+#endif
 
 #define SELECT_DEVICE1  0x10
 #define SELECT_LBA      0x40
@@ -112,11 +115,16 @@ static int dma_mode = 0;
 #endif
 
 #ifdef HAVE_ATA_DMA_RECOVERY
+#ifndef ATA_RESET_TIMEOUT_SECONDS
+#define ATA_RESET_TIMEOUT_SECONDS 30
+#endif
+
 static bool dma_quarantined;
+static enum ata_dma_quarantine_reason dma_quarantine_reason;
 static struct ata_dma_recovery_stats dma_recovery_stats;
 
-/* Photo transfer and PIO-recovery polls share one absolute phase deadline.
- * This state is only changed while ata_mutex is held. */
+/* The Photo recovery path uses one absolute deadline for every nested poll in
+ * a phase. This state is only changed while ata_mutex is held. */
 static bool ata_wait_deadline_active;
 static long ata_wait_deadline;
 
@@ -158,13 +166,13 @@ static inline void keep_ata_active(void)
 static inline bool ata_sleep_timed_out(void)
 {
     return sleep_timeout &&
-           TIME_AFTER(current_tick, last_disk_activity + sleep_timeout);
+           !TIME_BEFORE(current_tick, last_disk_activity + sleep_timeout);
 }
 
 static inline bool ata_power_off_timed_out(void)
 {
 #ifdef HAVE_ATA_POWER_OFF
-    return power_off_tick && TIME_AFTER(current_tick, power_off_tick);
+    return power_off_tick && !TIME_BEFORE(current_tick, power_off_tick);
 #else
     return false;
 #endif
@@ -464,6 +472,7 @@ static int ata_transfer_sectors(uint64_t start,
     void* buf;
     long spinup_start = current_tick;
     bool command_issued = false;
+    bool woke_from_low_power = false;
     int sectors_completed = 0;
 #ifdef HAVE_ATA_DMA
     bool usedma = false;
@@ -472,6 +481,7 @@ static int ata_transfer_sectors(uint64_t start,
 #ifdef HAVE_ATA_DMA_RECOVERY
     bool dma_recovery = false;
     bool pio_recovery_issued = false;
+    bool deadline_expired_before_command = false;
     bool saved_deadline_active = ata_wait_deadline_active;
     long saved_deadline = ata_wait_deadline;
 #endif
@@ -484,7 +494,6 @@ static int ata_transfer_sectors(uint64_t start,
         ret = -1;
         goto error;
     }
-
     keep_ata_active();
 
     ata_led(true);
@@ -492,6 +501,7 @@ static int ata_transfer_sectors(uint64_t start,
     if (ata_state < ATA_ON) {
         spinup_start = current_tick;
         int state = ata_state;
+        woke_from_low_power = true;
         ata_state = ATA_SPINUP;
         if (ata_perform_wakeup(state)) {
 #ifdef HAVE_ATA_POWER_OFF
@@ -516,6 +526,10 @@ static int ata_transfer_sectors(uint64_t start,
     ATA_OUT8(ATA_SELECT, ata_device);
     if (!wait_for_rdy())
     {
+#ifdef HAVE_ATA_DMA_RECOVERY
+        if (!TIME_BEFORE(current_tick, timeout))
+            deadline_expired_before_command = true;
+#endif
         ret = -3;
         goto error;
     }
@@ -611,7 +625,10 @@ static int ata_transfer_sectors(uint64_t start,
 #ifdef HAVE_ATA_DMA_RECOVERY
                 ata_saturating_increment(
                     &dma_recovery_stats.dma_finish_failures);
-                dma_quarantined = true;
+                if (!dma_quarantined) {
+                    dma_quarantined = true;
+                    dma_quarantine_reason = ATA_DMA_QUARANTINE_TIMEOUT;
+                }
 #endif
                 /* Some flash adapters advertise a DMA mode that is unstable
                  * in practice. Recover the controller, then retry this
@@ -621,19 +638,28 @@ static int ata_transfer_sectors(uint64_t start,
 #ifdef HAVE_ATA_DMA_RECOVERY
                 dma_recovery = true;
 #endif
+#ifdef HAVE_PP5020_PERF
+                pp5020_perf_record_pio_fallback();
+#endif
                 if (perform_soft_reset()) {
                     ret = -8;
                     goto error;
                 }
+
 #ifdef HAVE_ATA_DMA_RECOVERY
-                /* The one Photo PIO recovery gets a fresh transfer budget
-                 * after reset/reinitialization has succeeded. */
+                /* ata_dma_finish() may legitimately outlive the first
+                 * request deadline. The one PIO recovery gets its own full
+                 * budget after reset/reinitialization has succeeded. */
                 timeout = current_tick + READWRITE_TIMEOUT;
                 ata_set_wait_deadline(timeout);
 #endif
                 goto retry;
             }
 
+            /* The IRQ-assisted wait does not periodically call ata_keep_active
+             * like the old polling loop. Account for a slow successful DMA at
+             * completion so it receives the full configured idle interval. */
+            keep_ata_active();
             sectors_completed = incount;
             if (ata_state == ATA_SPINUP) {
                 ata_state = ATA_ON;
@@ -756,13 +782,22 @@ static int ata_transfer_sectors(uint64_t start,
         break;
     }
 
+#ifdef HAVE_ATA_DMA_RECOVERY
+    if (!command_issued && !TIME_BEFORE(current_tick, timeout))
+        deadline_expired_before_command = true;
+#endif
+
   error:
-    /* Success is only possible after one data command completed the entire
-     * requested range. */
+    /* Defensive backstop for all ATA targets: success is only possible after
+     * one data command completed the entire requested range. */
     if (ret == 0 && (!command_issued || sectors_completed != incount))
         ret = -9;
 
 #ifdef HAVE_ATA_DMA_RECOVERY
+    if (deadline_expired_before_command)
+        ata_saturating_increment(
+            &dma_recovery_stats.expired_before_command);
+
     if (dma_recovery) {
         if (ret == 0)
             ata_saturating_increment(
@@ -782,6 +817,12 @@ static int ata_transfer_sectors(uint64_t start,
         /* bailed out before updating */
         ata_state = ATA_ON;
     }
+
+    /* The storage thread can block indefinitely while ATA is fully off. Once
+     * a client has successfully woken the device, wake that thread so it can
+     * arm the new exact idle deadline instead of leaving the adapter on. */
+    if (ret == 0 && woke_from_low_power)
+        storage_post_event(SYS_TIMEOUT, 0);
 
     return ret;
 }
@@ -866,6 +907,10 @@ static int freeze_lock(void)
 void ata_spindown(int seconds)
 {
     sleep_timeout = seconds * HZ;
+    /* Exact-deadline ATA targets may currently be blocked with no timeout.
+     * Re-evaluate whenever the runtime setting enables, disables, shortens, or
+     * extends automatic sleep. */
+    storage_post_event(SYS_TIMEOUT, 0);
 }
 
 bool ata_disk_is_active(void)
@@ -878,7 +923,11 @@ void ata_sleepnow(void)
     if (ata_state >= ATA_SPINUP) {
         logf("ata SLEEPNOW %ld", current_tick);
         mutex_lock(&ata_mutex);
-        if (ata_state == ATA_ON) {
+        if (ata_state == ATA_ON
+#ifdef HAVE_ATA_DMA_IRQ
+            && !ata_dma_is_in_progress()
+#endif
+           ) {
             int rc = ata_perform_flush_cache();
             if (!rc)
                 rc = ata_perform_sleep();
@@ -1015,9 +1064,9 @@ static int perform_soft_reset(void)
     bool saved_deadline_active = ata_wait_deadline_active;
     long saved_deadline = ata_wait_deadline;
 
-    /* Preserve the target's established reset timing. A transfer deadline
-     * must not truncate IDENTIFY or required feature restoration. */
-    ata_wait_deadline_active = false;
+    /* IDENTIFY, feature restoration, multiple mode, verification IDENTIFY,
+     * and freeze-lock all consume this one reset/reinitialization budget. */
+    ata_set_wait_deadline(current_tick + HZ*ATA_RESET_TIMEOUT_SECONDS);
 #endif
 
     logf("ata SOFT RESET %ld", current_tick);
@@ -1489,6 +1538,17 @@ int STORAGE_INIT_ATTR ata_init(void)
     }
 
 error:
+#ifdef HAVE_PP5020_PERF
+    if (rc == 0)
+    {
+        bool flush_supported =
+            (identify_info[83] & ((1 << 13) | (1 << 12))) != 0 ||
+            identify_info[80] >= (1 << 5);
+        pp5020_perf_set_ata_info(identify_info, ata_disk_isssd(), dma_mode,
+                                ata_lba48, flush_supported,
+                                ata_disk_can_sleep());
+    }
+#endif
 #ifdef HAVE_ATA_POWER_OFF
     if (power_enabled)
         ide_power_enable(false);
@@ -1511,6 +1571,49 @@ void ata_set_led_enabled(bool enabled)
 long ata_last_disk_activity(void)
 {
     return last_disk_activity;
+}
+
+long ata_next_action_tick(void)
+{
+    long deadline = 0;
+
+    /* The state and deadline fields are updated by ATA request and power
+     * paths under this mutex. Taking the same lock here avoids observing a
+     * half-updated standby/power-off transition in the storage thread. */
+    mutex_lock(&ata_mutex);
+
+    switch (ata_state)
+    {
+    case ATA_ON:
+        /* A failed flush/standby attempt takes precedence over the normal
+         * idle deadline so the existing retry backoff is preserved. */
+        if (sleep_retry_tick)
+            deadline = sleep_retry_tick;
+        else if (sleep_timeout)
+            deadline = last_disk_activity + sleep_timeout;
+        break;
+
+    case ATA_SPINUP:
+        /* Transfers keep last_disk_activity current. Reusing the resulting
+         * idle deadline prevents the storage thread from reverting to a
+         * periodic poll while a request is active. */
+        if (sleep_timeout)
+            deadline = last_disk_activity + sleep_timeout;
+        break;
+
+    case ATA_SLEEPING:
+#ifdef HAVE_ATA_POWER_OFF
+        deadline = power_off_tick;
+#endif
+        break;
+
+    default:
+        /* ATA_BOOT and ATA_OFF have no storage action deadline. */
+        break;
+    }
+
+    mutex_unlock(&ata_mutex);
+    return deadline;
 }
 
 #ifdef HAVE_ATA_DMA
@@ -1547,6 +1650,7 @@ void ata_get_dma_recovery_stats(struct ata_dma_recovery_stats *stats)
     stats->configured_dma_mode = dma_mode;
     stats->identify_current_dma_mode = ata_identify_current_dma_mode();
     stats->dma_quarantined = dma_quarantined;
+    stats->quarantine_reason = dma_quarantine_reason;
     mutex_unlock(&ata_mutex);
 }
 #endif /* HAVE_ATA_DMA_RECOVERY */

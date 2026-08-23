@@ -67,6 +67,12 @@ void ata_dma_set_mode(unsigned char mode);
 bool ata_dma_setup(void *addr, unsigned long bytes, bool write);
 /* Waits for DMA transfer completion */
 bool ata_dma_finish(void);
+#ifdef HAVE_ATA_DMA_IRQ
+/* Normal-priority IDE interrupt entry and sleep/power interlock. */
+void ata_dma_irq_init(void);
+void ata_dma_irq_handler(void);
+bool ata_dma_is_in_progress(void);
+#endif
 #endif /* HAVE_ATA_DMA */
 
 #endif /* __ATA_DRIVER_H__ */

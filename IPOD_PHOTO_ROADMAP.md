@@ -4,231 +4,186 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 
 ## Implemented
 
-- [x] Base development directly on official Rockbox history.
-- [x] Bound indexed iAP title, artist, and album replies.
-- [x] Validate categorized iAP database queries.
-- [x] Prevent iAP receive-buffer free-space underflow.
-- [x] Validate accessory-provided playback indices.
-- [x] Clamp display-remote volume settings.
-- [x] Stop track-count reply fallthrough.
-- [x] Make PictureFlow animation timing frame-rate independent.
-- [x] Coalesce redundant iPod Color list redraws during wheel input.
-- [x] Make PictureFlow honor the configured list selector style.
-- [x] Validate legacy and USB iAP packet lengths, transaction data, playback
-      indices, and missing metadata strings.
-- [x] Bound iAP string replies and clean up partial USB-iAP allocations.
-- [x] Validate PictureFlow album, track, and image-cache data loaded from disk.
-- [x] Make PictureFlow index, artwork, and placeholder replacement failure-safe.
-- [x] Guard PictureFlow buffer accounting, metadata offsets, sort fields, text
-      animation, large-font track-list geometry, and corrupt configuration.
-- [x] Show an immediate PictureFlow placeholder and discard stale launch input.
-- [x] Saturate click-wheel acceleration arithmetic and protect list offsets.
-- [x] Reset click-wheel timing correctly when a new touch begins.
-- [x] Validate ATA transfer ranges and retry setup, and stop when controller
-      reset recovery fails.
-- [x] Detect and propagate ATA flush failures and detect failed standby commands.
-- [x] Validate USB mass-storage LUNs, sector ranges, descriptor lengths, transfer
-      sizes, controller descriptors, and SMART read results.
-- [x] Make action, WPS, power, tick-task, and timeout timing robust across tick
-      rollover and callback removal.
-- [x] Restore persistent directory-cache loading and validate saved cache sizes.
-- [x] Harden playback buffer capacity reporting and cached artwork paths.
-- [x] Propagate USB controller transfer errors and reject malformed mass-storage
-      command wrappers and invalid device geometry.
-- [x] Preserve the last valid iPod PMU ADC reading after an I2C failure.
-- [x] Buffer initial database records, batch master-index updates, coalesce tag
-      writes, and cache the temporary database during commit when RAM permits.
-- [x] Reject incomplete database writes, checkpoint long scans, publish durable
-      database headers last, and recover interrupted initial or update commits.
-- [x] Bulk-load RAM database indexes, reuse filename references, buffer generated
-      indexes, and batch native-endian master-index writes.
-- [x] Hash duplicate tags, reuse measured metadata lengths, and skip Unicode
-      normalization work for ASCII-only metadata.
-- [x] Validate database dimensions, record boundaries, strings, scan roots, and
-      path lengths before accepting or publishing an index.
-- [x] Propagate recursive scan and storage errors, retry interrupted verification,
-      and refresh or discard stale RAM caches after database updates.
-- [x] Write an atomic, low-overhead database build profile with scan, metadata,
-      checkpoint, commit, per-index, outcome, and size metrics.
-- [x] Clamp dynamic list state after item-count changes and avoid full redraws
-      when click-wheel input cannot move the selection.
-- [x] Harden USB/iAP audio-interface state, reconnect retries, playlist access,
-      tuner packets, battery reporting, and album-art dimensions.
-- [x] Validate ATA IDENTIFY capacity and logical-sector geometry, and back off
-      failed idle flush/standby retries on marginal adapters.
-- [x] Allow realistic capacity settings for modern iPod Photo replacement
-      batteries without changing the target's voltage calibration.
-- [x] Propagate PMU I2C/RTC failures and wait for the final PMU write before
-      entering standby.
-- [x] Flush ATA/iFlash media on shutdown, USB cache sync, eject, and disconnect;
-      preserve the sleeping/off state when wakeup fails.
-- [x] Validate USB mass-storage command completions and make USB-iAP allocation,
-      artwork, callback, reset, and teardown paths failure-safe.
-- [x] Bound legacy BMP and SMAF media parsing, persisted random-folder lists,
-      and custom-skin fonts, images, dimensions, and parser allocations.
-- [x] Time PictureFlow cover transitions by elapsed ticks, pace background art
-      caching, skip unchanged idle frames, and release the CPU boost while idle.
-- [x] Preserve serial-iAP buffers across relocation, make stopped-playback
-      replies null-safe, serialize USB-iAP notifications and teardown, reject
-      short control writes, and preserve in-flight accessory transactions.
-- [x] Bound generated statusbar skins and keep simple lists, quickscreens, and
-      oversized themed rows usable on the native 220x176 display.
-- [x] Flush already-awake iFlash media during critical shutdown, report flush
-      failures, retry PMU standby/accessory writes, and validate ADC/RTC writes.
-- [x] Validate APE tags and embedded artwork, and propagate playlist import,
-      control-file, seek, and short-write failures.
-- [x] Publish directory caches and settings through synced temporary files so a
-      failed write does not destroy the last valid state.
-- [x] Enforce partition, BPB, FSInfo, FAT-chain, and GPT bounds before issuing
-      filesystem I/O, including modern large-media layouts.
-- [x] Fail safely when database, buffering, or storage worker threads cannot be
-      created instead of hanging startup or synchronous queue users.
-- [x] Clip native Color LCD rectangle updates and include temporary backlight
-      use in battery runtime estimates.
-- [x] Reduce database-ready polling latency during startup and skip WPS/status
-      LCD transfers when skin rendering did not alter any viewport.
-- [x] Make the iPod formatter preserve 32-bit partition offsets and reject
-      partial destructive writes rather than reporting a successful format.
-- [x] Sync playlist and control-file replacements, preserve the prior control
-      file on publication failure, and reject corrupt replay positions.
-- [x] Reject truncated firmware images and malformed AAC, ADX, OMA/ATRAC, ASF,
-      WAVE/Wave64, and MP4 metadata before unsafe reads or duration arithmetic,
-      and bound ASF/WMA packet payload assembly during playback.
-- [x] Validate buffering file sizes, release codec readers after storage
-      failures, validate tagcache search/index inputs, and clear the complete
-      database unique-result buffer rather than only one byte per entry.
-- [x] Let the idle backlight worker sleep indefinitely, make startup ADC scans
-      immediate, recover failed USB-iAP HID transactions, and leave serial iAP
-      disabled rather than panicking when its worker cannot be created.
-- [x] Release rejected kernel thread slots, stop idle database-worker polling,
-      and skip redundant PP5020 clock/PLL transitions.
-- [x] Recover the PP5020 I2C controller after timeouts, reduce battery PMU
-      polling while preserving accessory detection, and bound Color LCD waits.
-- [x] Stop waking the PP5020 coprocessor on every tick when no timeout is due,
-      and cache the next callback deadline instead of scanning early.
-- [x] Keep short PP5020 ATA DMA completions responsive without yielding, fall
-      back to PIO after DMA timeouts, and tolerate rejected optional adapter
-      features without weakening required transfer-mode checks.
-- [x] Validate tagtree navigation state, release invalid cache entries safely,
-      propagate dynamic-entry failures, and initialize only the shuffle records
-      actually used rather than clearing the full plugin buffer.
-- [x] Serialize ATA power-off and wake recovery, reset negotiated DMA state after
-      reconnect, and power down a cold-start rail when device probing fails.
-- [x] Bound and retry PP502x USB controller resets, harden USB-storage reconnect
-      and media-removal handling, and reject malformed USB-iAP controls during
-      teardown.
-- [x] Reclaim list width when no icon column is needed, redraw PictureFlow track
-      lists only when their visible state changes, and schedule car-adapter
-      delayed resume without a permanent 100 Hz callback.
-- [x] Reject malformed Monkey's Audio, TTA, Ogg, Speex, Vorbis, GBS, and SGC
-      metadata before unsafe offsets, arithmetic, or incomplete comments reach
-      the database and codecs.
-- [x] Bound serial-iAP transmitter readiness waits, coalesce stale event-driven
-      USB cable transitions, and validate battery interpolation intervals.
-- [x] Use a compact Photo fallback WPS and a lower-cost flat color selector by
-      default while preserving the configurable gradient style.
+- [x] **iAP protocol validation:** bound indexed title, artist, album, and other
+      string replies; validate categorized database queries, legacy and USB
+      packet lengths, transaction data, playback indices, missing metadata,
+      receive-buffer accounting, accessory volume, and track-count replies; and
+      clean up partial USB-iAP allocations.
+- [x] **iAP, USB-audio, and accessory lifecycle:** harden audio-interface state,
+      reconnect retries, playlist access, tuner packets, battery reporting,
+      album-art dimensions, artwork and callback handling, resets, HID recovery,
+      and teardown; preserve relocated serial buffers and in-flight transactions;
+      make stopped-playback replies null-safe; serialize notifications; reject
+      short or malformed controls; bound transmitter waits; coalesce stale cable
+      events; and leave serial iAP disabled, rather than panic, if its worker
+      cannot be created.
+- [x] **PictureFlow data safety:** validate album, track, index, image-cache, and
+      configuration data loaded from disk; make artwork and placeholder
+      replacement failure-safe; guard buffer accounting, metadata offsets, sort
+      fields, text animation, large-font track-list geometry, and corrupt state;
+      discard stale launch input; and show an immediate, graceful placeholder
+      when artwork or its cache is unavailable.
+- [x] **PictureFlow rendering and power use:** make animation and cover
+      transitions depend on elapsed ticks; pace background artwork caching; skip
+      unchanged idle frames and track-list redraws; coalesce wheel-driven list
+      redraws; honor the configured selector style; and release the CPU boost
+      and poweroff timer while idle.
+- [x] **Click wheel and native lists:** saturate acceleration arithmetic, protect
+      list offsets, reset timing on a new touch, clamp dynamic list state after
+      count changes, avoid redraws when input cannot move the selection, tune
+      long-list selection behavior, eliminate unchanged edge redraws, and
+      reclaim list width when no icon column is needed.
+- [x] **Native 220x176 skins and display updates:** bound generated statusbar and
+      custom-skin fonts, images, dimensions, and allocations; keep simple lists,
+      quickscreens, oversized themed rows, and the fallback WPS usable within
+      the Photo's vertical budget; use a low-cost flat, themeable selector by
+      default while retaining the gradient option; suppress clean WPS/status
+      viewport transfers; clip Color LCD rectangles; and bound LCD-controller
+      waits.
+- [x] **ATA correctness and recovery:** validate transfer ranges, retry setup,
+      IDENTIFY capacity, logical-sector geometry, LBA48 capabilities, and adapter
+      replies; stop when reset recovery fails; detect and propagate flush and
+      standby failures; back off failed idle operations; serialize power-off and
+      wake recovery; revalidate power under the storage mutex; reset and
+      renegotiate DMA after reconnect; restore failed USB wake attempts; stop
+      storage ticks after power-off; and power down a cold-start rail when probing
+      fails.
+- [x] **iFlash compatibility and ATA performance:** bring up the installed ATA1
+      and SD card for firmware boot, database generation, and USB access; retain
+      conservative Apple PIO timings and the Photo's UDMA2 ceiling; keep short
+      PP5020 DMA completions responsive with a 250 microsecond initial poll and
+      an IDE-interrupt wait; retry an individual failed DMA transfer through PIO;
+      fall back to PIO after bounded DMA timeouts; give reset/reinitialization one
+      absolute budget; and tolerate rejected optional adapter features without
+      weakening required transfer-mode checks.
+- [x] **Storage durability across system events:** flush ATA/iFlash media on
+      shutdown (including critical shutdown when already awake), USB cache sync,
+      eject, and disconnect; report flush failures; retry PMU standby and
+      accessory writes; wait for the final PMU write before standby; and preserve
+      the sleeping/off state when wakeup fails.
+- [x] **USB mass storage:** validate LUNs, sector ranges, descriptor lengths,
+      transfer sizes, controller descriptors, SMART results, command wrappers,
+      command completions, and device geometry; propagate controller transfer
+      errors; bound and retry PP502x controller resets; and harden reconnect and
+      media-removal handling.
+- [x] **Database build performance:** buffer initial records, generated indexes,
+      and native-endian master-index writes; batch master-index and tag updates;
+      bulk-load RAM indexes; reuse filename references and measured metadata
+      lengths; hash duplicate tags; skip Unicode normalization for ASCII-only
+      metadata; cache the temporary database during commit when RAM permits; and
+      reduce database-ready polling latency.
+- [x] **Database integrity and recovery:** reject incomplete writes; validate
+      dimensions, record boundaries, strings, scan roots, and path lengths;
+      checkpoint long scans; publish durable headers last; recover interrupted
+      initial and update commits; propagate recursive scan and storage errors;
+      retry interrupted verification; and refresh or discard stale RAM caches
+      after updates.
+- [x] **Database observability and worker safety:** write an atomic,
+      low-overhead build profile containing scan, metadata, checkpoint, commit,
+      per-index, outcome, and size metrics; fail safely if database, buffering,
+      or storage workers cannot be created; release rejected kernel thread slots;
+      stop idle database-worker polling; validate tagtree navigation and dynamic
+      entries; safely release invalid cache entries; and initialize only the
+      shuffle records actually used.
+- [x] **Filesystem and persistent-state durability:** restore persistent
+      directory-cache loading and validate saved sizes; publish directory caches,
+      settings, playlists, and control files through synced temporary files;
+      preserve the prior state on publication failure; reject corrupt replay
+      positions; enforce partition, BPB, FSInfo, FAT-chain, and GPT bounds before
+      I/O, including large-media layouts; make FAT32 FSInfo optional and
+      recoverable; and make the iPod formatter preserve 32-bit partition offsets
+      and reject partial destructive writes.
+- [x] **Metadata, codecs, playlists, and buffering:** bound legacy BMP and SMAF,
+      persisted random-folder lists, APE tags and embedded artwork; reject
+      truncated firmware and malformed AAC, ADX, OMA/ATRAC, ASF/WMA, WAVE/Wave64,
+      MP4, Monkey's Audio, TTA, Ogg, Speex, Vorbis, GBS, and SGC data before
+      unsafe reads, offsets, arithmetic, comments, or payload assembly; validate
+      buffering sizes and tagcache search/index inputs; harden playback-buffer
+      capacity and cached-artwork paths; release codec readers after storage
+      failures; clear the full database unique-result buffer; and propagate
+      playlist import, control-file, seek, and short-write failures.
+- [x] **Timing, kernel, and PP5020 efficiency:** make action, WPS, power,
+      tick-task, and timeout handling robust across tick rollover and callback
+      removal; replace car-adapter polling with a cancelable one-shot deadline;
+      let the idle backlight worker sleep indefinitely; make startup ADC scans
+      immediate; avoid redundant clock/PLL transitions and unconditional 100 Hz
+      coprocessor wakeups; and cache the next callback deadline instead of
+      scanning early; replace the ATA storage thread's fixed half-second poll
+      with exact idle, retry, and delayed-power-off deadlines; and block it when
+      no ATA work is pending.
+- [x] **A1099 performance telemetry:** retain RAM-only aggregate measurements
+      for whole-cache maintenance, ATA DMA latency and busy polling, IRQ quality,
+      PIO recovery, and storage wakeup sources; expose the counters and detected
+      adapter policy in the existing disk debug screen without continuous writes
+      to the SD card.
+- [x] **PMU, battery, and I2C robustness:** preserve the last valid ADC value
+      after I2C failure; allow realistic modern replacement-battery capacities
+      without changing voltage calibration; propagate I2C/RTC failures; validate
+      ADC/RTC writes and battery interpolation intervals; recover the PP5020 I2C
+      controller after timeouts; reduce PMU polling to 1 Hz while retaining
+      faster accessory detection; and include temporary backlight use in runtime
+      estimates.
+- [x] **Development baseline and continuous validation:** base development
+      directly on official Rockbox history, build `ipodcolor` after each useful
+      software batch, and install development builds to exercise boot, database
+      generation, iFlash storage, and USB transfer on the physical target.
 
 ## Reliability and maintainability
 
-- [ ] Audit remaining Rockpod iAP fixes for transaction IDs, packet offsets,
-      concurrent reset handling, and measured stack corrections.
-- [ ] Harden malformed metadata, playlist, database, image, and skin inputs where
-      current Rockbox still trusts lengths or indices.
-- [ ] Keep target-specific behavior isolated from generic Rockbox code.
-- [ ] Remove avoidable allocations and large stack buffers on the 32 MB target.
-- [ ] Improve useful crash/debug information without continuous disk logging.
+- [ ] Complete the remaining input-hardening audit: review Rockpod iAP fixes for
+      transaction IDs, packet offsets, concurrent reset handling, and measured
+      stack corrections; also find metadata, playlist, database, image, and skin
+      paths where current Rockbox still trusts external lengths or indices.
+- [ ] Keep Photo-specific behavior isolated from generic Rockbox code while
+      removing avoidable allocations and large stack buffers on the 32 MB target.
+- [ ] Extend useful crash information without continuous disk logging; the disk
+      debug screen now provides volatile A1099 cache, ATA, IRQ, and storage-wakeup
+      counters.
 
 ## Storage and iFlash compatibility
 
-- [x] Bring up the installed iFlash ATA1 and SD card with firmware boots,
-      database generation, and USB file access.
-- [x] Audit and harden ATA IDENTIFY capability handling and LBA48 geometry;
-      retain unusual-adapter reply checks for iFlash hardware validation.
-- [x] Improve DMA timeout fallback, reset recovery, and bounded retry behavior.
-- [x] Preserve the conservative Apple PIO timings and existing Photo UDMA2
-      ceiling; do not import corruption-prone faster PIO or unproven UDMA4.
-- [x] Retry an individual failed DMA request through PIO and keep optional ATA
-      feature rejection from preventing otherwise valid adapters from booting.
-- [x] Validate FAT/GPT geometry against the physical partition and make FAT32
-      FSInfo optional and recoverable for broader host/iFlash compatibility.
-- [ ] Check cold boot, wake, sleep, shutdown, and storage power sequencing.
-- [x] Harden initial database scan and commit I/O; retain hardware timing and
-      power-loss checks for the installed iPod.
-- [ ] Check album-art caching, USB writes, eject, and reconnect.
-- [x] Back off failed ATA idle commands, stop storage ticks after power-off, and
-      pace PictureFlow background cache work to avoid retry/wakeup storms.
-- [x] Revalidate ATA power state under the storage mutex before cutting power,
-      restore failed USB wake attempts, and renegotiate DMA cleanly after a new
-      IDENTIFY response.
-- [ ] Measure the current 5 ms ATA DMA busy-poll threshold on the installed
-      ATA1 before changing its USB-throughput/UI-responsiveness tradeoff.
+- [ ] Complete an installed-hardware lifecycle pass covering cold boot, wake,
+      sleep, shutdown, storage power sequencing, album-art caching, USB writes,
+      eject, and reconnect.
+- [ ] Compare the new 250 microsecond ATA DMA poll plus IDE-interrupt path against
+      the prior 5 ms threshold on the installed ATA1, including USB throughput,
+      busy-poll time, timeouts, IRQ misses, and PIO fallback counts.
 
 ## Responsiveness and native 220x176 UI
 
-- [x] Refine wheel acceleration and selection behavior on long lists; reserve
-      hardware testing for final sensitivity tuning.
-- [x] Eliminate unchanged generic-list edge redraws and unchanged PictureFlow
-      idle framebuffer transfers, and suppress clean skin-engine LCD updates.
-- [x] Avoid reserving a blank icon column in native lists and suppress unchanged
-      PictureFlow track-list framebuffer transfers.
-- [x] Keep the native fallback WPS within the Photo's vertical budget without a
-      continuous peak-meter redraw and default new configurations to a flat,
-      themeable selector bar.
-- [ ] Improve menu, browser, and now-playing geometry for 220x176 rather than
-      shrinking layouts designed for 320x240.
-- [ ] Improve typography, spacing, icons, focus indication, and status layout.
-- [ ] Evaluate configurable center-button behavior.
-- [ ] Profile PictureFlow slide count, cache size, clipping, scaling, and storage
-      activity on the Photo hardware.
-- [x] Add graceful PictureFlow fallback when artwork or its cache is unavailable.
-- [ ] Port album-art-derived dynamic colors as an optional setting, initially
-      disabled by default.
-- [ ] Make dynamic-color extraction portable to the Photo's byte-swapped RGB565
-      framebuffer by using Rockbox's `RGB_UNPACK_*` helpers rather than direct
-      RGB565 bit shifts.
-- [ ] Extract and cache colors only when album art changes; never build the
-      histogram per frame, and limit color-fade redraws to roughly 15-20 fps.
-- [ ] Check dynamic colors across WPS, menus, lists, hidden viewports, theme
-      changes, missing artwork, and track transitions for contrast and flicker.
-- [ ] Port PictureFlow theme-aware background, edge, and text colors after the
-      shared dynamic-color engine is stable on the Photo.
-- [ ] Port PictureFlow text crossfading and configurable transition speed.
-- [ ] Evaluate parallel-slide projection and tune its spacing, clipping, and
-      visible slide count specifically for 220x176 rather than copying 320x240
-      layouts or theme-specific font offsets.
-- [ ] Evaluate Bayer dithering while generating cached slide images to improve
-      gradients without adding work to every rendered frame.
-- [ ] Keep the current 64-entry PictureFlow cache initially; increase it only if
-      Photo hardware testing shows a benefit without harmful RAM or disk I/O.
+- [ ] Redesign menu, browser, and now-playing geometry for 220x176 instead of
+      shrinking 320x240 layouts; improve typography, spacing, icons, focus and
+      status presentation; and evaluate configurable center-button behavior.
+- [ ] Profile and tune PictureFlow slide count, cache size, clipping, scaling,
+      storage activity, and parallel-slide projection on Photo hardware,
+      including spacing and visible-slide count; begin with the current 64-entry
+      cache and increase it only if testing shows a benefit without harmful RAM
+      or disk I/O, and do not copy 320x240 layouts or theme-specific font offsets.
+- [ ] Add optional album-art-derived dynamic colors, disabled by default: use
+      Rockbox's `RGB_UNPACK_*` helpers for the Photo's byte-swapped RGB565
+      framebuffer; extract and cache colors only when artwork changes; never
+      build a histogram per frame; limit fade redraws to roughly 15-20 fps; and
+      check contrast and flicker across WPS, menus, lists, hidden viewports,
+      theme changes, missing artwork, and track transitions.
+- [ ] After the shared dynamic-color engine is stable on the Photo, make
+      PictureFlow background, edge, and text colors theme-aware; add text
+      crossfading and configurable transition speed; and evaluate Bayer
+      dithering while generating cached slides so gradients improve without
+      adding per-frame work.
 - [ ] Do not import Rockpod's SSD polling, iPod Classic power/storage behavior,
       100-entry cache, or theme-specific 320x240 layouts into the Photo port.
 
 ## Power, USB, and accessories
 
-- [ ] Establish replacement-battery runtime after the hardware upgrade.
-- [x] Release PictureFlow's CPU boost while idle and stop its background cache
-      from continuously resetting the poweroff timer.
-- [x] Avoid redundant PP5020 frequency transitions and unconditional 100 Hz
-      coprocessor wakeups when no cross-core timeout is due.
-- [x] Reduce battery PMU reads to 1 Hz while retaining faster accessory checks,
-      and reinitialize the I2C controller after a stuck transaction.
-- [x] Bound Color LCD controller waits so failed hardware handshakes cannot spin
-      forever.
-- [x] Replace continuous car-adapter resume polling with a cancelable one-shot
-      deadline and recover cleanly from failed USB controller reset attempts.
-- [x] Coalesce obsolete queued cable-status transitions and bound serial-iAP
-      transmitter waits so accessory faults cannot leave the CPU spinning.
-- [ ] Check charging, suspend, resume, and shutdown behavior after power changes.
+- [ ] Establish replacement-battery runtime and check charging, suspend, resume,
+      and shutdown after the hardware upgrade and related power changes.
 - [ ] Exercise serial remotes, docks, and car accessories against the iAP fixes.
 - [ ] Leave USB digital audio and bootloader changes as later research work.
 
 ## Practical validation loop
 
-- [x] Build the `ipodcolor` target after each useful software batch.
-- [x] Install development builds and exercise boot, database generation,
-      iFlash storage, and USB transfer on the physical target.
-- [ ] Smoke-test playback, wheel, hold, shutdown, suspend/resume, and USB again
-      after the latest kernel, power, LCD, and ATA batch.
-- [ ] Test the behavior that actually changed; use a broader pass for storage,
-      power, USB, or other hardware-sensitive changes.
+- [ ] Smoke-test playback, wheel, hold, shutdown, suspend/resume, and USB after
+      the latest kernel, power, LCD, and ATA batch; test each changed behavior
+      directly and use a broader pass for storage, power, USB, or other
+      hardware-sensitive changes.
 - [ ] Keep the official bootloader and a known-good `.rockbox` backup available.

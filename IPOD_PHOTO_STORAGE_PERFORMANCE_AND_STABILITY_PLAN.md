@@ -5,31 +5,37 @@ Date: 2026-08-23
 Scope: fourth-generation iPod Photo/Color (A1099, Rockbox target
 **ipodcolor**) with an iFlash ATA1 and a Samsung EVO-family SD card.
 
-Status: evaluated, with the conservative production-safe subset implemented in
-source. This document does not format the card or alter installed firmware by
-itself.
+Status: the conservative recovery subset and the first measured scheduling/IRQ
+experiment are implemented in source. The IRQ-assisted DMA path, 250 us initial
+poll, and exact storage deadlines still require a current `ipodcolor` build and
+installed A1099 qualification before they should be treated as production-safe.
+This document does not format the card or alter installed firmware by itself.
 
-## Implemented production subset
+## Implemented source subset
 
 The implementation deliberately stays narrower than the experimental roadmap:
 
 - A positive-length transfer cannot return success unless an ATA data command
   was issued, every requested sector completed, and final status was accepted.
-- Photo transfer and PIO-recovery polling consume an absolute five-second phase
-  deadline, while the established reset/reinitialization timing is preserved.
+- Photo transfer and PIO-recovery polling consume explicit absolute deadlines;
+  reset/reinitialization now has one bounded 30-second budget.
 - A host DMA-completion timeout triggers one reset and exactly one full-request
   PIO recovery with a fresh deadline. DMA is then quarantined to PIO until the
   next firmware boot.
+- PP5020 ATA completion busy-polls for 250 us, then waits on the normal-priority
+  IDE interrupt while retaining the 10-second hard timeout and PIO recovery.
+- The ATA-only storage thread waits for exact idle, retry, and delayed-power-off
+  deadlines, blocks when no work is pending, and is reawakened after a client
+  powers the adapter back on.
 - The existing Debug > View disk info screen reports configured/current DMA
-  mode, active policy, DMA timeouts, and PIO recovery success/failure using
-  three saturating RAM-only counters. No event log or persistent logging was
-  added.
-- UDMA2, Apple PIO timings, the 10-second PP5020 DMA wait, whole-cache DMA
-  maintenance, write-cache behavior, and card formatting are unchanged.
+  mode, active policy, recovery results, DMA/cache timing, IRQ quality, and
+  storage wakeup sources using RAM-only aggregate counters. No event log or
+  persistent logging was added.
+- UDMA2, Apple PIO timings, whole-cache DMA maintenance, write-cache behavior,
+  and card formatting are unchanged.
 
-UDMA3/4, aggressive PIO timings, runtime TRIM, partial-cache maintenance, DMA
-IRQ experiments, controller performance instrumentation, and storage-thread
-scheduling changes remain explicitly out of scope and unimplemented.
+UDMA3/4, aggressive PIO timings, runtime TRIM, partial-cache maintenance, and
+continuous on-media logging remain explicitly out of scope and unimplemented.
 
 ## Bottom line
 

@@ -27,6 +27,12 @@
 #endif
 #include "button-target.h"
 #include "usb_drv.h"
+#ifdef HAVE_ATA_DMA_IRQ
+#include "ata-driver.h"
+#endif
+#ifdef HAVE_PP5020_PERF
+#include "pp5020-perf.h"
+#endif
 
 /* Bit 0 - 20: Cached Address */
 #define CACHE_ADDRESS_MASK ((1<<21)-1)
@@ -70,6 +76,11 @@ void __attribute__((interrupt("IRQ"))) irq_handler(void)
         /* Rather high priority - place near front */
         else if (CPU_INT_STAT & USB_MASK) {
             usb_drv_int();
+        }
+#endif
+#ifdef HAVE_ATA_DMA_IRQ
+        else if (CPU_INT_STAT & IDE_MASK) {
+            ata_dma_irq_handler();
         }
 #endif
 #if defined(IPOD_MINI) /* Mini 1st gen only, mini 2nd gen uses iPod 4G code */
@@ -227,7 +238,9 @@ static void disable_all_interrupts(void)
     GPIOL_INT_EN        = 0;
 }
 
-void ICODE_ATTR commit_dcache(void)
+/* PP5020 has no validated deterministic range-clean primitive. Keep this
+ * conservative whole-cache operation until hardware testing proves one. */
+static inline void commit_dcache_raw(void)
 {
     if (CACHE_CTL & CACHE_CTL_ENABLE)
     {
@@ -235,6 +248,17 @@ void ICODE_ATTR commit_dcache(void)
         while ((CACHE_CTL & CACHE_CTL_BUSY) != 0);
         nop; nop; nop; nop;
     }
+}
+
+void ICODE_ATTR commit_dcache(void)
+{
+#ifdef HAVE_PP5020_PERF
+    uint32_t start = USEC_TIMER;
+#endif
+    commit_dcache_raw();
+#ifdef HAVE_PP5020_PERF
+    pp5020_perf_record_cache_clean(USEC_TIMER - start);
+#endif
 }
 
 static void ICODE_ATTR cache_invalidate_special(void)
@@ -274,12 +298,20 @@ void ICODE_ATTR commit_discard_idcache(void)
 {
     if (CACHE_CTL & CACHE_CTL_ENABLE)
     {
+#ifdef HAVE_PP5020_PERF
+        uint32_t start = USEC_TIMER;
+#endif
         register int istat = disable_interrupt_save(IRQ_FIQ_STATUS);
 
-        commit_dcache();
+        /* Use the raw clean helper so one clean-and-invalidate request is not
+         * also reported as a separate caller-requested clean operation. */
+        commit_dcache_raw();
         cache_invalidate_special();
 
         restore_interrupt(istat);
+#ifdef HAVE_PP5020_PERF
+        pp5020_perf_record_cache_discard(USEC_TIMER - start);
+#endif
     }
 }
 

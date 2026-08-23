@@ -218,6 +218,10 @@
 #ifndef BOOTLOADER
 #define HAVE_ATA_DMA
 #define HAVE_ATA_DMA_RECOVERY
+#define HAVE_ATA_DMA_IRQ
+#define HAVE_PP5020_PERF
+#define ATA_DMA_TIMEOUT_SECONDS 10
+#define ATA_RESET_TIMEOUT_SECONDS 30
 #endif
 
 /* Define this, if you can switch on/off the lineout */

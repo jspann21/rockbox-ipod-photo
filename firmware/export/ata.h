@@ -165,6 +165,10 @@ int ata_num_drives(int first_drive);
 long ata_last_disk_activity(void);
 int ata_spinup_time(void); /* ticks */
 
+/* Return the next storage-thread action deadline, or 0 when no ATA action is
+ * pending. The returned tick is an absolute current_tick value. */
+long ata_next_action_tick(void);
+
 /* Returns 1 if drive is solid-state */
 static inline int ata_disk_isssd(void)
 {
@@ -229,15 +233,23 @@ int ata_get_dma_mode(void);
 #endif /* HAVE_ATA_DMA */
 
 #ifdef HAVE_ATA_DMA_RECOVERY
+enum ata_dma_quarantine_reason
+{
+    ATA_DMA_QUARANTINE_NONE = 0,
+    ATA_DMA_QUARANTINE_TIMEOUT,
+};
+
 /* Small, RAM-only failure diagnostics. Counters saturate and reset at boot. */
 struct ata_dma_recovery_stats
 {
     uint32_t dma_finish_failures;
     uint32_t pio_recovery_successes;
     uint32_t pio_recovery_failures;
+    uint32_t expired_before_command;
     int configured_dma_mode;
     int identify_current_dma_mode;
     bool dma_quarantined;
+    enum ata_dma_quarantine_reason quarantine_reason;
 };
 
 void ata_get_dma_recovery_stats(struct ata_dma_recovery_stats *stats);

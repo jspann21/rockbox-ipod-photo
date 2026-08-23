@@ -25,6 +25,12 @@
 #include "kernel.h"
 #include "ata-driver.h"
 #include "ata.h"
+#ifdef HAVE_ATA_DMA_IRQ
+#include "semaphore.h"
+#endif
+#ifdef HAVE_PP5020_PERF
+#include "pp5020-perf.h"
+#endif
 
 void ata_reset()
 {
@@ -56,6 +62,9 @@ static const unsigned long pio80mhz[] = {
 
 void ata_device_init()
 {
+#ifdef HAVE_ATA_DMA_IRQ
+    ata_dma_irq_init();
+#endif
 #ifdef SAMSUNG_YH920
     CPU_INT_DIS = (1<<IDE_IRQ);
 #endif
@@ -140,14 +149,75 @@ void ata_dma_set_mode(unsigned char mode) {
 
 #define IDE_CFG_INTRQ           8
 #define IDE_DMA_CONTROL_READ    8
-#define ATA_DMA_BUSY_POLL_USEC  5000
+#define ATA_DMA_BUSY_POLL_USEC  250
+#ifndef ATA_DMA_TIMEOUT_SECONDS
+#define ATA_DMA_TIMEOUT_SECONDS 10
+#endif
+
+#ifdef HAVE_ATA_DMA_IRQ
+static struct semaphore ata_dma_complete SHAREDBSS_ATTR;
+static volatile bool ata_dma_in_progress SHAREDBSS_ATTR;
+static volatile bool ata_dma_irq_seen SHAREDBSS_ATTR;
+static volatile bool ata_dma_completion_observed SHAREDBSS_ATTR;
+static bool ata_dma_irq_initialized;
+
+void ata_dma_irq_init(void)
+{
+    CPU_INT_DIS = IDE_MASK;
+    IDE0_CFG |= IDE_CFG_INTRQ;
+    ata_dma_in_progress = false;
+    ata_dma_irq_seen = false;
+    ata_dma_completion_observed = false;
+    if (!ata_dma_irq_initialized)
+    {
+        semaphore_init(&ata_dma_complete, 1, 0);
+        ata_dma_irq_initialized = true;
+    }
+    else
+    {
+        while (semaphore_wait(&ata_dma_complete, TIMEOUT_NOBLOCK) ==
+               OBJ_WAIT_SUCCEEDED);
+    }
+}
+
+bool ata_dma_is_in_progress(void)
+{
+    return ata_dma_in_progress;
+}
+
+void ICODE_ATTR ata_dma_irq_handler(void)
+{
+    /* Stop repeat delivery before clearing the controller latch. Do not read
+     * normal ATA status while DMA owns the bus. */
+    CPU_INT_DIS = IDE_MASK;
+    IDE0_CFG |= IDE_CFG_INTRQ;
+
+    if (ata_dma_in_progress)
+    {
+        ata_dma_irq_seen = true;
+        semaphore_release(&ata_dma_complete);
+    }
+    else if (ata_dma_completion_observed)
+    {
+#ifdef HAVE_PP5020_PERF
+        pp5020_perf_record_dma_late_irq();
+#endif
+    }
+    else
+    {
+#ifdef HAVE_PP5020_PERF
+        pp5020_perf_record_dma_spurious_irq();
+#endif
+    }
+}
+#endif /* HAVE_ATA_DMA_IRQ */
 
 /* This waits for an ATA interrupt using polling.
    In ATA_CONTROL, CONTROL_nIEN must be cleared.
  */
 static ICODE_ATTR int ata_wait_intrq(void)
 {
-    long timeout = current_tick + HZ*10;
+    long timeout = current_tick + HZ*ATA_DMA_TIMEOUT_SECONDS;
     long yield_time = USEC_TIMER + ATA_DMA_BUSY_POLL_USEC;
 
     do
@@ -230,6 +300,10 @@ bool ata_dma_setup(void *addr, unsigned long bytes, bool write) {
 
     IDE0_CFG |= 0x8000;
 
+#ifdef HAVE_PP5020_PERF
+    pp5020_perf_record_dma_request(bytes);
+#endif
+
     return true;
 }
 
@@ -241,6 +315,23 @@ bool ata_dma_setup(void *addr, unsigned long bytes, bool write) {
  */
 bool ata_dma_finish(void) {
     bool res;
+#ifdef HAVE_ATA_DMA_IRQ
+    uint32_t start = USEC_TIMER;
+    uint32_t busy_start;
+    uint32_t busy_elapsed;
+    long timeout = current_tick + HZ*ATA_DMA_TIMEOUT_SECONDS;
+
+    while (semaphore_wait(&ata_dma_complete, TIMEOUT_NOBLOCK) ==
+           OBJ_WAIT_SUCCEEDED);
+    ata_dma_irq_seen = false;
+    ata_dma_completion_observed = false;
+    ata_dma_in_progress = true;
+
+    /* Clear stale controller INTRQ before unmasking the only interrupt used
+     * by this transfer. */
+    IDE0_CFG |= IDE_CFG_INTRQ;
+    CPU_INT_EN = IDE_MASK;
+#endif
 
     /* It may be okay to put this at the end of setup */
     IDE_DMA_CONTROL |= 1;
@@ -249,10 +340,62 @@ bool ata_dma_finish(void) {
        Reading standard ATA status while DMA is in progress causes
        failures and hangs.  Because of that, another wait is used.
      */
-    res = ata_wait_intrq();
+#ifdef HAVE_ATA_DMA_IRQ
+    busy_start = USEC_TIMER;
+    do
+    {
+        if (ata_dma_irq_seen || (IDE0_CFG & IDE_CFG_INTRQ))
+            break;
+        ata_keep_active();
+    } while (TIME_BEFORE(USEC_TIMER,
+                         busy_start + ATA_DMA_BUSY_POLL_USEC));
+    busy_elapsed = USEC_TIMER - busy_start;
 
+    res = ata_dma_irq_seen || (IDE0_CFG & IDE_CFG_INTRQ);
+    if (res && !ata_dma_irq_seen)
+    {
+#ifdef HAVE_PP5020_PERF
+        pp5020_perf_record_dma_missing_irq();
+#endif
+    }
+    else if (!res && TIME_BEFORE(current_tick, timeout))
+    {
+        int ticks = timeout - current_tick;
+        if (ticks < 1)
+            ticks = 1;
+        res = semaphore_wait(&ata_dma_complete, ticks) ==
+              OBJ_WAIT_SUCCEEDED && ata_dma_irq_seen;
+    }
+
+    CPU_INT_DIS = IDE_MASK;
+    if (!res && (IDE0_CFG & IDE_CFG_INTRQ))
+    {
+        /* Completion became visible at the hard-timeout boundary even though
+         * delivery was missing; accept the polled hardware result. */
+        res = true;
+#ifdef HAVE_PP5020_PERF
+        pp5020_perf_record_dma_missing_irq();
+#endif
+    }
+    ata_dma_completion_observed = true;
+    ata_dma_in_progress = false;
+    IDE0_CFG |= IDE_CFG_INTRQ;
+#else
+    res = ata_wait_intrq();
+#endif
+
+    /* Always leave the host DMA engine quiescent, including on timeout. The
+     * caller may reset the ATA device without sampling task-file status. */
     IDE0_CFG &= ~0x8000;
     IDE_DMA_CONTROL &= ~0x80000001;
+
+#ifdef HAVE_PP5020_PERF
+#ifdef HAVE_ATA_DMA_IRQ
+    pp5020_perf_record_dma_complete(USEC_TIMER - start, busy_elapsed, res);
+#else
+    pp5020_perf_record_dma_complete(0, 0, res);
+#endif
+#endif
 
 #if ATA_MAX_UDMA > 2
     if (dma_boosted) {

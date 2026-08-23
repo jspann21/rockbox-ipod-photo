@@ -23,6 +23,9 @@
 #include "usb.h"
 #include "disk.h"
 #include "pathfuncs.h"
+#ifdef HAVE_PP5020_PERF
+#include "pp5020-perf.h"
+#endif
 
 #ifdef HAVE_SDMMC_HOST
 # include "sdmmc_host.h"
@@ -158,6 +161,37 @@ static FORCE_INLINE int storage_event_send(unsigned int route, long id,
 }
 #endif /* ndef CONFIG_STORAGE_MULTI */
 
+static int storage_wait_ticks(bool usb_mode)
+{
+    (void)usb_mode;
+
+#if (CONFIG_STORAGE == STORAGE_ATA)
+    long deadline;
+
+    /* USB connect/disconnect events wake this queue directly. Do not retain
+     * an ATA idle deadline while USB owns the storage interface. */
+    if (usb_mode)
+        return TIMEOUT_BLOCK;
+
+    deadline = ata_next_action_tick();
+    if (deadline) {
+        if (!TIME_BEFORE(current_tick, deadline))
+            return 0;
+
+        /* ATA deadlines are short relative to the signed tick range, so this
+         * subtraction is rollover-safe when paired with TIME_BEFORE above. */
+        return deadline - current_tick;
+    }
+
+    /* ATA_OFF and standby without delayed power-off have no pending action. */
+    return TIMEOUT_BLOCK;
+#endif /* CONFIG_STORAGE == STORAGE_ATA */
+
+    /* Other storage drivers still use their existing periodic idle handler.
+     * ATA-only targets take the exact-deadline path above. */
+    return HZ/2;
+}
+
 static void NORETURN_ATTR storage_thread(void)
 {
     unsigned int bdcast = CONFIG_STORAGE;
@@ -166,7 +200,10 @@ static void NORETURN_ATTR storage_thread(void)
 
     while (1)
     {
-        queue_wait_w_tmo(&storage_queue, &ev, HZ/2);
+        queue_wait_w_tmo(&storage_queue, &ev, storage_wait_ticks(usb_mode));
+#ifdef HAVE_PP5020_PERF
+        pp5020_perf_record_storage_wakeup(ev.id == SYS_TIMEOUT);
+#endif
 
         switch (ev.id)
         {
