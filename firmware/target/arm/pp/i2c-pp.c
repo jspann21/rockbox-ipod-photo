@@ -52,6 +52,20 @@ static struct mutex i2c_mtx SHAREDBSS_ATTR;
 
 #define POLL_TIMEOUT (HZ)
 
+static void pp_i2c_recover(void)
+{
+    /* A timed-out transfer can leave BUSY latched indefinitely.  Reset only
+     * the I2C block so later PMU, RTC and accessory accesses can proceed. */
+#if CONFIG_I2C == I2C_PP5002
+    DEV_EN |= 0x2;
+#else
+    DEV_EN |= DEV_I2C;
+#endif
+    DEV_RS |= DEV_I2C;
+    nop;
+    DEV_RS &= ~DEV_I2C;
+}
+
 static int pp_i2c_wait_not_busy(void)
 {
     unsigned long timeout;
@@ -63,6 +77,7 @@ static int pp_i2c_wait_not_busy(void)
          yield();
     }
 
+    pp_i2c_recover();
     return -1;
 }
 
