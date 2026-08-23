@@ -34,7 +34,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       long-list selection behavior, eliminate unchanged edge redraws, and
       reclaim list width when no icon column is needed; keep pagination valid
       when an oversized font leaves less than one row; and preserve a valid
-      zero selection when deleting the last item.
+      zero selection when deleting the last item while announcing any newly
+      selected row when spoken menus are enabled.
 - [x] **Native 220x176 skins and display updates:** bound generated statusbar and
       custom-skin fonts, images, dimensions, and allocations; keep simple lists,
       quickscreens, oversized themed rows, and the fallback WPS usable within

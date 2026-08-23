@@ -442,7 +442,13 @@ void gui_synclist_add_item(struct gui_synclist * gui_list)
 void gui_synclist_del_item(struct gui_synclist * gui_list)
 {
     if (gui_list->nb_items > 0)
+    {
+        int old_selection = gui_list->selected_item;
         gui_synclist_set_nb_items(gui_list, gui_list->nb_items - 1);
+        if (gui_list->nb_items > 0 &&
+            gui_list->selected_item != old_selection)
+            _gui_synclist_speak_item(gui_list);
+    }
 }
 
 /*
