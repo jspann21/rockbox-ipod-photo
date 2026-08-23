@@ -72,7 +72,7 @@
 
 static bool dirty[NB_SCREENS];
 
-bool skin_render(struct gui_wps *gwps, unsigned refresh_mode);
+void skin_render(struct gui_wps *gwps, unsigned refresh_mode);
 
 bool skin_is_dirty(enum screen_type screen)
 {
@@ -99,9 +99,9 @@ void skin_update(enum skinnable_screens skin, enum screen_type screen,
     if (cuesheet_update)
         skin_request_full_update(skin);
 
-    if (skin_render(gwps, skin_do_full_update(skin, screen) ?
-                           SKIN_REFRESH_ALL : update_type))
-        skin_mark_dirty(screen);
+    skin_render(gwps, skin_do_full_update(skin, screen) ?
+                        SKIN_REFRESH_ALL : update_type);
+    skin_mark_dirty(screen);
 }
 
 #ifdef AB_REPEAT_ENABLE

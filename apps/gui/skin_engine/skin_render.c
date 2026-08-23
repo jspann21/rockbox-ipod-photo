@@ -841,7 +841,7 @@ void skin_render_viewport(struct skin_element* viewport, struct gui_wps *gwps,
     wps_display_images(gwps, &skin_viewport->vp);
 }
 
-bool skin_render(struct gui_wps *gwps, unsigned refresh_mode)
+void skin_render(struct gui_wps *gwps, unsigned refresh_mode)
 {
     const int vp_is_appearing = (VP_DRAW_WASHIDDEN|VP_DRAW_HIDEABLE);
     struct wps_data *data = gwps->data;
@@ -850,8 +850,6 @@ bool skin_render(struct gui_wps *gwps, unsigned refresh_mode)
     struct skin_element* viewport;
     struct skin_viewport* skin_viewport;
     char *label;
-    bool screen_dirty = false;
-
     int old_refresh_mode = refresh_mode;
     skin_buffer = get_skin_buffer(gwps->data);
 
@@ -864,14 +862,13 @@ bool skin_render(struct gui_wps *gwps, unsigned refresh_mode)
             get_current_activity() == ACTIVITY_WPS) /* only clear if in WPS */
         {
             display->clear_viewport();
-            screen_dirty = true;
         }
     }
 
     viewport = SKINOFFSETTOPTR(skin_buffer, data->tree);
-    if (!viewport) return screen_dirty;
+    if (!viewport) return;
     skin_viewport = SKINOFFSETTOPTR(skin_buffer, viewport->data);
-    if (!skin_viewport) return screen_dirty;
+    if (!skin_viewport) return;
     label = SKINOFFSETTOPTR(skin_buffer, skin_viewport->label);
     if (skin_viewport->label == VP_DEFAULT_LABEL)
         label = VP_DEFAULT_LABEL_STRING;
@@ -927,9 +924,6 @@ bool skin_render(struct gui_wps *gwps, unsigned refresh_mode)
         if (viewport->children_count)
             skin_render_viewport(get_child(viewport->children, 0), gwps,
                                  skin_viewport, vp_refresh_mode);
-        if ((skin_viewport->vp.flags & VP_FLAG_VP_SET_CLEAN) ==
-                VP_FLAG_VP_DIRTY)
-            screen_dirty = true;
         refresh_mode = old_refresh_mode;
     }
 #if (LCD_DEPTH > 1) || (defined(HAVE_REMOTE_LCD) && (LCD_REMOTE_DEPTH > 1))
@@ -945,7 +939,6 @@ bool skin_render(struct gui_wps *gwps, unsigned refresh_mode)
     }
     /* Restore the default viewport */
     display->set_viewport_ex(NULL, VP_FLAG_VP_SET_CLEAN);
-    return screen_dirty;
 }
 
 static __attribute__((noinline))

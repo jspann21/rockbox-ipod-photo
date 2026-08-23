@@ -41,15 +41,12 @@
 #include "misc.h"
 #include "led.h"
 #include "peakmeter.h"
-#include "splash.h"
 /* Image stuff */
 #include "albumart.h"
 #include "playlist.h"
 #include "playback.h"
 #include "metadata.h"
-#include "crc32.h"
 #include "file.h"
-#include "core_alloc.h"
 #include "tdspeed.h"
 #include "viewport.h"
 #include "tagcache.h"
@@ -72,10 +69,6 @@
 #include "list.h"
 #include "option_select.h"
 #include "wps.h"
-
-#if (CONFIG_STORAGE & STORAGE_ATA)
-#include "ata.h" /* ata_disk_isssd() */
-#endif
 
 #define NOINLINE __attribute__ ((noinline))
 
@@ -207,20 +200,26 @@ const char *get_cuesheetid3_token(struct wps_token *token, struct mp3entry *id3,
     return NULL;
 }
 
-/* Whole-playlist progress by time (%pX). if track count exceeds MAX_TRACKS
- * the tag falls back to position-based progress.
- * The cache is keyed on the track count and a crc of the
- * first, middle and last filenames, so a playlist change, same-length swap,
- * or reshuffle causes a reload of the length data. */
+/* Whole-playlist progress by time (%pX). If track count exceeds MAX_TRACKS
+ * the tag falls back to position-based progress. The cache is built a small
+ * batch at a time so entering the WPS never blocks while every playlist file
+ * is opened. */
 #define PLPCT_MAX_TRACKS 500
+#define PLPCT_SCAN_BATCH 2
 
 static struct {
-    uint32_t sig;           /* signature of the playlist to detect changed playlist or reshuffle*/
+    uint32_t sig;           /* signature of the playlist to detect changes */
     int amount;
-    bool nomem;             /* allocation failed -> position fallback */
+    int scan_index;
+    long scan_tick;
+    bool fallback;          /* unsupported/error -> position fallback */
+    bool ready;
     bool enabled;           /* tag was parsed */
-    uint16_t track_mins[PLPCT_MAX_TRACKS];
-    unsigned long total_min;
+    uint16_t track_secs[PLPCT_MAX_TRACKS];
+    unsigned long total_secs;
+#if (CONFIG_STORAGE & STORAGE_ATA)
+    uint32_t format_bps[AFMT_NUM_CODECS];
+#endif
 } plpct = { .amount = -1, .enabled = false };
 
 static uint32_t plpct_sig(void)
@@ -254,35 +253,54 @@ void wps_playlist_percent_prepare(void)
     if (!plpct.enabled)
         return;
 
-    plpct.nomem = true;
-
     int amount = playlist_amount();
     plpct.sig = plpct_sig();
     plpct.amount = amount;
-    if (amount <= 0 || amount > PLPCT_MAX_TRACKS) /* too many tracks abort */
-    {
+    plpct.scan_index = 0;
+    plpct.scan_tick = -1;
+    plpct.total_secs = 0;
+    plpct.ready = false;
+    plpct.fallback = amount <= 0 || amount > PLPCT_MAX_TRACKS;
+
+    if (plpct.fallback)
         return;
-    }
+
+    memset(plpct.track_secs, 0,
+           (size_t)amount * sizeof(plpct.track_secs[0]));
+#if (CONFIG_STORAGE & STORAGE_ATA)
+    memset(plpct.format_bps, 0, sizeof(plpct.format_bps));
+#endif
+}
+
+/* Scan only a couple of entries per WPS refresh. The equal-weight estimate is
+ * displayed until the complete cache is ready, avoiding jumps caused by a
+ * partially populated duration table. */
+static void plpct_scan_step(void)
+{
+    if (plpct.fallback || plpct.ready)
+        return;
+
+    /* A skin may contain both numeric and bar forms of %pX. Do one batch,
+     * not one batch per occurrence, during a render tick. */
+    if (plpct.scan_tick == current_tick)
+        return;
+    plpct.scan_tick = current_tick;
 
     struct playlist_track_info info;
-
     struct mp3entry *tmp = get_temp_mp3entry(NULL); /* shared scratch */
-
     if (!tmp)
         return;
-#if (CONFIG_STORAGE & STORAGE_ATA) /* Harddrive estimate length based on filesize */
-    unsigned int last_afmt = AFMT_UNKNOWN;
-    uint32_t last_bps = 0;
-#endif
-    for (int n = 0; n < amount; n++)
+
+    int stop = MIN(plpct.amount, plpct.scan_index + PLPCT_SCAN_BATCH);
+    while (plpct.scan_index < stop)
     {
+        int n = plpct.scan_index;
         unsigned long secs = 0;
-        uint16_t mins = 0;
         if (playlist_get_track_info(NULL, n, &info) < 0) /* couldn't get track filename abort */
             goto abort;
 
         int slot = info.display_index - 1;
-        if (slot < 0 || slot >= amount)
+        if (slot < 0 || slot >= plpct.amount)
             goto abort;
 
 #if (CONFIG_STORAGE & STORAGE_ATA) /* Harddrive */
@@ -294,22 +312,22 @@ void wps_playlist_percent_prepare(void)
 
             if (size > 0)
             {
-                if (afmt != last_afmt || last_bps == 0
-                    || amount <= 50 || (amount <= 250 && ata_disk_isssd())) // TODO tune this for harddisk devices
+                if (afmt < AFMT_NUM_CODECS && plpct.format_bps[afmt] != 0)
                 {
-                    if (get_metadata_afmt(tmp, fd, info.filename, afmt,
-                        METADATA_EXCLUDE_ID3_PATH | METADATA_EXCLUDE_NORMALIZE))
+                    secs = (unsigned long)((uint64_t)size /
+                                           plpct.format_bps[afmt]);
+                }
+                else if (get_metadata_afmt(tmp, fd, info.filename, afmt,
+                         METADATA_EXCLUDE_ID3_PATH |
+                         METADATA_EXCLUDE_NORMALIZE))
+                {
+                    secs = tmp->length / 1000;
+                    if (afmt < AFMT_NUM_CODECS && tmp->length > 0)
                     {
-                        secs = tmp->length / 1000;
-                        last_bps = (uint32_t)((uint64_t)size * 1000 / tmp->length);
-                        last_afmt = afmt;
+                        plpct.format_bps[afmt] =
+                            (uint32_t)((uint64_t)size * 1000 / tmp->length);
                     }
                 }
-                else /* file size only -- no per-track metadata parse */
-                {
-                    secs = (unsigned long)((uint64_t)size / last_bps);
-                }
-                mins = MIN(MAX(1, (secs + 30) / 60), 65535ul);/* minutes, rounded to nearest */
             }
             close(fd);
         }
@@ -318,18 +336,29 @@ void wps_playlist_percent_prepare(void)
                             METADATA_EXCLUDE_ID3_PATH | METADATA_EXCLUDE_NORMALIZE))
         {
             secs = tmp->length / 1000;
-            mins = MIN(MAX(1, (secs + 30) / 60), 65535ul);/* minutes, rounded to nearest */
         }
 #endif
         /* unreadable tracks count as zero length */
-        plpct.track_mins[slot] = mins;
+        plpct.track_secs[slot] = MIN(secs, 65535ul);
+        plpct.scan_index++;
     }
 
-    plpct.total_min = 0;
-    for (int t = 0; t < plpct.amount; t++)
-        plpct.total_min += plpct.track_mins[t];
-    plpct.nomem = false;
+    if (plpct.scan_index == plpct.amount)
+    {
+        plpct.total_secs = 0;
+        for (int t = 0; t < plpct.amount; t++)
+            plpct.total_secs += plpct.track_secs[t];
+        plpct.ready = plpct.total_secs > 0;
+        plpct.fallback = !plpct.ready;
+    }
+
+    plpct.scan_tick = current_tick;
+    get_temp_mp3entry(tmp); /* release scratch */
+    return;
+
 abort:
+    plpct.fallback = true;
+    plpct.scan_tick = current_tick;
     get_temp_mp3entry(tmp); /* release scratch */
 }
 
@@ -345,24 +374,31 @@ bool wps_get_playlist_percent(struct mp3entry *id3, unsigned long elapsed_ms,
     uint32_t sig = plpct_sig();
     if (amount != plpct.amount || sig != plpct.sig)
     {
-        splashf(0, ID2P(LANG_WAIT));
         wps_playlist_percent_enable();
         wps_playlist_percent_prepare();
     }
-    /* error parsing playlist or more than MAX_TRACKS fall back to
-       position-based progress rather than blank */
-    if (plpct.nomem)
+
+    plpct_scan_step();
+
+    /* While scanning, on error, or above MAX_TRACKS, report responsive
+     * position-based progress rather than blocking or showing a blank tag. */
+    if (plpct.fallback || !plpct.ready)
     {
         plpct_estimate(id3, elapsed_ms, index, amount, elapsed_s, total_s);
         return true;
     }
 
-    unsigned long before_min = 0;
+    unsigned long before_secs = 0;
     for (int t = 0; t < index - 1; t++)
-        before_min += plpct.track_mins[t];
+        before_secs += plpct.track_secs[t];
 
-    *elapsed_s = before_min * 60 + elapsed_ms / 1000;
-    *total_s = plpct.total_min * 60;
+    int current = index - 1;
+    unsigned long current_secs = MAX(1UL, id3->length / 1000);
+    unsigned long adjusted_total = plpct.total_secs -
+                                   plpct.track_secs[current] + current_secs;
+
+    *elapsed_s = before_secs + elapsed_ms / 1000;
+    *total_s = adjusted_total;
     if (*elapsed_s > *total_s)
         *elapsed_s = *total_s;
     return true;
