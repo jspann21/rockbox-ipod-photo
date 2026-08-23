@@ -907,6 +907,10 @@ static int freeze_lock(void)
 void ata_spindown(int seconds)
 {
     sleep_timeout = seconds * HZ;
+    /* A failed-sleep retry belongs to the old timeout policy. Leaving an
+     * already-expired retry armed after disabling or extending spindown would
+     * make the exact-deadline storage loop wake continuously. */
+    sleep_retry_tick = 0;
     /* Exact-deadline ATA targets may currently be blocked with no timeout.
      * Re-evaluate whenever the runtime setting enables, disables, shortens, or
      * extends automatic sleep. */
