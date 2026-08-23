@@ -400,6 +400,7 @@ static int ata_transfer_sectors(uint64_t start,
     long spinup_start = current_tick;
 #ifdef HAVE_ATA_DMA
     bool usedma = false;
+    bool dma_failed = false;
 #endif
 
     if (incount == 0)
@@ -457,7 +458,8 @@ static int ata_transfer_sectors(uint64_t start,
 
 #ifdef HAVE_ATA_DMA
         /* If DMA is supported and parameters are ok for DMA, use it */
-        if (dma_mode && ata_dma_setup(inbuf, incount * log_sector_size, write))
+        if (!dma_failed && dma_mode &&
+            ata_dma_setup(inbuf, incount * log_sector_size, write))
             usedma = true;
 #endif
 
@@ -513,6 +515,11 @@ static int ata_transfer_sectors(uint64_t start,
                 ret = -7;
 
             if (ret != 0) {
+                /* Some flash adapters advertise a DMA mode that is unstable
+                 * in practice. Recover the controller, then retry this
+                 * request through PIO instead of repeating the same failed
+                 * DMA transaction until the overall timeout expires. */
+                dma_failed = true;
                 if (perform_soft_reset()) {
                     ret = -8;
                     goto error;
