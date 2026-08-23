@@ -1095,12 +1095,17 @@ static int set_features(void)
             if (status & STATUS_DF)
                 return -20 - i;
 
-            if((status & STATUS_ERR) && (features[i].subcommand != 0x05)) {
-                /* some CF cards don't like advanced powermanagement
-                   even if they mark it as supported - go figure... */
-                if(ATA_IN8(ATA_ERROR) & ERROR_ABRT) {
+            if (status & STATUS_ERR) {
+                uint8_t error = ATA_IN8(ATA_ERROR);
+
+                /* Transfer-mode setup is required for the controller and
+                 * device to agree. The remaining features are optional;
+                 * several CF/SD bridges advertise them but reject the SET
+                 * FEATURES command. In that case retain the device default
+                 * instead of making the disk unusable. */
+                if (features[i].subcommand == 0x03 ||
+                    !(error & ERROR_ABRT))
                     return -20 - i;
-                }
             }
         }
     }
