@@ -240,7 +240,7 @@ static void disable_all_interrupts(void)
 
 /* PP5020 has no validated deterministic range-clean primitive. Keep this
  * conservative whole-cache operation until hardware testing proves one. */
-static inline void commit_dcache_raw(void)
+static void ICODE_ATTR commit_dcache_raw(void)
 {
     if (CACHE_CTL & CACHE_CTL_ENABLE)
     {
