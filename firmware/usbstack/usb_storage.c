@@ -318,6 +318,7 @@ static void fill_inquiry(IF_MD_NONVOID(int lun));
 static void send_and_read_next(void);
 static bool ejected[NUM_DRIVES];
 static bool locked[NUM_DRIVES];
+static volatile bool usb_storage_connected;
 
 static int usb_interface;
 
@@ -376,10 +377,40 @@ static bool check_disk_present(IF_MD_NONVOID(int volume))
 #endif
 }
 
+static int usb_storage_drive_count(void)
+{
+    int count = storage_num_drives();
+
+    /* Keep all USB-visible state arrays bounded even if a storage backend
+     * reports a geometry that does not fit the target's configured drives. */
+    return count > NUM_DRIVES ? NUM_DRIVES : MAX(count, 0);
+}
+
+static bool usb_storage_lun_available(int lun)
+{
+    if (lun < 0 || lun >= usb_storage_drive_count() || ejected[lun])
+        return false;
+
+    if (storage_removable(lun) && !storage_present(lun)) {
+        ejected[lun] = true;
+        if (locked[lun]) {
+            locked[lun] = false;
+            queue_broadcast(SYS_USB_LUN_LOCKED, (lun<<16)+0);
+        }
+        return false;
+    }
+
+    return true;
+}
+
 #ifdef HAVE_HOTSWAP
 static void usb_storage_notify_hotswap(int volume,bool inserted)
 {
     logf("notify %d",inserted);
+    if (volume < 0 || volume >= usb_storage_drive_count()) {
+        logf("invalid hotswap volume %d", volume);
+        return;
+    }
     if(inserted && check_disk_present(IF_MD(volume))) {
         ejected[volume] = false;
     }
@@ -433,12 +464,13 @@ static int usb_storage_get_config_descriptor(unsigned char *dest,int max_packet_
      defined(BOOTLOADER) || CONFIG_CPU == DM320) && !defined(CPU_PP502x)
 #define USB_STATIC_ALLOC
 #else
-static int usb_handle = 0;
+static int usb_handle = -1;
 #endif
 static int usb_storage_init_connection(void)
 {
     logf("ums: set config");
     /* prime rx endpoint. We only need room for commands */
+    usb_storage_connected = false;
     state = WAITING_FOR_COMMAND;
 
 #ifdef USB_STATIC_ALLOC
@@ -463,6 +495,11 @@ static int usb_storage_init_connection(void)
         return -1;
 
     buffer = core_get_data(usb_handle);
+    if (buffer == NULL) {
+        core_free(usb_handle);
+        usb_handle = -1;
+        return -1;
+    }
 #if defined(UNCACHED_ADDR) && CONFIG_CPU != AS3525
     cbw_buffer = (void *)UNCACHED_ADDR((unsigned int)(buffer+31) & 0xffffffe0);
 #else
@@ -474,13 +511,26 @@ static int usb_storage_init_connection(void)
     ramdisk_buffer = tb.transfer_buffer + ALLOCATE_BUFFER_SIZE;
 #endif
 #endif
-    usb_drv_recv_nonblocking(EP_OUT, cbw_buffer, MAX_CBW_SIZE);
-
     int i;
-    for(i=0;i<storage_num_drives();i++) {
+    for(i=0;i<usb_storage_drive_count();i++) {
         locked[i] = false;
         ejected[i] = !check_disk_present(IF_MD(i));
         queue_broadcast(SYS_USB_LUN_LOCKED, (i<<16)+0);
+    }
+
+    /* Mark the connection live before priming OUT: a fast host/driver can
+     * complete the CBW receive before usb_drv_recv_nonblocking() returns. */
+    usb_storage_connected = true;
+    if (usb_drv_recv_nonblocking(EP_OUT, cbw_buffer, MAX_CBW_SIZE) < 0) {
+        logf("ums: failed to prime CBW receive");
+        usb_storage_connected = false;
+#ifndef USB_STATIC_ALLOC
+        core_free(usb_handle);
+        usb_handle = -1;
+        cbw_buffer = NULL;
+        tb.transfer_buffer = NULL;
+#endif
+        return -1;
     }
     return 0;
 }
@@ -496,13 +546,25 @@ static int usb_storage_flush_media(void)
 
 void usb_storage_disconnect(void)
 {
-#ifdef HAVE_STORAGE_FLUSH
+    usb_storage_connected = false;
+    state = WAITING_FOR_COMMAND;
+
     /* Hosts do not invariably issue SYNCHRONIZE CACHE before disconnecting
      * or changing configuration. Preserve device and adapter write caches. */
-    usb_storage_flush_media();
-#endif
+    if (usb_storage_flush_media() != 0)
+        logf("ums: disconnect flush failed");
+
+    for (int i = 0; i < usb_storage_drive_count(); i++) {
+        if (locked[i]) {
+            locked[i] = false;
+            queue_broadcast(SYS_USB_LUN_LOCKED, (i<<16)+0);
+        }
+    }
+
 #ifndef USB_STATIC_ALLOC
-    usb_handle = core_free(usb_handle);
+    if (usb_handle >= 0)
+        usb_handle = core_free(usb_handle);
+    usb_handle = -1;
     cbw_buffer = NULL;
     tb.transfer_buffer = NULL;
 #endif
@@ -524,6 +586,9 @@ static void receive_next_cbw(void)
 static void usb_storage_transfer_complete(int ep,int dir,int status,int length)
 {
     (void)ep;
+    if (!usb_storage_connected)
+        return;
+
     struct command_block_wrapper* cbw = (void*)cbw_buffer;
 #if CONFIG_RTC
     struct tm tm;
@@ -551,6 +616,14 @@ static void usb_storage_transfer_complete(int ep,int dir,int status,int length)
                     cur_sense_data.sense_key=SENSE_ILLEGAL_REQUEST;
                     cur_sense_data.asc=ASC_INVALID_FIELD_IN_CBD;
                     cur_sense_data.ascq=0;
+                    break;
+                }
+
+                if (!usb_storage_lun_available(cur_cmd.lun)) {
+                    send_csw(UMS_STATUS_FAIL);
+                    cur_sense_data.sense_key = SENSE_NOT_READY;
+                    cur_sense_data.asc = ASC_MEDIUM_NOT_PRESENT;
+                    cur_sense_data.ascq = 0;
                     break;
                 }
 
@@ -674,6 +747,13 @@ static void usb_storage_transfer_complete(int ep,int dir,int status,int length)
                 logf("OUT received in SENDING");
             }
             if(status==0) {
+                if (!usb_storage_lun_available(cur_cmd.lun)) {
+                    send_csw(UMS_STATUS_FAIL);
+                    cur_sense_data.sense_key = SENSE_NOT_READY;
+                    cur_sense_data.asc = ASC_MEDIUM_NOT_PRESENT;
+                    cur_sense_data.ascq = 0;
+                    break;
+                }
                 if(cur_cmd.count==0) {
                     //logf("data sent, now send csw");
                     if(cur_cmd.last_result!=0) {
@@ -747,24 +827,36 @@ static void usb_storage_send_smart(uint8_t cmd)
 /* called by usb_core_control_request() */
 static bool usb_storage_control_request(struct usb_ctrlrequest* req, uint8_t* reqdata, size_t reqdata_size)
 {
-    (void)reqdata;
-    (void)reqdata_size;
+    const uint8_t class_interface_in = USB_DIR_IN | USB_TYPE_CLASS |
+                                       USB_RECIP_INTERFACE;
+    const uint8_t class_interface_out = USB_TYPE_CLASS |
+                                        USB_RECIP_INTERFACE;
 
-    bool handled = false;
+    if (req->wIndex != (uint16_t)usb_interface ||
+        req->wValue != 0)
+        return false;
 
     switch (req->bRequest) {
         case USB_BULK_GET_MAX_LUN: {
-            *tb.max_lun = storage_num_drives() - 1;
+            if (req->bRequestType != class_interface_in ||
+                req->wLength != 1 || reqdata_size < 1)
+                return false;
+
+            int drive_count = usb_storage_drive_count();
 #if defined(HAVE_MULTIDRIVE)
-            if(skip_first) (*tb.max_lun) --;
+            if (skip_first && drive_count > 0)
+                drive_count--;
 #endif
+            reqdata[0] = drive_count > 0 ? drive_count - 1 : 0;
             logf("ums: getmaxlun");
-            usb_core_control_response(USB_CONTROL_ACK, tb.max_lun, 1);
-            handled = true;
-            break;
+            usb_core_control_response(USB_CONTROL_ACK, reqdata, 1);
+            return true;
         }
 
         case USB_BULK_RESET_REQUEST:
+            if (req->bRequestType != class_interface_out ||
+                req->wLength != 0)
+                return false;
             logf("ums: bulk reset");
             state = WAITING_FOR_COMMAND;
             /* UMS BOT 3.1 says The device shall preserve the value of its bulk
@@ -775,16 +867,29 @@ static bool usb_storage_control_request(struct usb_ctrlrequest* req, uint8_t* re
             usb_drv_reset_endpoint(EP_OUT, true);
 #endif
             usb_core_control_response(USB_CONTROL_ACK, NULL, 0);
-            handled = true;
-            break;
+            return true;
     }
 
-    return handled;
+    return false;
 }
 
 static void send_and_read_next(void)
 {
-    int result = USBSTOR_READ_SECTORS_FILTER();
+    int result = 0;
+
+    if (!usb_storage_lun_available(cur_cmd.lun)) {
+        cur_cmd.last_result = -1;
+        cur_sense_data.sense_key = SENSE_NOT_READY;
+        cur_sense_data.asc = ASC_MEDIUM_NOT_PRESENT;
+        cur_sense_data.ascq = 0;
+        /* Do not expose the previous contents of the double buffer when the
+         * medium vanishes between reads. Finish the BOT data phase empty and
+         * report the failure through the normal CSW path. */
+        send_command_failed_result();
+        return;
+    }
+
+    result = USBSTOR_READ_SECTORS_FILTER();
 
     if(result != 0 && cur_cmd.last_result == 0)
         cur_cmd.last_result = result;
@@ -807,12 +912,17 @@ static void send_and_read_next(void)
                 ramdisk_buffer + cur_cmd.sector*cur_cmd.block_size,
                 MIN(READ_BUFFER_SIZE/cur_cmd.block_size, cur_cmd.count)*cur_cmd.block_size);
 #else
-        result = storage_read_sectors(IF_MD(cur_cmd.lun,)
-                cur_cmd.sector,
-                MIN(READ_BUFFER_SIZE/cur_cmd.block_size, cur_cmd.count),
-                cur_cmd.data[cur_cmd.data_select]);
-        if(cur_cmd.last_result == 0)
-            cur_cmd.last_result = result;
+        if (usb_storage_lun_available(cur_cmd.lun)) {
+            result = storage_read_sectors(IF_MD(cur_cmd.lun,)
+                    cur_cmd.sector,
+                    MIN(READ_BUFFER_SIZE/cur_cmd.block_size, cur_cmd.count),
+                    cur_cmd.data[cur_cmd.data_select]);
+            if(cur_cmd.last_result == 0)
+                cur_cmd.last_result = result;
+        }
+        else {
+            cur_cmd.last_result = -1;
+        }
 
 #endif
     }
@@ -851,13 +961,22 @@ static void handle_scsi(struct command_block_wrapper* cbw)
     }
 
 #if defined(HAVE_MULTIDRIVE)
-    if(skip_first) lun++;
+    if(skip_first) {
+        if (lun == 0xff) {
+            cur_sense_data.sense_key = SENSE_ILLEGAL_REQUEST;
+            cur_sense_data.asc = ASC_INVALID_FIELD_IN_CBD;
+            cur_sense_data.ascq = 0;
+            send_csw(UMS_STATUS_FAIL);
+            return;
+        }
+        lun++;
+    }
 #endif
 
     cur_cmd.lun = lun;
     cur_cmd.cur_cmd = cbw->command_block[0];
 
-    if (lun >= NUM_DRIVES || lun >= storage_num_drives())
+    if (lun >= usb_storage_drive_count())
     {
         cur_sense_data.sense_key = SENSE_ILLEGAL_REQUEST;
         cur_sense_data.asc = ASC_INVALID_FIELD_IN_CBD;
@@ -878,8 +997,8 @@ static void handle_scsi(struct command_block_wrapper* cbw)
     if (block_size == 0 || block_count == 0)
         lun_present = false;
 
-    if(storage_removable(lun) && !storage_present(lun))
-        ejected[lun] = true;
+    if (!usb_storage_lun_available(lun))
+        lun_present = false;
 
     if(ejected[lun])
         lun_present = false;
@@ -922,14 +1041,15 @@ static void handle_scsi(struct command_block_wrapper* cbw)
             logf("scsi report luns %d",lun);
             unsigned int allocation_length=0;
             int i;
-            unsigned int response_length = 8+8*storage_num_drives();
+            int drive_count = usb_storage_drive_count();
+            unsigned int response_length = 8+8*drive_count;
             allocation_length |= (uint32_t)cbw->command_block[6] << 24;
             allocation_length |= (uint32_t)cbw->command_block[7] << 16;
             allocation_length |= (uint32_t)cbw->command_block[8] << 8;
             allocation_length |= (uint32_t)cbw->command_block[9];
             memset(tb.lun_data,0,sizeof(struct report_lun_data));
-            tb.lun_data->lun_list_length=htobe32(8*storage_num_drives());
-            for(i=0;i<storage_num_drives();i++)
+            tb.lun_data->lun_list_length=htobe32(8*drive_count);
+            for(i=0;i<drive_count;i++)
             {
                 if(storage_removable(i))
                     tb.lun_data->luns[i][1]=1;
