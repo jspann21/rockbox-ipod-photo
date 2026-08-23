@@ -57,6 +57,13 @@ int get_ogg_format_and_move_to_comments(int fd, unsigned char *buf)
     else if (memcmp(&buf[28], "Speex   ", 8) == 0)
     {
         uint32_t header_size = get_long_le(&buf[60]);
+        off_t file_size = filesize(fd);
+
+        if (file_size < 28 || header_size < 80 ||
+            header_size > (uint64_t)file_size - 28)
+        {
+            return AFMT_UNKNOWN;
+        }
 
         /* Comments are in second Ogg page (byte 108 onwards for Speex) */
         if (lseek(fd, 28 + header_size, SEEK_SET) < 0)
@@ -112,16 +119,26 @@ bool get_ogg_metadata(int fd, struct mp3entry* id3)
     int segments;
     int i;
     bool eof = false;
+    uint32_t sample_rate;
+    int32_t speex_sample_rate;
+    off_t file_size;
+    off_t tail_size;
 
     id3->codectype = get_ogg_format_and_move_to_comments(fd, buf);
     switch (id3->codectype)
     {
         case AFMT_OGG_VORBIS:
-            id3->frequency = get_long_le(&buf[40]);
+            sample_rate = get_long_le(&buf[40]);
+            if (sample_rate == 0)
+                return false;
+            id3->frequency = sample_rate;
             id3->vbr = true;
             break;
         case AFMT_SPEEX:
-            id3->frequency = get_slong(&buf[64]);
+            speex_sample_rate = get_slong(&buf[64]);
+            if (speex_sample_rate <= 0)
+                return false;
+            id3->frequency = (unsigned long)speex_sample_rate;
             id3->vbr = get_long_le(&buf[88]);
             break;
         case AFMT_OPUS:
@@ -133,7 +150,10 @@ bool get_ogg_metadata(int fd, struct mp3entry* id3)
             return false;
     }
 
-    id3->filesize = filesize(fd);
+    file_size = filesize(fd);
+    if (file_size < 0)
+        return false;
+    id3->filesize = (unsigned long)file_size;
     
     /* We need to ensure the serial number from this page is the same as the
      * one from the last page (since we only support a single bitstream).
@@ -141,13 +161,16 @@ bool get_ogg_metadata(int fd, struct mp3entry* id3)
     serial = get_long_le(&buf[14]);
     long remaining = 0;
     comment_size = read_vorbis_tags(fd, id3, remaining);
+    if (comment_size <= 0)
+        return false;
 
     /* We now need to search for the last page in the file - identified by 
      * by ('O','g','g','S',0) and retrieve totalsamples.
      */
 
     /* A page is always < 64 kB */
-    if (lseek(fd, -(MIN(64 * 1024, id3->filesize)), SEEK_END) < 0)
+    tail_size = MIN((off_t)(64 * 1024), file_size);
+    if (lseek(fd, -tail_size, SEEK_END) < 0)
     {
         return false;
     }
@@ -231,7 +254,10 @@ bool get_ogg_metadata(int fd, struct mp3entry* id3)
         return false;
     }
     
-    id3->bitrate = (((int64_t) id3->filesize - comment_size) * 8) / id3->length;
+    if ((uint64_t)comment_size > (uint64_t)id3->filesize)
+        return false;
+    id3->bitrate = (((uint64_t)id3->filesize - comment_size) * 8) /
+                   id3->length;
     
     return true;
 }

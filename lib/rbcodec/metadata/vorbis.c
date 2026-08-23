@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <inttypes.h>
+#include <limits.h>
 #include "platform.h"
 #include "metadata.h"
 #include "metadata_common.h"
@@ -379,17 +380,23 @@ long read_vorbis_tags(int fd, struct mp3entry *id3,
     
     /* Skip vendor string */
 
-    if (!file_read_int32(&file, &len) || (ogg_file_read(&file, NULL, len) < 0))
+    if (!file_read_int32(&file, &len) || len < 0 ||
+        ogg_file_read(&file, NULL, (size_t)len) != len)
     {
         return 0;
     }
 
-    if (!file_read_int32(&file, &comment_count))
+    if (!file_read_int32(&file, &comment_count) || comment_count < 0)
     {
         return 0;
     }
-    
-    comment_size += 4 + len + 4;
+
+    if (comment_size > LONG_MAX - 8 ||
+        (long)len > LONG_MAX - comment_size - 8)
+    {
+        return 0;
+    }
+    comment_size += 8 + len;
 
     for (i = 0; i < comment_count && file.packet_remaining > 0; i++)
     {
@@ -401,6 +408,11 @@ long read_vorbis_tags(int fd, struct mp3entry *id3,
             return 0;
         }
         
+        if (len < 0 || comment_size > LONG_MAX - 4 ||
+            (long)len > LONG_MAX - comment_size - 4)
+        {
+            return 0;
+        }
         comment_size += 4 + len;
         read_len = file_read_string(&file, name, sizeof(name), '=', len);
         
@@ -461,6 +473,9 @@ long read_vorbis_tags(int fd, struct mp3entry *id3,
         buf += len;
         buf_remaining -= len;
     }
+
+    if (i != comment_count)
+        return 0;
 
     /* Skip to the end of the block (needed by FLAC) */
     if (file.packet_remaining)

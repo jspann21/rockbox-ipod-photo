@@ -15,8 +15,7 @@ static bool parse_sgc_header(int fd, struct mp3entry* id3)
     /* Use the trackname part of the id3 structure as a temporary buffer */
     unsigned char* buf = (unsigned char *)id3->path;
 
-     lseek(fd, 0, SEEK_SET);
-     if (read(fd, buf, 0xA0) < 0xA0)
+    if (lseek(fd, 0, SEEK_SET) < 0 || read(fd, buf, 0xA0) < 0xA0)
         return false;
 
     /* calculate track length with number of tracks */
@@ -29,17 +28,17 @@ static bool parse_sgc_header(int fd, struct mp3entry* id3)
 
     /* Some metadata entries have 32 bytes length */
     /* Game */
-    memcpy(p, &buf[64], 32); *(p + 33) = '\0';
+    memcpy(p, &buf[64], 32); *(p + 32) = '\0';
     id3->title = p;
     p += strlen(p)+1;
 
     /* Artist */
-    memcpy(p, &buf[96], 32); *(p + 33) = '\0';
+    memcpy(p, &buf[96], 32); *(p + 32) = '\0';
     id3->artist = p;
     p += strlen(p)+1;
 
     /* Copyright */
-    memcpy(p, &buf[128], 32); *(p + 33) = '\0';
+    memcpy(p, &buf[128], 32); *(p + 32) = '\0';
     id3->album = p;
     p += strlen(p)+1;
     return true;

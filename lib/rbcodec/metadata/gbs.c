@@ -14,8 +14,7 @@ static bool parse_gbs_header(int fd, struct mp3entry* id3)
 {
     /* Use the trackname part of the id3 structure as a temporary buffer */
     unsigned char* buf = (unsigned char *)id3->path;
-    lseek(fd, 0, SEEK_SET);
-    if (read(fd, buf, 112) < 112)
+    if (lseek(fd, 0, SEEK_SET) < 0 || read(fd, buf, 112) < 112)
         return false;
 
     /* Calculate track length with number of subtracks */
@@ -28,17 +27,17 @@ static bool parse_gbs_header(int fd, struct mp3entry* id3)
 
     /* Some metadata entries have 32 bytes length */
     /* Game */
-    memcpy(p, &buf[16], 32); *(p + 33) = '\0';
+    memcpy(p, &buf[16], 32); *(p + 32) = '\0';
     id3->title = p;
     p += strlen(p)+1;
 
     /* Artist */
-    memcpy(p, &buf[48], 32); *(p + 33) = '\0';
+    memcpy(p, &buf[48], 32); *(p + 32) = '\0';
     id3->artist = p;
     p += strlen(p)+1;
 
     /* Copyright */
-    memcpy(p, &buf[80], 32); *(p + 33) = '\0';
+    memcpy(p, &buf[80], 32); *(p + 32) = '\0';
     id3->album = p;
 
     return true;

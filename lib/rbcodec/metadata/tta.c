@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <inttypes.h>
+#include <limits.h>
 #include "platform.h"
 
 #include "metadata.h"
@@ -50,6 +51,26 @@
 
 #define GET_HEADER(x, tag) TTA_HEADER_GETTER_ ## tag((x) + TTA_HEADER_ ## tag)
 
+/* Keep metadata acceptance in sync with the bundled decoder. */
+static bool tta_supported_frequency(uint32_t frequency)
+{
+    switch (frequency)
+    {
+        case 16000:
+        case 22050:
+        case 24000:
+        case 32000:
+        case 44100:
+        case 48000:
+        case 64000:
+        case 88200:
+        case 96000:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static void read_id3_tags(int fd, struct mp3entry* id3)
 {
     id3->title    = NULL;
@@ -70,18 +91,25 @@ static void read_id3_tags(int fd, struct mp3entry* id3)
 bool get_tta_metadata(int fd, struct mp3entry* id3)
 {
     unsigned char ttahdr[TTA_HEADER_SIZE];
-    unsigned int datasize;
-    unsigned int origsize;
-    int bps;
+    uint64_t datasize;
+    uint64_t origsize;
+    unsigned int audio_format;
+    uint32_t data_length;
+    unsigned int channels;
+    unsigned int frequency;
+    unsigned int bps;
+    off_t file_size;
 
-    lseek(fd, 0, SEEK_SET);
+    if (lseek(fd, 0, SEEK_SET) < 0)
+        return false;
 
     /* read id3 tags */
     read_id3_tags(fd, id3);
-    lseek(fd, id3->id3v2len, SEEK_SET);
+    if (lseek(fd, id3->first_frame_offset, SEEK_SET) < 0)
+        return false;
 
     /* read TTA header */
-    if (read(fd, ttahdr, TTA_HEADER_SIZE) < 0)
+    if (read(fd, ttahdr, TTA_HEADER_SIZE) != TTA_HEADER_SIZE)
         return false;
 
     /* check for TTA3 signature */
@@ -90,27 +118,71 @@ bool get_tta_metadata(int fd, struct mp3entry* id3)
 
     /* skip check CRC */
 
-    unsigned short channels  = (GET_HEADER(ttahdr, NUM_CHANNELS));
-    id3->frequency = (GET_HEADER(ttahdr, SAMPLE_RATE));
-    id3->length    = ((GET_HEADER(ttahdr, DATA_LENGTH)) / id3->frequency) * 1000LL;
-    bps            = (GET_HEADER(ttahdr, BITS_PER_SAMPLE));
+    audio_format = GET_HEADER(ttahdr, AUDIO_FORMAT);
+    channels  = GET_HEADER(ttahdr, NUM_CHANNELS);
+    frequency = GET_HEADER(ttahdr, SAMPLE_RATE);
+    data_length = GET_HEADER(ttahdr, DATA_LENGTH);
+    bps = GET_HEADER(ttahdr, BITS_PER_SAMPLE);
 
-    datasize = id3->filesize - id3->first_frame_offset;
-    origsize = (GET_HEADER(ttahdr, DATA_LENGTH)) * ((bps + 7) / 8) * channels;
+    if (audio_format != 1 || channels == 0 || channels > 2 ||
+        frequency == 0 || !tta_supported_frequency(frequency) ||
+        data_length == 0 || bps == 0 || bps > 24)
+    {
+        return false;
+    }
 
-    id3->bitrate = (int) ((uint64_t) datasize * id3->frequency * channels * bps
-                                               / (origsize * 1000LL));
+    file_size = filesize(fd);
+    if (file_size < 0 ||
+        id3->first_frame_offset > (uint64_t)file_size ||
+        TTA_HEADER_SIZE > (uint64_t)file_size - id3->first_frame_offset)
+    {
+        return false;
+    }
+
+    id3->frequency = frequency;
+    uint64_t length = ((uint64_t)data_length * 1000) / frequency;
+    if (length == 0 || length > ULONG_MAX)
+        return false;
+    id3->length = (unsigned long)length;
+
+    datasize = (uint64_t)file_size - id3->first_frame_offset;
+
+    uint64_t bytes_per_sample = (bps + 7) / 8;
+    if (data_length > UINT64_MAX / bytes_per_sample)
+        return false;
+    origsize = (uint64_t)data_length * bytes_per_sample;
+    if (origsize > UINT64_MAX / channels)
+        return false;
+    origsize *= channels;
+    if (origsize == 0 || origsize > UINT64_MAX / 1000)
+        return false;
+
+    uint64_t numerator = datasize;
+    if (numerator > UINT64_MAX / id3->frequency)
+        return false;
+    numerator *= id3->frequency;
+    if (numerator > UINT64_MAX / channels)
+        return false;
+    numerator *= channels;
+    if (numerator > UINT64_MAX / bps)
+        return false;
+    numerator *= bps;
+
+    uint64_t bitrate = numerator / (origsize * 1000);
+    if (bitrate > UINT_MAX)
+        return false;
+    id3->bitrate = (unsigned int)bitrate;
 
     /* output header info (for debug) */
     DEBUGF("TTA header info ----\n");
     DEBUGF("id:        %x\n",  (unsigned int)(GET_HEADER(ttahdr, ID)));
-    DEBUGF("channels:  %d\n",  channels);
-    DEBUGF("frequency: %ld\n", id3->frequency);
-    DEBUGF("length:    %ld\n", id3->length);
-    DEBUGF("bitrate:   %d\n",  id3->bitrate);
-    DEBUGF("bits per sample: %d\n", bps);
-    DEBUGF("compressed size: %d\n", datasize);
-    DEBUGF("original size:   %d\n", origsize);
+    DEBUGF("channels:  %u\n",  channels);
+    DEBUGF("frequency: %lu\n", id3->frequency);
+    DEBUGF("length:    %lu\n", id3->length);
+    DEBUGF("bitrate:   %u\n",  id3->bitrate);
+    DEBUGF("bits per sample: %u\n", bps);
+    DEBUGF("compressed size: %llu\n", (unsigned long long)datasize);
+    DEBUGF("original size:   %llu\n", (unsigned long long)origsize);
     DEBUGF("id3----\n");
     DEBUGF("artist:  %s\n",  id3->artist);
     DEBUGF("title:   %s\n",  id3->title);
