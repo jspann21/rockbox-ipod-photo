@@ -222,6 +222,9 @@
 #define HAVE_PP5020_PERF
 #define HAVE_ATA_EXACT_DEADLINES
 #define HAVE_PCM_TRACK_CHANGE_IRQ
+/* First-pass behavior: retain write DMA only for SSD-classified adapters.
+ * Set ATA_WRITE_POLICY to ATA_WRITE_PIO_ONLY for the later A/B build. */
+#define ATA_WRITE_POLICY ATA_WRITE_DMA_IF_SSD
 #define ATA_DMA_TIMEOUT_SECONDS 10
 #define ATA_RESET_TIMEOUT_SECONDS 30
 #endif

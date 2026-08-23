@@ -54,6 +54,20 @@
 
 #ifdef HAVE_ATA_DMA
 
+/* Compile-time write policy. Keep this private to target builds; it is not a
+ * runtime user setting because changing it requires full data-integrity
+ * qualification on the installed adapter. */
+#define ATA_WRITE_DMA_IF_SSD 1
+#define ATA_WRITE_PIO_ONLY   2
+#ifndef ATA_WRITE_POLICY
+#define ATA_WRITE_POLICY ATA_WRITE_DMA_IF_SSD
+#endif
+
+#if ATA_WRITE_POLICY != ATA_WRITE_DMA_IF_SSD && \
+    ATA_WRITE_POLICY != ATA_WRITE_PIO_ONLY
+#error "Invalid ATA_WRITE_POLICY"
+#endif
+
 /* IDE DMA controller registers */
 #define IDE_DMA_CONTROL (*(volatile unsigned long *)(0xc3000400))
 #define IDE_DMA_LENGTH  (*(volatile unsigned long *)(0xc3000408))

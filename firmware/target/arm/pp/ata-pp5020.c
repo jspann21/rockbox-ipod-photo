@@ -253,14 +253,18 @@ bool ata_dma_setup(void *addr, unsigned long bytes, bool write) {
     if (!write && ((unsigned long)addr & 15))
         return false;
 
-    /* Writes only need to be word-aligned, but by default DMA
-     * is not used for writing on non-SSDs as it appears to be slower.
-     */
+    /* Writes only need to be word-aligned. The compile-time policy keeps the
+     * first pass identical to the historical SSD-only behavior and permits a
+     * controlled PIO-only A/B build without exposing an unsafe user setting. */
     if (write) {
         if ((unsigned long)addr & 3)
             return false;
+#if ATA_WRITE_POLICY == ATA_WRITE_PIO_ONLY
+        return false;
+#else
         if (!ata_is_ssd)
             return false;
+#endif
     }
 
 #if ATA_MAX_UDMA > 2
