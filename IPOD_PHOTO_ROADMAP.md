@@ -119,9 +119,10 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       no ATA work is pending.
 - [x] **A1099 performance telemetry:** retain RAM-only aggregate measurements
       for whole-cache maintenance, ATA DMA latency and busy polling, IRQ quality,
-      PIO recovery, and storage wakeup sources; expose the counters and detected
-      adapter policy as coherent per-boot debug data without continuous writes
-      to the SD card or an unsafe single-core reset of dual-core counters.
+      PIO recovery, storage wakeup sources, and PCM transition delivery; expose
+      the counters and detected adapter policy as coherent per-boot debug data,
+      with explicit reset and one-shot snapshot actions but no continuous writes
+      to the SD card.
 - [x] **PMU, battery, and I2C robustness:** preserve the last valid ADC value
       after I2C failure; allow realistic modern replacement-battery capacities
       without changing voltage calibration; propagate I2C/RTC failures; validate
@@ -154,6 +155,9 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [ ] Compare the new 250 microsecond ATA DMA poll plus IDE-interrupt path against
       the prior 5 ms threshold on the installed ATA1, including USB throughput,
       busy-poll time, timeouts, IRQ misses, and PIO fallback counts.
+- [x] Generate and review the `ipodcolor` linker map: PCM mixer buffers, cache
+      maintenance, ATA completion, deferred PCM interrupt trigger, and PCM FIQ
+      handlers remain in IRAM, with 3,048 bytes free after the main stack.
 
 ## Responsiveness and native 220x176 UI
 

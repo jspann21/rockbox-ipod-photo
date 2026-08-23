@@ -722,6 +722,24 @@ compatible shell. A representative sequence is:
     make -j4
     make zip
 
+### Measured IRAM placement after the modernization batch
+
+The `ipodcolor` linker map generated on 2026-08-23 from code commit
+`29d969bf34` confirms the hot-path placement without moving any additional
+large or cold routines:
+
+- `.ibss` occupies `0x40000000` through `0x40006b64`; `pcm_mixer.o` retains
+  its `0x884`-byte IRAM buffer block at `0x40004ef0`.
+- `.iram` occupies `0x40006b64` through `0x40009314`. The PCM mixer code,
+  `ata_dma_irq_handler`, `pp5020_defer_pcm_track_change`, `commit_dcache`,
+  `commit_discard_dcache`, and PCM FIQ handlers all remain in this region.
+- CPU/COP idle stacks occupy `0x40009314` through `0x40009418`, and the main
+  stack ends at `0x4000b418`. Against the linker script's `0x4000c000` IRAM
+  limit, this preserves `0xbe8` (3,048 bytes) of post-stack headroom.
+
+No further IRAM promotion is justified before hardware measurements identify a
+specific hot routine. The PCM buffers remain cached IRAM, not uncached DRAM.
+
 For each artifact:
 
 1. Record git commit, any exact patch/diff, toolchain versions, configure
