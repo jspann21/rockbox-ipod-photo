@@ -287,7 +287,11 @@ int ata_flush(void)
 
     if (ata_state >= ATA_SPINUP) {
         mutex_lock(&ata_mutex);
-        ret = ata_perform_flush_cache();
+        /* A storage tick may have powered the interface off after the
+         * initial state check.  Re-check while holding the same mutex used
+         * by the power-off path before touching ATA registers. */
+        if (ata_state >= ATA_SPINUP)
+            ret = ata_perform_flush_cache();
         mutex_unlock(&ata_mutex);
     }
     return ret;
@@ -1354,11 +1358,16 @@ int ata_event(long id, intptr_t data)
             (ata_state != ATA_ON || !ata_sleep_timed_out() || retry_pending)) {
 #ifdef HAVE_ATA_POWER_OFF
             if (ata_state == ATA_SLEEPING && ata_power_off_timed_out()) {
-                power_off_tick = 0;
                 mutex_lock(&ata_mutex);
-                logf("ata OFF %ld", current_tick);
-                ide_power_enable(false);
-                ata_state = ATA_OFF;
+                /* The state can change while waiting for the ATA mutex: a
+                 * read may have woken the adapter in the meantime.  Never
+                 * cut power to a newly-awake device. */
+                if (ata_state == ATA_SLEEPING && ata_power_off_timed_out()) {
+                    power_off_tick = 0;
+                    logf("ata OFF %ld", current_tick);
+                    ide_power_enable(false);
+                    ata_state = ATA_OFF;
+                }
                 mutex_unlock(&ata_mutex);
             }
 #endif
@@ -1381,9 +1390,17 @@ int ata_event(long id, intptr_t data)
         else {
             mutex_lock(&ata_mutex);
             if (ata_state < ATA_ON) {
+                int state = ata_state;
                 ata_led(true);
-                if (!(rc = ata_perform_wakeup(ata_state))) {
+                if (!(rc = ata_perform_wakeup(state))) {
                     ata_state = ATA_ON;
+#ifdef HAVE_ATA_POWER_OFF
+                } else if (state == ATA_OFF) {
+                    /* ata_power_on() enables the rail before probing the
+                     * adapter.  Roll it back when reconnect wakeup fails so
+                     * ATA_OFF remains a genuinely powered-down state. */
+                    ide_power_enable(false);
+#endif
                 }
                 ata_led(false);
             }
