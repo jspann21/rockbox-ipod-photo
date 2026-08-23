@@ -1166,6 +1166,9 @@ int STORAGE_INIT_ATTR ata_init(void)
 {
     int rc = 0;
     bool coldstart;
+#ifdef HAVE_ATA_POWER_OFF
+    bool power_enabled = false;
+#endif
 
     if (ata_state == ATA_BOOT) {
         mutex_init(&ata_mutex);
@@ -1185,6 +1188,9 @@ int STORAGE_INIT_ATTR ata_init(void)
         if (!ide_powered()) /* somebody has switched it off */
         {
             ide_power_enable(true);
+#ifdef HAVE_ATA_POWER_OFF
+            power_enabled = true;
+#endif
             sleep(HZ/4); /* allow voltage to build up */
         }
 
@@ -1306,6 +1312,10 @@ int STORAGE_INIT_ATTR ata_init(void)
     }
 
 error:
+#ifdef HAVE_ATA_POWER_OFF
+    if (power_enabled)
+        ide_power_enable(false);
+#endif
     mutex_unlock(&ata_mutex);
     return rc;
 }
