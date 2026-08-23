@@ -165,7 +165,7 @@ static int storage_wait_ticks(bool usb_mode)
 {
     (void)usb_mode;
 
-#if (CONFIG_STORAGE == STORAGE_ATA)
+#if (CONFIG_STORAGE == STORAGE_ATA) && defined(HAVE_ATA_EXACT_DEADLINES)
     long deadline;
 
     /* USB connect/disconnect events wake this queue directly. Do not retain
@@ -185,7 +185,7 @@ static int storage_wait_ticks(bool usb_mode)
 
     /* ATA_OFF and standby without delayed power-off have no pending action. */
     return TIMEOUT_BLOCK;
-#endif /* CONFIG_STORAGE == STORAGE_ATA */
+#endif /* CONFIG_STORAGE == STORAGE_ATA && HAVE_ATA_EXACT_DEADLINES */
 
     /* Other storage drivers still use their existing periodic idle handler.
      * ATA-only targets take the exact-deadline path above. */
