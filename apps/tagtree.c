@@ -2386,8 +2386,11 @@ void tagtree_exit(struct tree_context* c, bool is_visible)
 int tagtree_get_filename(struct tree_context* c, char *buf, int buflen)
 {
     struct tagcache_search tcs;
-    int extraseek = tagtree_get_entry(c, c->selected_item)->extraseek;
+    struct tagentry *entry = tagtree_get_entry(c, c->selected_item);
+    if (!entry)
+        return -3;
 
+    int extraseek = entry->extraseek;
 
     if (!tagcache_search(&tcs, tag_filename))
         return -1;
@@ -2407,7 +2410,9 @@ int tagtree_get_custom_action(struct tree_context* c)
 {
     if (c->dirlength == 0)
         return 0;
-    return tagtree_get_entry(c, c->selected_item)->customaction;
+
+    struct tagentry *entry = tagtree_get_entry(c, c->selected_item);
+    return entry ? entry->customaction : 0;
 }
 
 static void swap_array_bool(bool *a, bool *b)
@@ -2453,6 +2458,7 @@ static bool insert_all_playlist(struct tree_context *c,
     int slots_remaining = 0;
     bool fill_randomly = false;
     bool *rand_bool_array = NULL;
+    bool result = true;
     char buf[MAX_PATH];
     struct playlist_insert_context context;
 
@@ -2499,6 +2505,7 @@ static bool insert_all_playlist(struct tree_context *c,
         if (slots_remaining <= 0)
         {
             logf("Playlist has no space remaining");
+            playlist_insert_context_release(&context);
             tagcache_search_finish(&tcs);
             cpu_boost(false);
             return false;
@@ -2569,7 +2576,15 @@ static bool insert_all_playlist(struct tree_context *c,
             }
         }
 
-        if (!tagcache_retrieve(&tcs, tagtree_get_entry(c, i)->extraseek, tcs.type, buf, sizeof buf))
+        struct tagentry *entry = tagtree_get_entry(c, i);
+        if (!entry)
+        {
+            result = false;
+            break;
+        }
+
+        if (!tagcache_retrieve(&tcs, entry->extraseek, tcs.type,
+                               buf, sizeof buf))
             continue;
 
         if (playlist == NULL)
@@ -2585,12 +2600,14 @@ static bool insert_all_playlist(struct tree_context *c,
 
             if (playlist_insert_context_add(&context, buf) < 0) {
                 logf("playlist_insert_track failed");
+                result = false;
                 exit_loop_now = true;
                 break;
             }
         }
         else if (fdprintf(fd, "%s\n", buf) <= 0)
         {
+            result = false;
             exit_loop_now = true;
             break;
         }
@@ -2608,7 +2625,7 @@ static bool insert_all_playlist(struct tree_context *c,
     tagcache_search_finish(&tcs);
     cpu_boost(false);
 
-    return true;
+    return result;
 }
 
 static bool goto_allsubentries(int newtable)
@@ -2619,7 +2636,10 @@ static bool goto_allsubentries(int newtable)
     {
         tagtree_enter(tc, false);
         tagtree_load(tc);
-        newtable = tagtree_get_entry(tc, tc->selected_item)->newtable;
+        struct tagentry *entry = tagtree_get_entry(tc, tc->selected_item);
+        if (!entry)
+            return false;
+        newtable = entry->newtable;
         i++;
     }
     return (newtable == TABLE_PLAYTRACK);
@@ -2650,7 +2670,10 @@ static bool tagtree_insert_selection(int position, bool queue,
 #endif
         , 0, 0, 0);
 
-    newtable = tagtree_get_entry(tc, tc->selected_item)->newtable;
+    struct tagentry *entry = tagtree_get_entry(tc, tc->selected_item);
+    if (!entry)
+        return false;
+    newtable = entry->newtable;
 
     if (newtable == TABLE_PLAYTRACK) /* Insert a single track? */
     {
@@ -2692,7 +2715,10 @@ bool tagtree_entries_iterate(struct tagcache_search *tcs,
     int ret = true;
     int dirlevel = tc->dirlevel;
     int selected_item = tc->selected_item;
-    int newtable = tagtree_get_entry(tc, tc->selected_item)->newtable;
+    struct tagentry *entry = tagtree_get_entry(tc, tc->selected_item);
+    if (!entry)
+        return false;
+    int newtable = entry->newtable;
 
     cpu_boost(true);
     if (!goto_allsubentries(newtable))
@@ -2713,8 +2739,15 @@ bool tagtree_entries_iterate(struct tagcache_search *tcs,
                 last_tick = current_tick;
             }
 
-            if (!action_cb(tagcache_retrieve(tcs, tagtree_get_entry(tc, i)->extraseek,
-                                             tcs->type, buf, buf_sz) ? buf : NULL))
+            entry = tagtree_get_entry(tc, i);
+            if (!entry)
+            {
+                ret = false;
+                break;
+            }
+
+            if (!action_cb(tagcache_retrieve(tcs, entry->extraseek, tcs->type,
+                                             buf, buf_sz) ? buf : NULL))
             {
                 ret = false;
                 break;
@@ -2741,7 +2774,10 @@ bool tagtree_get_subentry_filename(char *buf, size_t bufsize)
     int ret = true;
     int dirlevel = tc->dirlevel;
     int selected_item = tc->selected_item;
-    int newtable = tagtree_get_entry(tc, tc->selected_item)->newtable;
+    struct tagentry *entry = tagtree_get_entry(tc, tc->selected_item);
+    if (!entry)
+        return false;
+    int newtable = entry->newtable;
 
     if (!goto_allsubentries(newtable) || tagtree_get_filename(tc, buf, bufsize) < 0)
         ret = false;
@@ -2803,6 +2839,10 @@ static int tagtree_play_folder(struct tree_context* c)
 static struct tagentry* tagtree_get_entry(struct tree_context *c, int id)
 {
     struct tagentry *entry;
+
+    if (!c || id < 0)
+        return NULL;
+
     int realid = id - current_offset;
 
     /* Load the next chunk if necessary. */
@@ -2820,8 +2860,11 @@ static struct tagentry* tagtree_get_entry(struct tree_context *c, int id)
         cpu_boost(false);
     }
 
+    if (realid < 0 || realid >= current_entry_count)
+        return NULL;
+
     entry = get_entries(c);
-    return &entry[realid];
+    return entry ? &entry[realid] : NULL;
 }
 
 char* tagtree_get_entry_name(struct tree_context *c, int id,
