@@ -45,18 +45,12 @@ static void timeout_tick(void)
     if (TIME_BEFORE(tick, next_tmo_check))
         return;
 
-    /* Callbacks may register or cancel timers and update this deadline. */
-    next_tmo_check = tick + 60*HZ;
-
     while ((curr = *p) != NULL)
     {
         int ticks;
 
         if(TIME_BEFORE(tick, curr->expires))
         {
-            if (TIME_BEFORE(curr->expires, next_tmo_check))
-                next_tmo_check = curr->expires;
-
             p++;
             continue;
         }
@@ -66,9 +60,6 @@ static void timeout_tick(void)
         if(ticks > 0)
         {
             curr->expires = tick + ticks; /* reload */
-            if (TIME_BEFORE(curr->expires, next_tmo_check))
-                next_tmo_check = curr->expires;
-
             if (*p == curr)
                 p++;
         }
@@ -79,6 +70,9 @@ static void timeout_tick(void)
                 p++;
         }
     }
+
+    /* A callback may alter any timer, not only the one being dispatched. */
+    timeout_recalc_next();
 }
 
 /* Cancels a timeout callback - can be called from the ISR */
