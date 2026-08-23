@@ -100,6 +100,15 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [x] Let the idle backlight worker sleep indefinitely, make startup ADC scans
       immediate, recover failed USB-iAP HID transactions, and leave serial iAP
       disabled rather than panicking when its worker cannot be created.
+- [x] Release rejected kernel thread slots, stop idle database-worker polling,
+      and skip redundant PP5020 clock/PLL transitions.
+- [x] Recover the PP5020 I2C controller after timeouts, reduce battery PMU
+      polling while preserving accessory detection, and bound Color LCD waits.
+- [x] Stop waking the PP5020 coprocessor on every tick when no timeout is due,
+      and cache the next callback deadline instead of scanning early.
+- [x] Keep short PP5020 ATA DMA completions responsive without yielding, fall
+      back to PIO after DMA timeouts, and tolerate rejected optional adapter
+      features without weakening required transfer-mode checks.
 
 ## Reliability and maintainability
 
@@ -113,10 +122,15 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 
 ## Storage and iFlash compatibility
 
-- [ ] Test the unchanged firmware after installing the iFlash ATA1.
+- [x] Bring up the installed iFlash ATA1 and SD card with firmware boots,
+      database generation, and USB file access.
 - [x] Audit and harden ATA IDENTIFY capability handling and LBA48 geometry;
       retain unusual-adapter reply checks for iFlash hardware validation.
 - [x] Improve DMA timeout fallback, reset recovery, and bounded retry behavior.
+- [x] Preserve the conservative Apple PIO timings and existing Photo UDMA2
+      ceiling; do not import corruption-prone faster PIO or unproven UDMA4.
+- [x] Retry an individual failed DMA request through PIO and keep optional ATA
+      feature rejection from preventing otherwise valid adapters from booting.
 - [x] Validate FAT/GPT geometry against the physical partition and make FAT32
       FSInfo optional and recoverable for broader host/iFlash compatibility.
 - [ ] Check cold boot, wake, sleep, shutdown, and storage power sequencing.
@@ -125,6 +139,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [ ] Check album-art caching, USB writes, eject, and reconnect.
 - [x] Back off failed ATA idle commands, stop storage ticks after power-off, and
       pace PictureFlow background cache work to avoid retry/wakeup storms.
+- [ ] Measure the current 5 ms ATA DMA busy-poll threshold on the installed
+      ATA1 before changing its USB-throughput/UI-responsiveness tradeoff.
 
 ## Responsiveness and native 220x176 UI
 
@@ -166,6 +182,12 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [ ] Establish replacement-battery runtime after the hardware upgrade.
 - [x] Release PictureFlow's CPU boost while idle and stop its background cache
       from continuously resetting the poweroff timer.
+- [x] Avoid redundant PP5020 frequency transitions and unconditional 100 Hz
+      coprocessor wakeups when no cross-core timeout is due.
+- [x] Reduce battery PMU reads to 1 Hz while retaining faster accessory checks,
+      and reinitialize the I2C controller after a stuck transaction.
+- [x] Bound Color LCD controller waits so failed hardware handshakes cannot spin
+      forever.
 - [ ] Check charging, suspend, resume, and shutdown behavior after power changes.
 - [ ] Exercise serial remotes, docks, and car accessories against the iAP fixes.
 - [ ] Leave USB digital audio and bootloader changes as later research work.
@@ -173,7 +195,10 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 ## Practical validation loop
 
 - [x] Build the `ipodcolor` target after each useful software batch.
-- [ ] Install and smoke-test boot, playback, wheel, hold, shutdown, and USB.
+- [x] Install development builds and exercise boot, database generation,
+      iFlash storage, and USB transfer on the physical target.
+- [ ] Smoke-test playback, wheel, hold, shutdown, suspend/resume, and USB again
+      after the latest kernel, power, LCD, and ATA batch.
 - [ ] Test the behavior that actually changed; use a broader pass for storage,
       power, USB, or other hardware-sensitive changes.
 - [ ] Keep the official bootloader and a known-good `.rockbox` backup available.
