@@ -368,6 +368,11 @@ bool ata_dma_finish(void) {
     }
 
     CPU_INT_DIS = IDE_MASK;
+    /* The IRQ may have completed after semaphore_wait() timed out but before
+     * the mask took effect. Its handler clears the hardware latch, so preserve
+     * that boundary completion through the shared flag before checking INTRQ. */
+    if (!res && ata_dma_irq_seen)
+        res = true;
     if (!res && (IDE0_CFG & IDE_CFG_INTRQ))
     {
         /* Completion became visible at the hard-timeout boundary even though
