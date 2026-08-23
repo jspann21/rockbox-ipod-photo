@@ -220,7 +220,7 @@ static bool lcd_setup_drawing_region(int x, int y, int width, int height)
 
         /* position cursor (set AD0-AD15) */
         /* start vert << 8 | start horiz */
-        if (!lcd_cmd_data(LCD_CNTL_RAM_ADDR_SET, ((x0 << 8) | y0))
+        if (!lcd_cmd_data(LCD_CNTL_RAM_ADDR_SET, ((x0 << 8) | y0)))
             return false;
 
         /* start drawing */
