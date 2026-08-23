@@ -140,6 +140,7 @@ void ata_dma_set_mode(unsigned char mode) {
 
 #define IDE_CFG_INTRQ           8
 #define IDE_DMA_CONTROL_READ    8
+#define ATA_DMA_BUSY_POLL_USEC  5000
 
 /* This waits for an ATA interrupt using polling.
    In ATA_CONTROL, CONTROL_nIEN must be cleared.
@@ -147,13 +148,21 @@ void ata_dma_set_mode(unsigned char mode) {
 static ICODE_ATTR int ata_wait_intrq(void)
 {
     long timeout = current_tick + HZ*10;
+    long yield_time = USEC_TIMER + ATA_DMA_BUSY_POLL_USEC;
 
     do
     {
         if (IDE0_CFG & IDE_CFG_INTRQ)
             return 1;
         ata_keep_active();
-        yield();
+
+        /* Flash DMA normally completes within a few milliseconds. Yielding
+         * immediately can let an unrelated, long-running UI update delay ATA
+         * completion enough to hurt USB throughput. Poll briefly first, then
+         * yield normally so a slow or stalled device cannot monopolize the
+         * CPU until the timeout. */
+        if (!TIME_BEFORE(USEC_TIMER, yield_time))
+            yield();
     } while (TIME_BEFORE(current_tick, timeout));
 
     return 0; /* timeout */
