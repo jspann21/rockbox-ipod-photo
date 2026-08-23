@@ -874,6 +874,8 @@ static int32_t handle_command(struct IAPContext* ctx, uint8_t lingo, uint16_t co
             } else if(request_span->size == sizeof(struct IAPSetPlayStatusChangeNotification4BytesPayload)) {
                 read_request(IAPSetPlayStatusChangeNotification4BytesPayload);
                 ctx->enabled_notifications_4 = play_stage_change_notification_set_mask_to_type_mask(swap_32(request->mask));
+            } else {
+                return -IAPAckStatus_EBadParameter;
             }
             return ipod_ack_ext(command, IAPAckStatus_Success, response_span);
         } break;
