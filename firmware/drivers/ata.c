@@ -822,7 +822,7 @@ static int ata_transfer_sectors(uint64_t start,
      * a client has successfully woken the device, wake that thread so it can
      * arm the new exact idle deadline instead of leaving the adapter on. */
     if (ret == 0 && woke_from_low_power)
-        storage_post_event(SYS_TIMEOUT, 0);
+        storage_post_event(Q_STORAGE_REEVALUATE, 0);
 
     return ret;
 }
@@ -910,7 +910,7 @@ void ata_spindown(int seconds)
     /* Exact-deadline ATA targets may currently be blocked with no timeout.
      * Re-evaluate whenever the runtime setting enables, disables, shortens, or
      * extends automatic sleep. */
-    storage_post_event(SYS_TIMEOUT, 0);
+    storage_post_event(Q_STORAGE_REEVALUATE, 0);
 }
 
 bool ata_disk_is_active(void)

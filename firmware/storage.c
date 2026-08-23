@@ -207,6 +207,7 @@ static void NORETURN_ATTR storage_thread(void)
 
         switch (ev.id)
         {
+        case Q_STORAGE_REEVALUATE:
         case SYS_TIMEOUT:;
             /* drivers hold their bit low when they want to
                sleep and keep it high otherwise */
