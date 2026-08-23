@@ -120,6 +120,13 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [x] Reclaim list width when no icon column is needed, redraw PictureFlow track
       lists only when their visible state changes, and schedule car-adapter
       delayed resume without a permanent 100 Hz callback.
+- [x] Reject malformed Monkey's Audio, TTA, Ogg, Speex, Vorbis, GBS, and SGC
+      metadata before unsafe offsets, arithmetic, or incomplete comments reach
+      the database and codecs.
+- [x] Bound serial-iAP transmitter readiness waits, coalesce stale event-driven
+      USB cable transitions, and validate battery interpolation intervals.
+- [x] Use a compact Photo fallback WPS and a lower-cost flat color selector by
+      default while preserving the configurable gradient style.
 
 ## Reliability and maintainability
 
@@ -164,6 +171,9 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       idle framebuffer transfers, and suppress clean skin-engine LCD updates.
 - [x] Avoid reserving a blank icon column in native lists and suppress unchanged
       PictureFlow track-list framebuffer transfers.
+- [x] Keep the native fallback WPS within the Photo's vertical budget without a
+      continuous peak-meter redraw and default new configurations to a flat,
+      themeable selector bar.
 - [ ] Improve menu, browser, and now-playing geometry for 220x176 rather than
       shrinking layouts designed for 320x240.
 - [ ] Improve typography, spacing, icons, focus indication, and status layout.
@@ -206,6 +216,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       forever.
 - [x] Replace continuous car-adapter resume polling with a cancelable one-shot
       deadline and recover cleanly from failed USB controller reset attempts.
+- [x] Coalesce obsolete queued cable-status transitions and bound serial-iAP
+      transmitter waits so accessory faults cannot leave the CPU spinning.
 - [ ] Check charging, suspend, resume, and shutdown behavior after power changes.
 - [ ] Exercise serial remotes, docks, and car accessories against the iAP fixes.
 - [ ] Leave USB digital audio and bootloader changes as later research work.
