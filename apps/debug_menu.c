@@ -1945,25 +1945,27 @@ static int pp5020_perf_callback(int btn, struct gui_synclist *lists)
         perf.dma_requests ? perf.dma_total_us / perf.dma_requests : 0,
         (unsigned long)perf.dma_max_us);
     simplelist_addline("DMA busy-poll us: %llu", perf.dma_busy_poll_us);
-    simplelist_addline("Timeouts/PIO fallback: %llu/%llu",
-        perf.dma_timeouts, perf.pio_fallbacks);
-    simplelist_addline("IRQ missing/late/spurious: %llu/%llu/%llu",
-        perf.dma_missing_irqs, perf.dma_late_irqs,
-        perf.dma_spurious_irqs);
+    simplelist_addline("DMA timeouts: %llu", perf.dma_timeouts);
+    simplelist_addline("PIO fallbacks: %llu", perf.pio_fallbacks);
+    simplelist_addline("IDE IRQ missing: %llu", perf.dma_missing_irqs);
+    simplelist_addline("IDE IRQ late: %llu", perf.dma_late_irqs);
+    simplelist_addline("IDE IRQ spurious: %llu", perf.dma_spurious_irqs);
     simplelist_addline("Storage event wakes: %llu",
         perf.storage_event_wakeups);
     simplelist_addline("Storage deadline wakes: %llu",
         perf.storage_deadline_wakeups);
     simplelist_addline("Cache clean calls: %llu", perf.cache_clean_calls);
-    simplelist_addline("Cache clean avg/max us: %llu/%lu",
+    simplelist_addline("Cache clean avg us: %llu",
         perf.cache_clean_calls ?
-            perf.cache_clean_total_us / perf.cache_clean_calls : 0,
+            perf.cache_clean_total_us / perf.cache_clean_calls : 0);
+    simplelist_addline("Cache clean max us: %lu",
         (unsigned long)perf.cache_clean_max_us);
     simplelist_addline("Cache discard calls: %llu",
         perf.cache_discard_calls);
-    simplelist_addline("Cache discard avg/max us: %llu/%lu",
+    simplelist_addline("Cache discard avg us: %llu",
         perf.cache_discard_calls ?
-            perf.cache_discard_total_us / perf.cache_discard_calls : 0,
+            perf.cache_discard_total_us / perf.cache_discard_calls : 0);
+    simplelist_addline("Cache discard max us: %lu",
         (unsigned long)perf.cache_discard_max_us);
     return btn;
 }
