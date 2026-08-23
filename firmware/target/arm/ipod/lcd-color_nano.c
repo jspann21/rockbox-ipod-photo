@@ -41,26 +41,51 @@
 /*** globals ***/
 int lcd_type = 1; /* 0,2 = "old" Color/Photo; 1,3 = similar to HD66789R */
 
-static inline void lcd_wait_write(void)
+#define LCD_POLL_LIMIT 1000000
+
+static inline bool lcd_wait_write(void)
 {
-    while (LCD2_PORT & LCD2_BUSY_MASK);
+    unsigned int count = LCD_POLL_LIMIT;
+
+    while (LCD2_PORT & LCD2_BUSY_MASK)
+        if (--count == 0)
+            return false;
+
+    return true;
 }
 
-static void lcd_cmd_data(unsigned cmd, unsigned data)
+static inline bool lcd_wait_block(unsigned long mask)
+{
+    unsigned int count = LCD_POLL_LIMIT;
+
+    while (!(LCD2_BLOCK_CTRL & mask))
+        if (--count == 0)
+            return false;
+
+    return true;
+}
+
+static bool lcd_cmd_data(unsigned cmd, unsigned data)
 {
     if ((lcd_type&1) == 0) {  /* 16 bit transfers */
-        lcd_wait_write();
+        if (!lcd_wait_write())
+            return false;
         LCD2_PORT = LCD2_CMD_MASK | cmd;
-        lcd_wait_write();
+        if (!lcd_wait_write())
+            return false;
         LCD2_PORT = LCD2_CMD_MASK | data;
     } else {
-        lcd_wait_write();
+        if (!lcd_wait_write())
+            return false;
         LCD2_PORT = LCD2_CMD_MASK;
         LCD2_PORT = LCD2_CMD_MASK | cmd;
-        lcd_wait_write();
+        if (!lcd_wait_write())
+            return false;
         LCD2_PORT = LCD2_DATA_MASK | (data >> 8);
         LCD2_PORT = LCD2_DATA_MASK | (data & 0xff);
     }
+
+    return true;
 }
 
 /*** hardware configuration ***/
@@ -154,7 +179,7 @@ void lcd_shutdown(void) {
 #endif
 
 /* Helper function to set up drawing region and start drawing */
-static void lcd_setup_drawing_region(int x, int y, int width, int height)
+static bool lcd_setup_drawing_region(int x, int y, int width, int height)
 {
     int y0, x0, y1, x1;
     
@@ -175,15 +200,18 @@ static void lcd_setup_drawing_region(int x, int y, int width, int height)
     if ((lcd_type&1) == 0) {
         /* x0 and x1 need to be swapped until 
          * proper direction setup is added */
-        lcd_cmd_data(0x12, y0);      /* start vert */
-        lcd_cmd_data(0x13, x1);      /* start horiz */
-        lcd_cmd_data(0x15, y1);      /* end vert */
-        lcd_cmd_data(0x16, x0);      /* end horiz */
+        if (!lcd_cmd_data(0x12, y0) || /* start vert */
+            !lcd_cmd_data(0x13, x1) || /* start horiz */
+            !lcd_cmd_data(0x15, y1) || /* end vert */
+            !lcd_cmd_data(0x16, x0))   /* end horiz */
+            return false;
     } else {
         /* max horiz << 8 | start horiz */
-        lcd_cmd_data(LCD_CNTL_HORIZ_RAM_ADDR_POS, (y1 << 8) | y0);
+        if (!lcd_cmd_data(LCD_CNTL_HORIZ_RAM_ADDR_POS, (y1 << 8) | y0))
+            return false;
         /* max vert << 8 | start vert */
-        lcd_cmd_data(LCD_CNTL_VERT_RAM_ADDR_POS, (x1 << 8) | x0);
+        if (!lcd_cmd_data(LCD_CNTL_VERT_RAM_ADDR_POS, (x1 << 8) | x0))
+            return false;
 
         /* start vert = max vert */
 #if CONFIG_LCD == LCD_IPODCOLOR
@@ -192,13 +220,17 @@ static void lcd_setup_drawing_region(int x, int y, int width, int height)
 
         /* position cursor (set AD0-AD15) */
         /* start vert << 8 | start horiz */
-        lcd_cmd_data(LCD_CNTL_RAM_ADDR_SET, ((x0 << 8) | y0));
+        if (!lcd_cmd_data(LCD_CNTL_RAM_ADDR_SET, ((x0 << 8) | y0))
+            return false;
 
         /* start drawing */
-        lcd_wait_write();
+        if (!lcd_wait_write())
+            return false;
         LCD2_PORT = LCD2_CMD_MASK;
         LCD2_PORT = (LCD2_CMD_MASK|LCD_CNTL_WRITE_TO_GRAM);
     }
+
+    return true;
 }
 
 /* Line write helper function for lcd_yuv_blit. Writes two lines of yuv420. */
@@ -218,7 +250,8 @@ void lcd_blit_yuv(unsigned char * const src[3],
     width  = (width  + 1) & ~1; /* ensure width is even  */
     height = (height + 1) & ~1; /* ensure height is even */
 
-    lcd_setup_drawing_region(x, y, width, height);
+    if (!lcd_setup_drawing_region(x, y, width, height))
+        return;
 
     z = stride * src_y;
     yuv_src[0] = src[0] + z + src_x;
@@ -250,7 +283,10 @@ void lcd_blit_yuv(unsigned char * const src[3],
         } while (--r > 0);
         
         /* transfer of pixels_to_write bytes finished */
-        while (!(LCD2_BLOCK_CTRL & LCD2_BLOCK_READY));
+        if (!lcd_wait_block(LCD2_BLOCK_READY)) {
+            LCD2_BLOCK_CONFIG = 0;
+            return;
+        }
         LCD2_BLOCK_CONFIG = 0;
         
         height -= h;
@@ -258,13 +294,16 @@ void lcd_blit_yuv(unsigned char * const src[3],
 }
 
 /* Helper function writes 'count' consecutive pixels from src to LCD IF */
-static void lcd_write_line(int count, unsigned long *src)
+static bool lcd_write_line(int count, unsigned long *src)
 {
     do {
-        while (!(LCD2_BLOCK_CTRL & LCD2_BLOCK_TXOK)); /* FIFO wait */
+        if (!lcd_wait_block(LCD2_BLOCK_TXOK))
+            return false;
         LCD2_BLOCK_DATA = *src++;                     /* output 2 pixels */
         count -= 2;
     } while (count > 0);
+
+    return true;
 }
 
 /* Update a fraction of the display. */
@@ -299,7 +338,8 @@ void lcd_update_rect(int x, int y, int width, int height)
     if (width <= 0)
         return;
 
-    lcd_setup_drawing_region(x, y, width, height);
+    if (!lcd_setup_drawing_region(x, y, width, height))
+        return;
 
     addr = (unsigned long*)FBADDR(x, y);
 
@@ -321,18 +361,27 @@ void lcd_update_rect(int x, int y, int width, int height)
 
         if (LCD_WIDTH == width) {
             /* for each row and column in a single call */
-            lcd_write_line(h*width, addr);
+            if (!lcd_write_line(h*width, addr)) {
+                LCD2_BLOCK_CONFIG = 0;
+                return;
+            }
             addr += LCD_WIDTH/2*h;
         } else {
             /* for each row */
             for (r = 0; r < h; r++) {
-                lcd_write_line(width, addr);
+                if (!lcd_write_line(width, addr)) {
+                    LCD2_BLOCK_CONFIG = 0;
+                    return;
+                }
                 addr += LCD_WIDTH/2;
             }
         }
 
         /* transfer of pixels_to_write bytes finished */
-        while (!(LCD2_BLOCK_CTRL & LCD2_BLOCK_READY));
+        if (!lcd_wait_block(LCD2_BLOCK_READY)) {
+            LCD2_BLOCK_CONFIG = 0;
+            return;
+        }
         LCD2_BLOCK_CONFIG = 0;
 
         height -= h;

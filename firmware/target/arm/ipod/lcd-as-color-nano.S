@@ -169,10 +169,16 @@ lcd_write_yuv420_lines:
     orr         r5, r5, r6, lsl #11   /* r5 = pixel_2 */
 #ifdef FORCE_FIFO_WAIT
     /* wait for FIFO half full */
+    mov         r0, #1
+    mov         r0, r0, lsl #16
 .fifo_wait1:
     ldr         r3, [lr, #-0xE0]      /* while !(LCD2_BLOCK_CTRL & 0x1000000); */
     tst         r3, #0x1000000
-    beq         .fifo_wait1
+    bne         .fifo_ready1
+    subs        r0, r0, #1
+    bne         .fifo_wait1
+    b           .fifo_abort
+.fifo_ready1:
 #endif
 
     mov         r3, r4, lsl #8        /* swap pixel_1 */
@@ -258,10 +264,16 @@ lcd_write_yuv420_lines:
     orr         r5, r5, r6, lsl #11   /* r5 = pixel_2 */
 #ifdef FORCE_FIFO_WAIT
     /* wait for FIFO half full */
+    mov         r0, #1
+    mov         r0, r0, lsl #16
 .fifo_wait2:
     ldr         r3, [lr, #-0xE0]      /* while !(LCD2_BLOCK_CTRL & 0x1000000); */
     tst         r3, #0x1000000
-    beq         .fifo_wait2
+    bne         .fifo_ready2
+    subs        r0, r0, #1
+    bne         .fifo_wait2
+    b           .fifo_abort
+.fifo_ready2:
 #endif
 
     mov         r3, r4, lsl #8        /* swap pixel_1 */
@@ -278,6 +290,7 @@ lcd_write_yuv420_lines:
     bgt         20b                   /* back to beginning  */
     /* 2nd loop end */
 
+.fifo_abort:
     ldr         r3, [sp, #12]
     add         sp, sp, r3            /* deallocate buffer */
     ldmpc       regs=r4-r10           /* restore registers */
