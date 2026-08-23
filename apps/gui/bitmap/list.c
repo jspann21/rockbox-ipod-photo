@@ -204,6 +204,12 @@ void list_draw(struct screen *display, struct gui_synclist *list)
     const bool scrollbar_in_right = (list->scrollbar == SCROLLBAR_RIGHT);
     const bool show_cursor = (list->cursor_style == SYNCLIST_CURSOR_NOSTYLE);
     const bool have_icons = list->callback_get_item_icon && list->show_icons;
+    /* A bar selector does not need the cursor-icon column. Likewise, a list
+     * without an icon callback should not reserve space merely because the
+     * global "show icons" setting is enabled. Keep text as wide as possible
+     * on small native displays while preserving alignment for pointer-style
+     * selectors and actual item icons. */
+    const bool reserve_icon = show_cursor || have_icons;
 
     struct viewport *parent = (list->parent[screen]);
     struct line_desc linedes = LINE_DESC_DEFINIT;
@@ -352,7 +358,7 @@ void list_draw(struct screen *display, struct gui_synclist *list)
         }
         if (line_indent)
         {
-            if (list->show_icons)
+            if (reserve_icon)
                 line_indent *= icon_w;
             else
                 line_indent *= character_width;
@@ -362,7 +368,8 @@ void list_draw(struct screen *display, struct gui_synclist *list)
         /* position the string at the correct offset place */
         int item_width,h;
         display->getstringsize(entry_name, &item_width, &h);
-        item_offset = gui_list_get_item_offset(list, item_width, indent + (list->show_icons ? icon_w : 0),
+        item_offset = gui_list_get_item_offset(list, item_width,
+                line_indent + (reserve_icon ? icon_w : 0),
                 display, list_text_vp);
 
         /* draw the selected line */
