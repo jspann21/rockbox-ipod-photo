@@ -41,25 +41,15 @@ unsigned short adc_scan(int channel)
 {
     unsigned int adc_data_1;
     unsigned int adc_data_2;
-    long timeout;
 
-    if (channel < 0 || channel >= NUM_ADC_CHANNELS)
+    if (channel >= NUM_ADC_CHANNELS)
         return 0;
 
     /* Start conversion */
     ADC_ADDR |= 0x80000000;
 
     /* Wait for conversion to complete */
-    timeout = current_tick + HZ;
-    while ((ADC_STATUS & (0x40<<8*channel)) == 0) {
-        if (TIME_AFTER(current_tick, timeout)) {
-            /* A missing status bit must not strand the power thread in an
-             * unbounded poll. Keep the last sample for battery reporting. */
-            ADC_ADDR &=~ 0x80000000;
-            return adcdata[channel];
-        }
-        yield();
-    }
+    while((ADC_STATUS & (0x40<<8*channel))==0);
 
     /* Stop conversion */
     ADC_ADDR &=~ 0x80000000;
