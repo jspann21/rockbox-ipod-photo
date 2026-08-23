@@ -100,6 +100,8 @@
 
 static void usb_reset_controller(void)
 {
+    unsigned long timeout;
+
     /* enable usb module */
     outl(inl(0x7000002C) | 0x3000000, 0x7000002C);
 
@@ -114,7 +116,20 @@ static void usb_reset_controller(void)
 
     DEV_INIT2 |= INIT_USB;
 
-    while ((inl(0x70000028) & 0x80) == 0);
+    /* A failed USB clock/reset must not hang cold boot or reconnect. */
+    timeout = USEC_TIMER + 1000000;
+    while ((inl(0x70000028) & 0x80) == 0 &&
+           TIME_BEFORE(USEC_TIMER, timeout));
+
+    if ((inl(0x70000028) & 0x80) == 0) {
+#ifndef BOOTLOADER
+        DEV_EN &= ~DEV_USB0;
+        DEV_EN &= ~DEV_USB1;
+        DEV_INIT2 &= ~INIT_USB;
+#endif
+        return;
+    }
+
     outl(inl(0x70000028) | 0x2, 0x70000028);
     udelay(100000);
     XMB_RAM_CFG |= 0x47A;
