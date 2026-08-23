@@ -98,7 +98,9 @@
 #define USB_GPIO_INT_CLR     GPIO_INT_CLR(USB_GPIO)
 #define USB_GPIO_HI_INT_MASK GPIO_HI_INT_MASK(USB_GPIO)
 
-static void usb_reset_controller(void)
+static bool usb_controller_ready;
+
+static bool usb_reset_controller(void)
 {
     unsigned long timeout;
 
@@ -127,7 +129,7 @@ static void usb_reset_controller(void)
         DEV_EN &= ~DEV_USB1;
         DEV_INIT2 &= ~INIT_USB;
 #endif
-        return;
+        return false;
     }
 
     outl(inl(0x70000028) | 0x2, 0x70000028);
@@ -143,6 +145,8 @@ static void usb_reset_controller(void)
     DEV_EN &= ~DEV_USB1;
     DEV_INIT2 &= ~INIT_USB;
 #endif
+
+    return true;
 }
 
 /* Enable raw status pin read only - not interrupt */
@@ -159,7 +163,7 @@ void usb_pin_init(void)
 
 void usb_init_device(void)
 {
-    usb_reset_controller();
+    usb_controller_ready = usb_reset_controller();
 
     /* Do one-time inits (no dependency on controller) */
     usb_drv_startup();
@@ -190,6 +194,12 @@ void usb_init_device(void)
 void usb_enable(bool on)
 {
     if (on) {
+        if (!usb_controller_ready)
+            usb_controller_ready = usb_reset_controller();
+
+        if (!usb_controller_ready)
+            return;
+
         /* if USB is detected, re-enable the USB-devices, otherwise make sure it's disabled */
         DEV_EN |= DEV_USB0;
         DEV_EN |= DEV_USB1;
@@ -199,7 +209,7 @@ void usb_enable(bool on)
     else {
         usb_core_exit();
         /* Disable USB devices */
-        usb_reset_controller();
+        usb_controller_ready = usb_reset_controller();
     }
 }
 
