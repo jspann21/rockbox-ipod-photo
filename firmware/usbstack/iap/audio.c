@@ -60,6 +60,8 @@ extern struct pcm_sink iap_pcm_sink;
 static void sink_set_freq(uint16_t freq) {
     LOG("freq=%d", freq);
 
+    check_act(iap_initialized && freq < ARRAYLEN(samprs), return);
+
     track_attrs_sent = true;
 
     set_freq = freq;
@@ -90,6 +92,12 @@ static size_t calc_packet_size(uint8_t cur_sampr, uint8_t packet_count) {
 }
 
 static void batch_get_more(const void** ptr, size_t* len) {
+    if(!iap_initialized || zero_buffer.buf.ptr == NULL) {
+        *ptr = NULL;
+        *len = 0;
+        return;
+    }
+
     const size_t packet_size = calc_packet_size(cur_freq, packet_count);
 #if 0
     const int cur_frame = usb_drv_get_frame_number();
@@ -150,6 +158,8 @@ start:
 
 static void sink_play(const void* addr, size_t size) {
     LOG("play");
+
+    check_act(iap_initialized, return);
 
     pulled_buf        = addr;
     pulled_buf_size   = size;
@@ -226,6 +236,7 @@ error:
             core_free(staging_buffers[i].buf.handle);
             staging_buffers[i].buf.ptr = NULL;
         }
+        staging_buffers[i].buf.handle = 0;
     }
     usb_drv_batch_deinit();
     return false;
@@ -234,8 +245,11 @@ error:
 bool iap_audio_deinit(void) {
     check_act(usb_drv_batch_deinit() == 0, );
     for(size_t i = 0; i < ARRAYLEN(staging_buffers); i += 1) {
-        core_free(staging_buffers[i].buf.handle);
+        if(staging_buffers[i].buf.ptr != NULL) {
+            core_free(staging_buffers[i].buf.handle);
+        }
         staging_buffers[i].buf.ptr = NULL;
+        staging_buffers[i].buf.handle = 0;
     }
     return true;
 }

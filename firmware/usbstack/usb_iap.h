@@ -24,5 +24,6 @@
 #define USB_REQ_APPLE_SET_AVAIL_CURRENT (0x40)
 
 extern struct usb_class_driver_ep_allocation usb_iap_ep_allocs[2];
+extern volatile bool iap_initialized;
 
 extern struct usb_class_driver usb_cdrv_iap;

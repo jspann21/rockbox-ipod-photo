@@ -303,7 +303,7 @@ void _iap_release_ctx() {
     mutex_unlock(&iap_ctx_mutex);
 }
 
-bool iap_initialized;
+volatile bool iap_initialized;
 
 /* those notifications need pollling */
 static enum charge_state_type last_charge_state;
@@ -459,6 +459,7 @@ static void usb_iap_init(void) {
 
 static void usb_iap_disconnect(void) {
     iap_initialized = false;
+    check_act(iap_audio_disable(), );
     stream.alt = 0;
     audio_pause();
     mixer_switch_sink(PCM_SINK_BUILTIN);
@@ -486,6 +487,10 @@ static void usb_iap_transfer_complete(int ep, int dir, int status, int length) {
         LOG("ep=%d dir=%d state=%d length=%d", ep, dir, status, length);
 #endif
         struct IAPContext* ctx = _iap_acquire_ctx(true);
+        if(!iap_initialized) {
+            _iap_release_ctx();
+            return;
+        }
         if(status != 0) {
             iap_notify_send_error(ctx);
             _iap_release_ctx();
@@ -512,6 +517,9 @@ static void respond_zero(struct usb_ctrlrequest* req, uint8_t* reqdata, size_t r
 }
 
 static bool control_request_if_std(struct usb_ctrlrequest* req, uint8_t* reqdata, size_t reqdata_size) {
+    if (!(req->bRequestType & USB_DIR_IN))
+        return false;
+
     const void* src = NULL;
     size_t      size;
     switch(req->bRequest) {
@@ -556,15 +564,24 @@ static bool control_request_if_class(struct usb_ctrlrequest* req, uint8_t* reqda
     if(recip_interface == hid.interface) {
         switch(req->bRequest) {
         case USB_HID_GET_REPORT:
+            if (!(req->bRequestType & USB_DIR_IN))
+                return false;
             respond_zero(req, reqdata, reqdata_size);
             return true;
         case USB_HID_SET_REPORT: {
+            if ((req->bRequestType & USB_DIR_IN) ||
+                req->wLength > reqdata_size || !iap_initialized)
+                return false;
 #if DEBUG_DUMP_RX == 1
             logf("==== acc: %u bytes ====", req->wLength);
             iap_platform_dump_hex(reqdata, req->wLength);
 #endif
 
             struct IAPContext* ctx = _iap_acquire_ctx(true);
+            if(!iap_initialized) {
+                _iap_release_ctx();
+                return false;
+            }
             const bool         ret = iap_feed_hid_report(ctx, reqdata, req->wLength);
             _iap_release_ctx();
 
@@ -573,6 +590,8 @@ static bool control_request_if_class(struct usb_ctrlrequest* req, uint8_t* reqda
             return true;
         }
         case USB_HID_SET_IDLE:
+            if ((req->bRequestType & USB_DIR_IN) || req->wLength != 0)
+                return false;
             usb_core_control_response(USB_CONTROL_ACK, NULL, 0);
             return true;
         }
@@ -588,10 +607,12 @@ static bool control_request_if_endpoint(struct usb_ctrlrequest* req, uint8_t* re
         (void)recip_entity;
         switch(req->bRequest) {
         case USB_AC_SET_CUR:
+            if (req->bRequestType & USB_DIR_IN)
+                goto stall;
             LOG("audio ctrl to stream endpoint entity=0x%02X request=0x%02X length=%u", recip_entity, req->bRequest, req->wLength);
             switch(control_selector) {
             case USB_AS_EP_CS_SAMPLING_FREQ_CTL:
-                check_act(req->wLength == 3, goto stall);
+                check_act(req->wLength == 3 && reqdata_size >= 3, goto stall);
                 stream.sample_rate = reqdata[0] | (reqdata[1] << 8) | (reqdata[2] << 16);
                 LOG("audio stream sampling rate %lu", stream.sample_rate);
                 check_act(iap_audio_set_sampr(stream.sample_rate), goto stall);
@@ -602,7 +623,8 @@ static bool control_request_if_endpoint(struct usb_ctrlrequest* req, uint8_t* re
         case USB_AC_GET_CUR:
             switch(control_selector) {
             case USB_AS_EP_CS_SAMPLING_FREQ_CTL:
-                check_act(req->wLength == 3, goto stall);
+                check_act((req->bRequestType & USB_DIR_IN) &&
+                          req->wLength == 3 && reqdata_size >= 3, goto stall);
                 reqdata[2] = (stream.sample_rate >> 16) & 0xff;
                 reqdata[1] = (stream.sample_rate >> 8) & 0xff;
                 reqdata[0] = (stream.sample_rate & 0xff);
@@ -613,6 +635,8 @@ static bool control_request_if_endpoint(struct usb_ctrlrequest* req, uint8_t* re
         case USB_AC_GET_MIN:
         case USB_AC_GET_MAX:
         case USB_AC_GET_RES:
+            if (!(req->bRequestType & USB_DIR_IN))
+                return false;
             respond_zero(req, reqdata, reqdata_size);
             return true;
         stall:
@@ -631,8 +655,12 @@ static bool usb_iap_control_request(struct usb_ctrlrequest* req, uint8_t* reqdat
     LOG("recip=%x type=%x", req_recipient, req_type);
 #endif
     if(req_recipient == USB_RECIP_INTERFACE && req_type == USB_TYPE_STANDARD) {
+        if ((req->wIndex & 0xff00) != 0)
+            return false;
         return control_request_if_std(req, reqdata, reqdata_size);
     } else if(req_recipient == USB_RECIP_INTERFACE && req_type == USB_TYPE_CLASS) {
+        if ((req->wIndex & 0xff00) != 0)
+            return false;
         return control_request_if_class(req, reqdata, reqdata_size);
     } else if(req_recipient == USB_RECIP_ENDPOINT && req_type == USB_TYPE_CLASS) {
         return control_request_if_endpoint(req, reqdata, reqdata_size);
@@ -641,9 +669,16 @@ static bool usb_iap_control_request(struct usb_ctrlrequest* req, uint8_t* reqdat
 }
 
 static void usb_iap_notify_event(intptr_t data) {
+    if (!iap_initialized)
+        return;
+
     switch(data) {
     case Notify_Tick: {
         struct IAPContext* ctx = _iap_acquire_ctx(true);
+        if(!iap_initialized) {
+            _iap_release_ctx();
+            return;
+        }
         struct Platform*   plt = ctx->platform;
         if(plt->control_pending) {
             /* waiting for playback begins */

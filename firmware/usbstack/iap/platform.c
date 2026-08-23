@@ -74,6 +74,7 @@ void iap_platform_free(struct IAPContext* iap_ctx, void* ptr) {
 
 int iap_platform_send_hid_report(struct IAPContext* iap_ctx, const void* ptr, size_t size) {
     (void)iap_ctx;
+    check_act(ptr != NULL && size > 0, return -1);
 #if DEBUG_DUMP_TX == 1
     logf("==== dev ==== %p %u > %d", ptr, size, HID_EP_IN);
     iap_platform_dump_hex(ptr, MIN(size, 48));
@@ -89,6 +90,7 @@ IAPBool iap_platform_get_ipod_serial_num(struct IAPContext* iap_ctx, struct IAPS
 }
 
 IAPBool iap_platform_get_play_status(struct IAPContext* iap_ctx, struct IAPPlatformPlayStatus* status) {
+    check_act(status != NULL, return iap_false);
     struct Platform* plt = iap_ctx->platform;
 
     memset(status, 0, sizeof(*status));
@@ -173,6 +175,7 @@ static uint8_t normalize_8(int val, int min, int max) {
 
 IAPBool iap_platform_get_volume(struct IAPContext* iap_ctx, struct IAPPlatformVolumeStatus* status) {
     (void)iap_ctx;
+    check_act(status != NULL, return iap_false);
 
     status->volume = _iap_convert_volume(global_status.volume);
     status->muted  = iap_false;
@@ -181,6 +184,7 @@ IAPBool iap_platform_get_volume(struct IAPContext* iap_ctx, struct IAPPlatformVo
 
 IAPBool iap_platform_get_power_status(struct IAPContext* iap_ctx, struct IAPPlatformPowerStatus* status) {
     (void)iap_ctx;
+    check_act(status != NULL, return iap_false);
     status->battery_level = _iap_convert_battery_level(battery_level());
     status->state         = _iap_convert_charge_status(charge_state);
     return iap_true;
@@ -188,6 +192,7 @@ IAPBool iap_platform_get_power_status(struct IAPContext* iap_ctx, struct IAPPlat
 
 IAPBool iap_platform_get_shuffle_setting(struct IAPContext* iap_ctx, uint8_t* status) {
     (void)iap_ctx;
+    check_act(status != NULL, return iap_false);
     *status = _iap_convert_shuffle_state(global_settings.playlist_shuffle);
     return iap_true;
 }
@@ -213,6 +218,7 @@ IAPBool iap_platform_set_shuffle_setting(struct IAPContext* iap_ctx, uint8_t sta
 
 IAPBool iap_platform_get_repeat_setting(struct IAPContext* iap_ctx, uint8_t* status) {
     (void)iap_ctx;
+    check_act(status != NULL, return iap_false);
     *status = _iap_convert_repeat_state(global_settings.repeat_mode);
     return iap_true;
 }
@@ -245,12 +251,14 @@ IAPBool iap_platform_set_repeat_setting(struct IAPContext* iap_ctx, uint8_t stat
 
 IAPBool iap_platform_get_date_time(struct IAPContext* iap_ctx, struct IAPDateTime* time) {
     (void)iap_ctx;
+    check_act(time != NULL, return iap_false);
     _iap_convert_datetime(get_time(), time);
     return iap_true;
 }
 
 IAPBool iap_platform_get_backlight_level(struct IAPContext* iap_ctx, uint8_t* level) {
     (void)iap_ctx;
+    check_act(level != NULL, return iap_false);
 
 #ifdef HAVE_BACKLIGHT_BRIGHTNESS
     *level = normalize_8(global_settings.brightness, MIN_BRIGHTNESS_SETTING, MAX_BRIGHTNESS_SETTING);
@@ -262,6 +270,7 @@ IAPBool iap_platform_get_backlight_level(struct IAPContext* iap_ctx, uint8_t* le
 
 IAPBool iap_platform_get_hold_switch_state(struct IAPContext* iap_ctx, IAPBool* state) {
     (void)iap_ctx;
+    check_act(state != NULL, return iap_false);
 
 #ifdef HAS_BUTTON_HOLD
     *state = button_hold();
@@ -296,6 +305,7 @@ static bool get_trackinfo(const unsigned int track, struct mp3entry* id3) {
 }
 
 IAPBool iap_platform_get_indexed_track_info(struct IAPContext* iap_ctx, uint32_t index, struct IAPPlatformTrackInfo* info) {
+    check_act(info != NULL, return iap_false);
     struct Platform* plt = iap_ctx->platform;
 
     struct playlist_track_info track;
@@ -367,9 +377,11 @@ static IAPBool artwork_bitmap_size(const struct bitmap* bmp, size_t* size) {
 }
 
 IAPBool iap_platform_open_artwork(struct IAPContext* iap_ctx, uint32_t index, struct IAPPlatformArtwork* artwork) {
+    check_act(artwork != NULL, return iap_false);
     struct Platform* plt = iap_ctx->platform;
     /* only aa for currently playing track is available */
-    check_act((int)index == playlist_get_display_index() - 1, return iap_false);
+    const int display_index = playlist_get_display_index();
+    check_act(display_index > 0 && index == (uint32_t)(display_index - 1), return iap_false);
     check_act(plt->aa_slot >= 0, return iap_false);
     const int hid = playback_current_aa_hid(plt->aa_slot);
     check_act(hid >= 0, return iap_false, "%d %d", plt->aa_slot, hid);
@@ -384,13 +396,14 @@ IAPBool iap_platform_open_artwork(struct IAPContext* iap_ctx, uint32_t index, st
 }
 
 IAPBool iap_platform_get_artwork_ptr(struct IAPContext* iap_ctx, struct IAPPlatformArtwork* artwork, struct IAPSpan* span) {
+    check_act(artwork != NULL && span != NULL, return iap_false);
     struct Platform* plt = iap_ctx->platform;
     check_act(plt->aa_slot >= 0, return iap_false);
 
     /* check the albumart has not reloaded */
     /* FIXME: not a correct check due to possibility of hid confliction */
     const int hid = playback_current_aa_hid(plt->aa_slot);
-    check_act(hid == (int)artwork->opaque, return iap_false);
+    check_act(hid >= 0 && hid == (int)artwork->opaque, return iap_false);
 
     struct bitmap* bmp;
     /* more checks */
@@ -492,7 +505,7 @@ uint8_t _iap_convert_repeat_state(int rb_state) {
          * resulting in trapping us in the current directory. */
         return IAPIPodStateRepeatSettingState_All;
     } else {
-        check_act(rb_state < ARRAY_SIZE(table), return iap_false);
+        check_act(rb_state >= 0 && rb_state < ARRAY_SIZE(table), return iap_false);
         return table[rb_state];
     }
 }

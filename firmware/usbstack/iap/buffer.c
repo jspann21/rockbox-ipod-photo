@@ -23,9 +23,15 @@
 #include "macros.h"
 
 bool iap_alloc_buffer(size_t size, struct IAPAllocResult* result) {
+    check_act(size > 0 && result != NULL, return false);
+
     int handle = core_alloc_ex(size, &buflib_ops_locked);
     check_act(handle > 0, return false);
     uint8_t* ptr = core_get_data(handle);
+    if(ptr == NULL) {
+        core_free(handle);
+        return false;
+    }
 
     result->handle = handle;
     result->ptr    = ptr;

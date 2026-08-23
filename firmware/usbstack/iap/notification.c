@@ -25,7 +25,7 @@
 
 #include "macros.h"
 
-extern bool iap_initialized;
+extern volatile bool iap_initialized;
 
 static struct IAPContext* acquire_initialized_ctx(void) {
     if(!iap_initialized) {
