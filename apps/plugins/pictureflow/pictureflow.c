@@ -560,6 +560,10 @@ static struct pf_index_t pf_idx;
 static struct pf_track_t pf_tracks;
 static unsigned long aa_cache_next_tick;
 static volatile unsigned int render_generation;
+/* Track-list text is static between selection and scroll changes. Avoid
+ * rebuilding and transferring the full 220x176 framebuffer on every idle
+ * button poll. */
+static bool track_list_dirty;
 
 static struct mp3entry id3;
 
@@ -4048,6 +4052,7 @@ static void update_cover_in_animation(void)
         {
             cover_animation_keyframe = 0;
             pf_state = pf_show_tracks;
+            track_list_dirty = true;
         }
     }
 }
@@ -4084,6 +4089,7 @@ static void update_cover_out_animation(void)
 static void skip_animation_to_show_tracks(void)
 {
     pf_state = pf_show_tracks;
+    track_list_dirty = true;
     cover_animation_keyframe = 0;
 
     extra_fade =            ZOOMIN_FRAME_COUNT * ZOOMIN_FRAME_FADE;
@@ -4264,13 +4270,13 @@ static void show_track_list_loading(void)
  */
 static bool show_track_list(void)
 {
-    mylcd_clear_display();
     if ( center_slide.slide_index != pf_tracks.cur_idx ) {
 #ifdef HAVE_TC_RAMCACHE
         if (!rb->tagcache_is_in_ram())
 #endif
             show_track_list_loading();
         create_track_index(center_slide.slide_index);
+        track_list_dirty = true;
         if (pf_tracks.count == 0)
         {
             pf_state = pf_cover_out;
@@ -4279,6 +4285,10 @@ static bool show_track_list(void)
         }
         reset_track_list();
     }
+    if (!track_list_dirty)
+        return true;
+
+    mylcd_clear_display();
     int titletxt_w, titletxt_x, color, titletxt_h;
     titletxt_h = rb->screens[SCREEN_MAIN]->getcharheight();
 
@@ -4333,6 +4343,7 @@ static bool show_track_list(void)
         titletxt_y += titletxt_h;
     }
 
+    track_list_dirty = false;
     return true;
 }
 
@@ -4340,12 +4351,14 @@ static void select_next_track(void)
 {
     if ( pf_tracks.sel < pf_tracks.count - 1 ) {
         pf_tracks.sel++;
+        track_list_dirty = true;
         if (pf_tracks.sel==(pf_tracks.list_visible+pf_tracks.list_start))
             pf_tracks.list_start++;
     } else if (rb->global_settings->list_wraparound) {
         /* Rollover */
         pf_tracks.sel = 0;
         pf_tracks.list_start = 0;
+        track_list_dirty = true;
     }
 }
 
@@ -4354,10 +4367,12 @@ static void select_prev_track(void)
     if (pf_tracks.sel > 0 ) {
         if (pf_tracks.sel==pf_tracks.list_start) pf_tracks.list_start--;
         pf_tracks.sel--;
+        track_list_dirty = true;
     } else if (rb->global_settings->list_wraparound) {
         /* Rolllover */
         pf_tracks.sel = pf_tracks.count - 1;
         pf_tracks.list_start = pf_tracks.count - pf_tracks.list_visible;
+        track_list_dirty = true;
     }
 }
 
@@ -4929,6 +4944,7 @@ static bool init(void)
     pf_tracks.cur_idx = -1;
     pf_tracks.borrowed = 0;
     pf_tracks.used = 0;
+    track_list_dirty = true;
 
     extra_fade = 0;
     slide_frame = 0;
@@ -5044,8 +5060,16 @@ static int pictureflow_main(void)
                 instant_update = true;
                 break;
             case pf_show_tracks:
-                if (!show_track_list() && !prompt_reinit())
-                    return PLUGIN_OK;
+                if (scroll_changed || pf_cfg.show_fps)
+                    track_list_dirty = true;
+                if (scroll_changed || track_list_dirty ||
+                    center_slide.slide_index != pf_tracks.cur_idx)
+                {
+                    if (!show_track_list() && !prompt_reinit())
+                        return PLUGIN_OK;
+                }
+                else
+                    display_dirty = false;
                 break;
             case pf_idle:
                 show_tracks_while_browsing = false;
@@ -5176,6 +5200,7 @@ static int pictureflow_main(void)
                 mylcd_set_drawmode(DRMODE_FG);
             }
             render_generation++;
+            track_list_dirty = true;
             break;
 
         case PF_NEXT:
@@ -5301,7 +5326,10 @@ static int pictureflow_main(void)
             else if (pf_state == pf_show_tracks)
             {
                 if (show_tracks_while_browsing)
+                {
                     show_tracks_while_browsing = false;
+                    track_list_dirty = true;
+                }
 #if PF_PLAYBACK_CAPABLE
                 else if(pf_cfg.auto_wps != 0) {
                     if (start_playback(true))
