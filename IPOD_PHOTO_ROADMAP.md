@@ -190,9 +190,15 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 
 ## Practical validation loop
 
-- [ ] Build and package the current `ipodcolor` HEAD, then record its source
-      commit and artifact hashes before treating the new IRQ/deadline path as
-      qualified.
+- [x] Build and package the current `ipodcolor` code with the pinned GCC 9.5.0
+      toolchain. Normal firmware, `make zip`, and the separate bootloader build
+      pass at commit `4f8e949945`; SHA-256 is
+      `e505a31c7a61848d22190910edaeb00f0640491acd6425368fb1bc74e500d239`
+      for `rockbox.ipod` and
+      `f7df10413dfad5c3c41ea9eb2b07794def568a5d0974570615da0147e56749b2`
+      for `rockbox.zip`; the validation-only bootloader artifact is
+      `37cde9a34c2f3aef302d3cb85002279ead669842e66f2ef731fc1f0444f0041c`.
+      Installed A1099 qualification remains pending.
 - [ ] Smoke-test playback, wheel, hold, shutdown, suspend/resume, and USB after
       the latest kernel, power, LCD, and ATA batch; test each changed behavior
       directly and use a broader pass for storage, power, USB, or other

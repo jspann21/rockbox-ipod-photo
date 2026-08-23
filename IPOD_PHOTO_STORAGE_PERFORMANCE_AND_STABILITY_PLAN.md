@@ -6,10 +6,11 @@ Scope: fourth-generation iPod Photo/Color (A1099, Rockbox target
 **ipodcolor**) with an iFlash ATA1 and a Samsung EVO-family SD card.
 
 Status: the conservative recovery subset and the first measured scheduling/IRQ
-experiment are implemented in source. The IRQ-assisted DMA path, 250 us initial
-poll, and exact storage deadlines still require a current `ipodcolor` build and
-installed A1099 qualification before they should be treated as production-safe.
-This document does not format the card or alter installed firmware by itself.
+experiment are implemented in source. Normal firmware, packaged ZIP, and
+bootloader builds pass at commit `4f8e949945`. The IRQ-assisted DMA path, 250 us
+initial poll, and exact storage deadlines still require installed A1099
+qualification before they should be treated as production-safe. This document
+does not format the card or alter installed firmware by itself.
 
 ## Implemented source subset
 
