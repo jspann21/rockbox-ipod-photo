@@ -590,7 +590,12 @@ void iap_send_tx(void)
 #endif
     for (i=0; i <= (iap_txnext - txstart); i++)
     {
-        while(!tx_rdy()) ;
+        long deadline = current_tick + IAP_PKT_TIMEOUT;
+        while (!tx_rdy())
+        {
+            if (TIME_AFTER(current_tick, deadline))
+                return;
+        }
         tx_writec(txstart[i]);
     }
 }
@@ -776,7 +781,7 @@ void iap_periodic(void)
 {
     static int count;
 
-    if(!iap_setupflag) return;
+    if(!iap_setupflag || !iap_running) return;
 
     /* Handle pending authentication tasks */
     switch (device.auth.state)
