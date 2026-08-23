@@ -513,7 +513,22 @@ bool list_stop_handler(void)
 #if CONFIG_CHARGING
 static bool waiting_to_resume_play = false;
 static bool paused_on_unplugged = false;
-static long play_resume_tick;
+static struct timeout car_adapter_timeout;
+
+static int car_adapter_resume_timeout(struct timeout *tmo)
+{
+    (void)tmo;
+    waiting_to_resume_play = false;
+
+    int status = audio_status();
+    if (global_settings.car_adapter_mode &&
+        (status & AUDIO_STATUS_PLAY) && (status & AUDIO_STATUS_PAUSE))
+    {
+        queue_broadcast(SYS_CAR_ADAPTER_RESUME, 0);
+    }
+
+    return 0;
+}
 
 static void car_adapter_mode_processing(bool inserted)
 {
@@ -527,8 +542,12 @@ static void car_adapter_mode_processing(bool inserted)
             if ((audio_status() & AUDIO_STATUS_PAUSE) && paused_on_unplugged)
             {
                 /* delay resume a bit while the engine is cranking */
-                play_resume_tick = current_tick + HZ*global_settings.car_adapter_mode_delay;
                 waiting_to_resume_play = true;
+                timeout_register(&car_adapter_timeout,
+                                 car_adapter_resume_timeout,
+                                 MAX(1, HZ *
+                                     global_settings.car_adapter_mode_delay),
+                                 0);
             }
         }
         else
@@ -544,24 +563,7 @@ static void car_adapter_mode_processing(bool inserted)
             }
             else if (!waiting_to_resume_play)
                 paused_on_unplugged = false;
-            waiting_to_resume_play = false;
-        }
-    }
-}
-
-static void car_adapter_tick(void)
-{
-    if (waiting_to_resume_play)
-    {
-        if ((audio_status() & AUDIO_STATUS_PLAY) &&
-                !(audio_status() & AUDIO_STATUS_PAUSE))
-                waiting_to_resume_play = false;
-        if (TIME_AFTER(current_tick, play_resume_tick))
-        {
-            if (audio_status() & AUDIO_STATUS_PAUSE)
-            {
-                queue_broadcast(SYS_CAR_ADAPTER_RESUME, 0);
-            }
+            timeout_cancel(&car_adapter_timeout);
             waiting_to_resume_play = false;
         }
     }
@@ -569,7 +571,6 @@ static void car_adapter_tick(void)
 
 void car_adapter_mode_init(void)
 {
-    tick_add_task(car_adapter_tick);
 }
 #endif
 
