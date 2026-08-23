@@ -1392,20 +1392,22 @@ static void tagtree_unload(struct tree_context *c)
     {
         tree_lock_cache(c);
         struct tagentry *dptr = core_get_data(c->cache.entries_handle);
-        menu = menus[c->currextra];
+        menu = c->currextra >= 0 && c->currextra < menu_count ?
+                    menus[c->currextra] : NULL;
         if (!menu)
         {
             logf("tagtree menu doesn't exist");
-            return;
         }
-
-        for (int i = 0; i < menu->itemcount; i++)
+        else
         {
-            dptr->name = NULL;
-            dptr->newtable = 0;
-            dptr->extraseek = 0;
-            dptr->customaction = ONPLAY_NO_CUSTOMACTION;
-            dptr++;
+            for (int i = 0; i < menu->itemcount; i++)
+            {
+                dptr->name = NULL;
+                dptr->newtable = 0;
+                dptr->extraseek = 0;
+                dptr->customaction = ONPLAY_NO_CUSTOMACTION;
+                dptr++;
+            }
         }
     }
 
