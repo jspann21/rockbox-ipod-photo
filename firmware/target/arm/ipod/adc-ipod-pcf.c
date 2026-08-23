@@ -36,6 +36,17 @@ struct adc_struct {
 
 static struct adc_struct adcdata[NUM_ADC_CHANNELS] IDATA_ATTR;
 
+static long adc_cache_interval(const struct adc_struct *adc)
+{
+#ifdef IPOD_COLOR
+    /* Battery state changes slowly; accessory detection still needs the
+     * original 400 ms cadence for responsive attach/detach handling. */
+    if (adc == &adcdata[ADC_BATTERY])
+        return HZ;
+#endif
+    return HZ * 2 / 5;
+}
+
 static unsigned short _adc_read(struct adc_struct *adc)
 {
     if (adc->timeout == 0 || TIME_AFTER(current_tick, adc->timeout)) {
@@ -44,8 +55,7 @@ static unsigned short _adc_read(struct adc_struct *adc)
 
         i2c_lock();
 
-        /* 5x per 2 seconds */
-        adc->timeout = current_tick + (HZ * 2 / 5);
+        adc->timeout = current_tick + adc_cache_interval(adc);
 
         /* ADCC1, 10 bit, start */
         if (pcf50605_write(0x2f, (adc->channelnum << 1) | 0x1) < 0)
