@@ -106,6 +106,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       capacity and cached-artwork paths; release codec readers after storage
       failures; clear the full database unique-result buffer; and propagate
       playlist import, control-file, seek, and short-write failures.
+      Keep WPS playlist-duration scans off playback's shared metadata scratch,
+      and invalidate their cached ordering after playlist mutations.
 - [x] **Timing, kernel, and PP5020 efficiency:** make action, WPS, power,
       tick-task, and timeout handling robust across tick rollover and callback
       removal; replace car-adapter polling with a cancelable one-shot deadline;
@@ -157,7 +159,9 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 
 - [ ] Redesign menu, browser, and now-playing geometry for 220x176 instead of
       shrinking 320x240 layouts; improve typography, spacing, icons, focus and
-      status presentation; and evaluate configurable center-button behavior.
+      status presentation; keep skin playlist viewers useful when a viewport is
+      shorter than the selected font; and evaluate configurable center-button
+      behavior.
 - [ ] Profile and tune PictureFlow slide count, cache size, clipping, scaling,
       storage activity, and parallel-slide projection on Photo hardware,
       including spacing and visible-slide count; begin with the current 64-entry

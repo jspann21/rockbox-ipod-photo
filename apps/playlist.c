@@ -499,6 +499,7 @@ static void empty_playlist_unlocked(struct playlist_info* playlist, bool resume)
     playlist->amount = 0;
     playlist->last_insert_pos = -1;
     playlist->created_tick = current_tick;
+    playlist->revision++;
     playlist->started = false;
 
     if (!resume && playlist == &current_playlist)
@@ -1240,6 +1241,7 @@ static int remove_all_tracks_unlocked(struct playlist_info *playlist)
     playlist->first_index = 0;
     playlist->index = 0;
     playlist->amount = 1;
+    playlist->revision++;
     playlist->indices[0] |= PLAYLIST_QUEUED;
     playlist->flags = 0; /* Reset dirplay and modified flags */
     if (playlist == &current_playlist)
@@ -1458,6 +1460,7 @@ static int add_track_to_playlist_unlocked(struct playlist_info* playlist,
     dc_init_filerefs(playlist, insert_position, 1);
 
     playlist->amount++;
+    playlist->revision++;
     if (playlist == &current_playlist)
         iap_on_tracks_count(playlist->amount);
 
@@ -1502,6 +1505,7 @@ static int remove_track_unlocked(struct playlist_info* playlist,
     }
 
     playlist->amount--;
+    playlist->revision++;
 
     /* update stored indices if needed */
     if (position < playlist->index)
@@ -1601,6 +1605,7 @@ static int randomise_playlist_unlocked(struct playlist_info* playlist,
     playlist->last_insert_pos = -1;
 
     playlist->seed = seed;
+    playlist->revision++;
 
     if (write)
     {
@@ -1675,6 +1680,8 @@ static int sort_playlist_unlocked(struct playlist_info* playlist,
         update_control_unlocked(playlist, PLAYLIST_COMMAND_UNSHUFFLE,
             playlist->first_index, -1, NULL, NULL, NULL);
     }
+
+    playlist->revision++;
 
     return 0;
 }

@@ -222,12 +222,17 @@ static struct {
 #endif
 } plpct = { .amount = -1, .enabled = false };
 
+#ifdef IPOD_COLOR
+/* The Photo's duration scan performs filesystem I/O. Keep it off playback's
+ * mutex-protected temporary ID3 entry so a WPS refresh cannot stall audio
+ * state updates while metadata is being read. */
+static struct mp3entry plpct_scan_id3;
+#endif
+
 static uint32_t plpct_sig(void)
 {
     struct playlist_info *pl = playlist_get_current();
-    /* changes on any playlist swap or reshuffle */
-    return pl->seed ^ pl->first_index ^ pl->amount ^ pl->last_insert_pos ^ pl->dirlen
-           ^ pl->created_tick ^ pl->max_playlist_size ^ pl->last_shuffled_start;
+    return (uint32_t)pl->revision;
 }
 
 /* Equal-weight estimate (every track the same length)
@@ -287,9 +292,13 @@ static void plpct_scan_step(void)
     plpct.scan_tick = current_tick;
 
     struct playlist_track_info info;
+#ifdef IPOD_COLOR
+    struct mp3entry *tmp = &plpct_scan_id3;
+#else
     struct mp3entry *tmp = get_temp_mp3entry(NULL); /* shared scratch */
     if (!tmp)
         return;
+#endif
 
     int stop = MIN(plpct.amount, plpct.scan_index + PLPCT_SCAN_BATCH);
     while (plpct.scan_index < stop)
@@ -353,13 +362,17 @@ static void plpct_scan_step(void)
     }
 
     plpct.scan_tick = current_tick;
+#ifndef IPOD_COLOR
     get_temp_mp3entry(tmp); /* release scratch */
+#endif
     return;
 
 abort:
     plpct.fallback = true;
     plpct.scan_tick = current_tick;
+#ifndef IPOD_COLOR
     get_temp_mp3entry(tmp); /* release scratch */
+#endif
 }
 
 bool wps_get_playlist_percent(struct mp3entry *id3, unsigned long elapsed_ms,

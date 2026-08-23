@@ -86,6 +86,7 @@ struct playlist_info
                                     shuffled command start */
     int  seed;           /* shuffle seed                            */
     unsigned long created_tick;
+    unsigned long revision; /* changes when track content/order changes */
     struct mutex mutex; /* mutex for control file access    */
 #ifdef HAVE_DIRCACHE
     int dcfrefs_handle;
