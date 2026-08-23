@@ -2435,7 +2435,10 @@ static bool* fill_random_playlist_indexes(bool *bool_array, size_t arr_sz,
     if (track_count * sizeof(bool) > arr_sz || max_slots > track_count)
         return NULL;
 
-    for (i = 0; i < arr_sz; i++) /* fill max_slots with TRUE */
+    /* Only the track-selection prefix is used. Clearing the complete plugin
+     * buffer can touch megabytes on low-memory targets and, when bool is
+     * wider than one byte, would exceed the byte-sized capacity check above. */
+    for (i = 0; i < track_count; i++) /* fill max_slots with TRUE */
         bool_array[i] = i < max_slots;
 
     /* shuffle bool array */
