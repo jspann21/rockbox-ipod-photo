@@ -619,6 +619,10 @@ void system_init(void)
 
         disable_all_interrupts();
 
+#ifdef HAVE_PP5020_PERF
+        pp5020_perf_init();
+#endif
+
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
 #if NUM_CORES > 1
         corelock_init(&cpufreq_cl);
