@@ -411,6 +411,15 @@ static const char graphic_numeric[] = "graphic,numeric";
 #define DEFAULT_THEME_SELECTOR_TEXT LCD_RGBPACK(0x00, 0x00, 0x00)
 #define DEFAULT_THEME_SEPARATOR  LCD_RGBPACK(0x80, 0x80, 0x80)
 
+/* The Photo's 80 MHz CPU has less headroom for a per-pixel gradient during
+ * wheel-driven list redraws. Keep the default selector visible and themeable,
+ * but use a flat color bar; users can still choose the gradient explicitly. */
+#ifdef IPOD_COLOR
+#define DEFAULT_CURSOR_STYLE 2
+#else
+#define DEFAULT_CURSOR_STYLE 3
+#endif
+
 #define DEFAULT_BACKDROP    BACKDROP_DIR "/cabbiev2.bmp"
 
 #ifdef HAVE_RECORDING
@@ -1306,8 +1315,8 @@ const struct settings_list settings[] = {
 #endif
     /* display */
      CHOICE_SETTING(F_TEMPVAR|F_THEMESETTING, cursor_style, LANG_INVERT_CURSOR,
- #ifdef HAVE_LCD_COLOR
-                    3, "selector type",
+#ifdef HAVE_LCD_COLOR
+                    DEFAULT_CURSOR_STYLE, "selector type",
                     "pointer,bar (inverse),bar (color),bar (gradient)", NULL, 4,
                     ID2P(LANG_INVERT_CURSOR_POINTER),
                     ID2P(LANG_INVERT_CURSOR_BAR),

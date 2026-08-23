@@ -93,12 +93,23 @@ char* wps_default_skin(enum screen_type screen)
 #if LCD_DEPTH > 1
             "%X(d)\n"
 #endif
+#if defined(IPOD_COLOR)
+            /* Keep the Photo fallback compact and avoid enabling a peak-meter
+             * refresh loop when the target-specific WPS is unavailable. */
+            "%s%?it<%?in<%in. |>%it|%fn>\n"
+            "%s%?ia<%ia|%?d(2)<%d(2)|%(root%)>>\n"
+            "%s%?id<%id|%?d(1)<%d(1)|%(root%)>> %?iy<%(%iy%)|>\n"
+            "%al%pc/%pt%ar[%pp:%pe]\n"
+            "%fbkBit %?fv<avg|> %?iv<%(id3v%iv%)|%(no id3%)>\n"
+            "%pb\n",
+#else
             "%s%?it<%?in<%in. |>%it|%fn>\n"
             "%s%?ia<%ia|%?d(2)<%d(2)|%(root%)>>\n"
             "%s%?id<%id|%?d(1)<%d(1)|%(root%)>> %?iy<%(%iy%)|>\n\n"
             "%al%pc/%pt%ar[%pp:%pe]\n"
             "%fbkBit %?fv<avg|> %?iv<%(id3v%iv%)|%(no id3%)>\n"
             "%pb\n%pm\n",
+#endif
 #ifdef HAVE_REMOTE_LCD
 #if LCD_REMOTE_DEPTH > 1
             "%X(d)\n"
