@@ -1055,6 +1055,11 @@ static int set_features(void)
     features[0].parameter = 8 + pio_mode;
 
 #ifdef HAVE_ATA_DMA
+    /* Rebuild the transfer mode from this IDENTIFY response. A reconnect
+     * may expose different or incomplete capability bits; do not carry a
+     * stale DMA mode into the next SET FEATURES sequence. */
+    dma_mode = 0;
+
     if (identify_info[53] & (1<<2)) {
         int max_udma = ATA_MAX_UDMA;
 #if ATA_MAX_UDMA > 2
