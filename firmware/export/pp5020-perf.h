@@ -41,9 +41,17 @@ struct pp5020_perf_stats
     uint64_t storage_event_wakeups;
     uint64_t storage_deadline_wakeups;
 
+    uint64_t pcm_track_changes;
+    uint64_t pcm_notify_total_us;
+    uint32_t pcm_notify_max_us;
+    uint64_t pcm_underruns;
+    uint64_t pcm_deferred_notifications;
+    uint64_t pcm_duplicate_notifications;
+    uint64_t pcm_missed_transitions;
 };
 
 void pp5020_perf_init(void);
+void pp5020_perf_reset(void);
 void pp5020_perf_get(struct pp5020_perf_stats *stats);
 
 void pp5020_perf_set_ata_info(const uint16_t *identify, bool is_ssd,
@@ -59,6 +67,11 @@ void pp5020_perf_record_dma_missing_irq(void);
 void pp5020_perf_record_dma_late_irq(void);
 void pp5020_perf_record_dma_spurious_irq(void);
 void pp5020_perf_record_storage_wakeup(bool deadline);
+void pp5020_perf_record_pcm_notify(uint32_t latency_us);
+void pp5020_perf_record_pcm_underrun(void);
+void pp5020_perf_record_pcm_deferred(void);
+void pp5020_perf_record_pcm_duplicate(void);
+void pp5020_perf_record_pcm_missed(void);
 
 #endif /* HAVE_PP5020_PERF */
 #endif /* PP5020_PERF_H */

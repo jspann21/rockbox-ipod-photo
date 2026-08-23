@@ -19,6 +19,7 @@
  ****************************************************************************/
 
 #include "config.h"
+#include "version.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -1925,12 +1926,91 @@ static bool dbg_disk_info(void)
 }
 
 #ifdef HAVE_PP5020_PERF
+static bool pp5020_perf_save_snapshot(void)
+{
+    struct pp5020_perf_stats perf;
+    bool ok;
+    int fd = open(ROCKBOX_DIR "/pp5020-perf.log",
+                  O_WRONLY | O_CREAT | O_APPEND, 0666);
+
+    if (fd < 0)
+        return false;
+
+    pp5020_perf_get(&perf);
+    fdprintf(fd, "\n--- PP5020 performance snapshot ---\n");
+    fdprintf(fd, "build=%s\n", rbversion);
+    fdprintf(fd, "uptime=%lu\n", current_tick / HZ);
+    fdprintf(fd, "ata_model=%s\n", perf.ata_model);
+    fdprintf(fd, "ata_is_ssd=%d\n", perf.ata_is_ssd);
+    fdprintf(fd, "ata_dma_mode=%#x\n", perf.ata_dma_mode);
+    fdprintf(fd, "lba48=%d\n", perf.lba48);
+    fdprintf(fd, "flush_supported=%d\n", perf.flush_supported);
+    fdprintf(fd, "sleep_supported=%d\n", perf.sleep_supported);
+    fdprintf(fd, "cache_clean_calls=%llu\n", perf.cache_clean_calls);
+    fdprintf(fd, "cache_clean_total_us=%llu\n",
+             perf.cache_clean_total_us);
+    fdprintf(fd, "cache_clean_max_us=%lu\n",
+             (unsigned long)perf.cache_clean_max_us);
+    fdprintf(fd, "cache_discard_calls=%llu\n",
+             perf.cache_discard_calls);
+    fdprintf(fd, "cache_discard_total_us=%llu\n",
+             perf.cache_discard_total_us);
+    fdprintf(fd, "cache_discard_max_us=%lu\n",
+             (unsigned long)perf.cache_discard_max_us);
+    fdprintf(fd, "dma_requests=%llu\n", perf.dma_requests);
+    fdprintf(fd, "dma_bytes=%llu\n", perf.dma_bytes);
+    fdprintf(fd, "dma_avg_us=%llu\n",
+             perf.dma_requests ? perf.dma_total_us / perf.dma_requests : 0);
+    fdprintf(fd, "dma_max_us=%lu\n", (unsigned long)perf.dma_max_us);
+    fdprintf(fd, "dma_busy_poll_us=%llu\n", perf.dma_busy_poll_us);
+    fdprintf(fd, "dma_timeouts=%llu\n", perf.dma_timeouts);
+    fdprintf(fd, "pio_fallbacks=%llu\n", perf.pio_fallbacks);
+    fdprintf(fd, "dma_missing_irqs=%llu\n", perf.dma_missing_irqs);
+    fdprintf(fd, "dma_late_irqs=%llu\n", perf.dma_late_irqs);
+    fdprintf(fd, "dma_spurious_irqs=%llu\n", perf.dma_spurious_irqs);
+    fdprintf(fd, "storage_event_wakeups=%llu\n",
+             perf.storage_event_wakeups);
+    fdprintf(fd, "storage_deadline_wakeups=%llu\n",
+             perf.storage_deadline_wakeups);
+    fdprintf(fd, "pcm_track_changes=%llu\n", perf.pcm_track_changes);
+    fdprintf(fd, "pcm_notify_avg_us=%llu\n",
+             perf.pcm_track_changes ?
+                 perf.pcm_notify_total_us / perf.pcm_track_changes : 0);
+    fdprintf(fd, "pcm_notify_max_us=%lu\n",
+             (unsigned long)perf.pcm_notify_max_us);
+    fdprintf(fd, "pcm_underruns=%llu\n", perf.pcm_underruns);
+    fdprintf(fd, "pcm_deferred_notifications=%llu\n",
+             perf.pcm_deferred_notifications);
+    fdprintf(fd, "pcm_duplicate_notifications=%llu\n",
+             perf.pcm_duplicate_notifications);
+    fdprintf(fd, "pcm_missed_transitions=%llu\n",
+             perf.pcm_missed_transitions);
+
+    ok = fsync(fd) >= 0;
+    if (close(fd) < 0)
+        ok = false;
+    return ok;
+}
+
 static int pp5020_perf_callback(int btn, struct gui_synclist *lists)
 {
     struct pp5020_perf_stats perf;
 
     (void)lists;
-    (void)btn;
+
+    if (btn == ACTION_STD_OK)
+    {
+        splash(HZ, pp5020_perf_save_snapshot() ?
+                    "Snapshot saved" : "Snapshot save failed");
+        return ACTION_REDRAW;
+    }
+
+    if (btn == ACTION_STD_CONTEXT)
+    {
+        pp5020_perf_reset();
+        splash(HZ/2, "Statistics reset");
+        return ACTION_REDRAW;
+    }
 
     pp5020_perf_get(&perf);
     simplelist_reset_lines();
@@ -1967,13 +2047,24 @@ static int pp5020_perf_callback(int btn, struct gui_synclist *lists)
             perf.cache_discard_total_us / perf.cache_discard_calls : 0);
     simplelist_addline("Cache discard max us: %lu",
         (unsigned long)perf.cache_discard_max_us);
+    simplelist_addline("PCM changes: %llu", perf.pcm_track_changes);
+    simplelist_addline("PCM notify avg/max us: %llu/%lu",
+        perf.pcm_track_changes ?
+            perf.pcm_notify_total_us / perf.pcm_track_changes : 0,
+        (unsigned long)perf.pcm_notify_max_us);
+    simplelist_addline("PCM underruns: %llu", perf.pcm_underruns);
+    simplelist_addline("PCM deferred: %llu",
+        perf.pcm_deferred_notifications);
+    simplelist_addline("PCM duplicate/missed: %llu/%llu",
+        perf.pcm_duplicate_notifications, perf.pcm_missed_transitions);
     return btn;
 }
 
 static bool dbg_pp5020_perf(void)
 {
     struct simplelist_info info;
-    simplelist_info_init(&info, "PP5020 performance since boot", 1, NULL);
+    simplelist_info_init(&info,
+        "PP5020 perf [SELECT save, CONTEXT reset]", 1, NULL);
     info.action_callback = pp5020_perf_callback;
     info.scroll_all = true;
     return simplelist_show_list(&info);

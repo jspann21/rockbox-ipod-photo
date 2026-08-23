@@ -11,6 +11,7 @@
 #include "corelock.h"
 #include "pp5020-perf.h"
 #include <limits.h>
+#include <string.h>
 
 static struct pp5020_perf_stats perf_core[NUM_CORES] NOCACHEBSS_ATTR;
 static struct pp5020_perf_stats perf_device NOCACHEBSS_ATTR;
@@ -91,6 +92,13 @@ void pp5020_perf_init(void)
 #endif
 }
 
+void pp5020_perf_reset(void)
+{
+    int oldlevel = begin_update();
+    memset(perf_core, 0, sizeof(perf_core));
+    end_update(oldlevel);
+}
+
 void pp5020_perf_get(struct pp5020_perf_stats *stats)
 {
     int core;
@@ -119,6 +127,12 @@ void pp5020_perf_get(struct pp5020_perf_stats *stats)
         ADD_FIELD(dma_spurious_irqs);
         ADD_FIELD(storage_event_wakeups);
         ADD_FIELD(storage_deadline_wakeups);
+        ADD_FIELD(pcm_track_changes);
+        ADD_FIELD(pcm_notify_total_us);
+        ADD_FIELD(pcm_underruns);
+        ADD_FIELD(pcm_deferred_notifications);
+        ADD_FIELD(pcm_duplicate_notifications);
+        ADD_FIELD(pcm_missed_transitions);
 #undef ADD_FIELD
         if (s->cache_clean_max_us > stats->cache_clean_max_us)
             stats->cache_clean_max_us = s->cache_clean_max_us;
@@ -126,6 +140,8 @@ void pp5020_perf_get(struct pp5020_perf_stats *stats)
             stats->cache_discard_max_us = s->cache_discard_max_us;
         if (s->dma_max_us > stats->dma_max_us)
             stats->dma_max_us = s->dma_max_us;
+        if (s->pcm_notify_max_us > stats->pcm_notify_max_us)
+            stats->pcm_notify_max_us = s->pcm_notify_max_us;
     }
 }
 
@@ -206,6 +222,10 @@ DEFINE_COUNTER(pp5020_perf_record_pio_fallback, pio_fallbacks)
 DEFINE_COUNTER(pp5020_perf_record_dma_missing_irq, dma_missing_irqs)
 DEFINE_COUNTER(pp5020_perf_record_dma_late_irq, dma_late_irqs)
 DEFINE_COUNTER(pp5020_perf_record_dma_spurious_irq, dma_spurious_irqs)
+DEFINE_COUNTER(pp5020_perf_record_pcm_underrun, pcm_underruns)
+DEFINE_COUNTER(pp5020_perf_record_pcm_deferred, pcm_deferred_notifications)
+DEFINE_COUNTER(pp5020_perf_record_pcm_duplicate, pcm_duplicate_notifications)
+DEFINE_COUNTER(pp5020_perf_record_pcm_missed, pcm_missed_transitions)
 
 void pp5020_perf_record_storage_wakeup(bool deadline)
 {
@@ -213,5 +233,14 @@ void pp5020_perf_record_storage_wakeup(bool deadline)
     struct pp5020_perf_stats *s = local_stats();
     inc_u64_sat(deadline ? &s->storage_deadline_wakeups
                          : &s->storage_event_wakeups);
+    end_update(oldlevel);
+}
+
+void pp5020_perf_record_pcm_notify(uint32_t latency_us)
+{
+    int oldlevel = begin_update();
+    struct pp5020_perf_stats *s = local_stats();
+    record_timing(&s->pcm_track_changes, &s->pcm_notify_total_us,
+                  &s->pcm_notify_max_us, latency_us);
     end_update(oldlevel);
 }
