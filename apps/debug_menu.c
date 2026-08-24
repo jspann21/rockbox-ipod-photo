@@ -1929,6 +1929,9 @@ static bool dbg_disk_info(void)
 static bool pp5020_perf_save_snapshot(void)
 {
     struct pp5020_perf_stats perf;
+#ifdef HAVE_ATA_DMA_RECOVERY
+    struct ata_dma_recovery_stats recovery;
+#endif
     bool ok;
     int fd = open(ROCKBOX_DIR "/pp5020-perf.log",
                   O_WRONLY | O_CREAT | O_APPEND, 0666);
@@ -1937,6 +1940,9 @@ static bool pp5020_perf_save_snapshot(void)
         return false;
 
     pp5020_perf_get(&perf);
+#ifdef HAVE_ATA_DMA_RECOVERY
+    ata_get_dma_recovery_stats(&recovery);
+#endif
     fdprintf(fd, "\n--- PP5020 performance snapshot ---\n");
     fdprintf(fd, "build=%s\n", rbversion);
     fdprintf(fd, "uptime=%lu\n", current_tick / HZ);
@@ -1968,6 +1974,24 @@ static bool pp5020_perf_save_snapshot(void)
     fdprintf(fd, "dma_missing_irqs=%llu\n", perf.dma_missing_irqs);
     fdprintf(fd, "dma_late_irqs=%llu\n", perf.dma_late_irqs);
     fdprintf(fd, "dma_spurious_irqs=%llu\n", perf.dma_spurious_irqs);
+#ifdef HAVE_ATA_DMA_RECOVERY
+    fdprintf(fd, "dma_finish_failures=%lu\n",
+             (unsigned long)recovery.dma_finish_failures);
+    fdprintf(fd, "pio_recovery_successes=%lu\n",
+             (unsigned long)recovery.pio_recovery_successes);
+    fdprintf(fd, "pio_recovery_failures=%lu\n",
+             (unsigned long)recovery.pio_recovery_failures);
+    fdprintf(fd, "ata_expired_before_command=%lu\n",
+             (unsigned long)recovery.expired_before_command);
+    fdprintf(fd, "ata_configured_dma_mode=%#x\n",
+             recovery.configured_dma_mode);
+    fdprintf(fd, "ata_identify_current_dma_mode=%#x\n",
+             recovery.identify_current_dma_mode);
+    fdprintf(fd, "ata_dma_quarantined=%d\n",
+             recovery.dma_quarantined);
+    fdprintf(fd, "ata_dma_quarantine_reason=%d\n",
+             recovery.quarantine_reason);
+#endif
     fdprintf(fd, "storage_event_wakeups=%llu\n",
              perf.storage_event_wakeups);
     fdprintf(fd, "storage_deadline_wakeups=%llu\n",
@@ -1995,6 +2019,9 @@ static bool pp5020_perf_save_snapshot(void)
 static int pp5020_perf_callback(int btn, struct gui_synclist *lists)
 {
     struct pp5020_perf_stats perf;
+#ifdef HAVE_ATA_DMA_RECOVERY
+    struct ata_dma_recovery_stats recovery;
+#endif
 
     (void)lists;
 
@@ -2013,6 +2040,9 @@ static int pp5020_perf_callback(int btn, struct gui_synclist *lists)
     }
 
     pp5020_perf_get(&perf);
+#ifdef HAVE_ATA_DMA_RECOVERY
+    ata_get_dma_recovery_stats(&recovery);
+#endif
     simplelist_reset_lines();
     simplelist_addline("ATA: %s", perf.ata_model);
     simplelist_addline("Flash: %s; DMA mode: %#x",
@@ -2030,6 +2060,19 @@ static int pp5020_perf_callback(int btn, struct gui_synclist *lists)
     simplelist_addline("IDE IRQ missing: %llu", perf.dma_missing_irqs);
     simplelist_addline("IDE IRQ late: %llu", perf.dma_late_irqs);
     simplelist_addline("IDE IRQ spurious: %llu", perf.dma_spurious_irqs);
+#ifdef HAVE_ATA_DMA_RECOVERY
+    simplelist_addline("DMA finish failures: %lu",
+        (unsigned long)recovery.dma_finish_failures);
+    simplelist_addline("PIO recovery ok/fail: %lu/%lu",
+        (unsigned long)recovery.pio_recovery_successes,
+        (unsigned long)recovery.pio_recovery_failures);
+    simplelist_addline("ATA expired before command: %lu",
+        (unsigned long)recovery.expired_before_command);
+    simplelist_addline("DMA configured/identify: %#x/%#x",
+        recovery.configured_dma_mode, recovery.identify_current_dma_mode);
+    simplelist_addline("DMA quarantine/reason: %d/%d",
+        recovery.dma_quarantined, recovery.quarantine_reason);
+#endif
     simplelist_addline("Storage event wakes: %llu",
         perf.storage_event_wakeups);
     simplelist_addline("Storage deadline wakes: %llu",
