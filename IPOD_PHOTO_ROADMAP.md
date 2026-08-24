@@ -228,4 +228,11 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       spurious IDE interrupts, recovery failures, pre-command expirations, or
       DMA quarantine. Preserve the snapshot as
       `results/pp5020-perf-3be5cd9121-usb-validation.log`.
+- [x] Complete the conservative playback-transition pass on build
+      `0062a3c3a3`: nine measured PCM transitions averaged 61,233 us and
+      peaked at 96,538 us, with zero underruns or missed transitions. Its
+      16,053 ATA DMA requests also completed without timeout, fallback, IRQ
+      anomaly, recovery failure, pre-command expiry, or quarantine. Preserve
+      the appended evidence as
+      `results/pp5020-perf-0062a3c3a3-playback-validation.log`.
 - [ ] Keep the official bootloader and a known-good `.rockbox` backup available.

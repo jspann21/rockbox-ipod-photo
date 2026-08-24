@@ -776,6 +776,16 @@ PCM count exposed a diagnostics gap in the intentionally retained polling
 consumer; `44f2c65ab1` measures its first pending transition per polling batch
 without enabling the rejected forced interrupt.
 
+The follow-up `0062a3c3a3` playback snapshot after 861 seconds recorded nine
+PCM transitions at 61,233 us average and 96,538 us maximum latency, with zero
+underruns, duplicates, or missed transitions. In the same run, 16,053 DMA
+requests and 100,966,400 bytes completed with zero timeout, PIO fallback, IDE
+IRQ anomaly, recovery failure, pre-command expiry, or DMA quarantine. This
+qualifies the conservative polling path for use while the forced-interrupt
+bridge remains rejected. It does not satisfy the experimental goal of removing
+periodic PCM polling; that goal is blocked on identifying and separately
+qualifying a documented PP5020 software-interrupt source.
+
 For each artifact:
 
 1. Record git commit, any exact patch/diff, toolchain versions, configure
