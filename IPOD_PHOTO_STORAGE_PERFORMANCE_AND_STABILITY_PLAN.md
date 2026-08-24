@@ -751,6 +751,31 @@ specific hot routine. The PCM buffers remain cached IRAM, not uncached DRAM.
 The forced-normal-IRQ bridge must remain disabled until a documented and
 hardware-qualified PP5020 software-interrupt source is available.
 
+### First installed performance snapshot
+
+The installed `3be5cd9121` build booted and completed a deterministic 256 MiB
+USB write/readback test with identical host, device, and readback SHA-256
+(`3fe10356053a2e8b076b4c6a31fab09dabfdd0601c0dda7ee0960b26ed217699`).
+Its one-shot snapshot after 1,047 seconds recorded:
+
+- 49,414 DMA requests and 411,737,088 bytes, with 967 us average and 100,375 us
+  maximum completion time.
+- Zero DMA timeouts, PIO fallbacks, missing/late/spurious IDE interrupts, PIO
+  recovery attempts, pre-command deadline expirations, or DMA quarantine.
+- Configured and IDENTIFY-current UDMA2 (`0x42`) agreed.
+- Whole-cache clean and discard work totaled 310,657 us and 2,467,927 us,
+  respectively—about 0.27% of the measured uptime combined.
+- 53 event wakeups and 56 real storage-deadline wakeups; there is no fixed
+  half-second wake counter in the exact-deadline path.
+
+These measurements support retaining IRQ-assisted UDMA2 and the current
+SSD-only write-DMA policy for the next validation batch. They do not justify
+the optional uncached USB/ATA ring: measured cache-maintenance cost is already
+small, while that ring would add a new shared-buffer coherency risk. The zero
+PCM count exposed a diagnostics gap in the intentionally retained polling
+consumer; `44f2c65ab1` measures its first pending transition per polling batch
+without enabling the rejected forced interrupt.
+
 For each artifact:
 
 1. Record git commit, any exact patch/diff, toolchain versions, configure

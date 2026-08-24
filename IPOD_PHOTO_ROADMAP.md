@@ -127,7 +127,8 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       DMA quarantine state so one collection covers the storage decision. The
       provisional PP5020 forced-normal-IRQ consumer is
       disabled after it prevented the installed A1099 from reaching Rockbox;
-      PCM track changes retain the existing polling consumer.
+      PCM track changes retain the existing polling consumer, with transition
+      latency measured at that safe consumer rather than through a forced IRQ.
 - [x] **PMU, battery, and I2C robustness:** preserve the last valid ADC value
       after I2C failure; allow realistic modern replacement-battery capacities
       without changing voltage calibration; propagate I2C/RTC failures; validate
@@ -220,4 +221,11 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       the latest kernel, power, LCD, and ATA batch; test each changed behavior
       directly and use a broader pass for storage, power, USB, or other
       hardware-sensitive changes.
+- [x] Complete the first installed storage/USB integrity pass on build
+      `3be5cd9121`: a deterministic 256 MiB file matched SHA-256 on the host,
+      iPod, and readback. Across 49,414 DMA requests and 411,737,088 bytes, the
+      manual snapshot recorded zero DMA timeouts, PIO fallbacks, missing/late/
+      spurious IDE interrupts, recovery failures, pre-command expirations, or
+      DMA quarantine. Preserve the snapshot as
+      `results/pp5020-perf-3be5cd9121-usb-validation.log`.
 - [ ] Keep the official bootloader and a known-good `.rockbox` backup available.
