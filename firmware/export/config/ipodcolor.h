@@ -221,7 +221,10 @@
 #define HAVE_ATA_DMA_IRQ
 #define HAVE_PP5020_PERF
 #define HAVE_ATA_EXACT_DEADLINES
-#define HAVE_PCM_TRACK_CHANGE_IRQ
+/* The PP5020 forced-IRQ PCM bridge remains unqualified. Enabling its
+ * provisional interrupt bit prevented an A1099 from reaching Rockbox, so
+ * retain the producer/consumer polling path until a documented software IRQ
+ * source is available. */
 /* First-pass behavior: retain write DMA only for SSD-classified adapters.
  * Set ATA_WRITE_POLICY to ATA_WRITE_PIO_ONLY for the later A/B build. */
 #define ATA_WRITE_POLICY ATA_WRITE_DMA_IF_SSD
