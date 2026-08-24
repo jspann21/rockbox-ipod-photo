@@ -210,7 +210,9 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       while restoring `4f8e949945` booted successfully. The only new boot-time
       hardware mechanism, the provisional PP5020 forced PCM interrupt, was
       consequently disabled in `e87a9dcd23`; storage changes remain enabled for
-      the next conservative qualification build.
+      the next conservative qualification build. Conservative firmware
+      `fa7ee27892` subsequently reached Rockbox on the installed A1099; broader
+      playback, storage, sleep/wake, and USB qualification remains pending.
 - [ ] Smoke-test playback, wheel, hold, shutdown, suspend/resume, and USB after
       the latest kernel, power, LCD, and ATA batch; test each changed behavior
       directly and use a broader pass for storage, power, USB, or other

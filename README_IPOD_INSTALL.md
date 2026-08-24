@@ -2,7 +2,8 @@
 
 This installs the conservative `fa7ee27892` Rockbox build. The provisional
 PP5020 forced PCM interrupt that blocked the preceding hardware test is
-disabled. The Rockbox bootloader must already be installed on the iPod.
+disabled. This build reached Rockbox on the installed A1099 during its initial
+boot smoke test. The Rockbox bootloader must already be installed on the iPod.
 
 Open PowerShell in this repository and run:
 

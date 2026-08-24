@@ -11,10 +11,11 @@ pass at commit `4f8e949945`. A broader build at `c336e188cb` failed its first
 installed A1099 boot and the restored `4f8e949945` build booted successfully.
 The provisional forced-normal-IRQ PCM bridge introduced by the broader build is
 therefore disabled at `e87a9dcd23`; its existing polling consumer remains in
-use. The ATA IRQ-assisted DMA path, 250 us initial poll, and exact storage
-deadlines still require installed A1099 qualification before they should be
-treated as production-safe. This document does not format the card or alter
-installed firmware by itself.
+use. Conservative firmware `fa7ee27892` then reached Rockbox on the installed
+A1099. The ATA IRQ-assisted DMA path, 250 us initial poll, and exact storage
+deadlines still require the remaining playback, sleep/wake, and USB lifecycle
+qualification before they should be treated as production-safe. This document
+does not format the card or alter installed firmware by itself.
 
 ## Implemented source subset
 
