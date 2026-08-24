@@ -135,7 +135,13 @@ void list_init_item_height(struct gui_synclist *list, enum screen_type screen)
     else
         list->line_height[screen] = line_height + global_settings.list_line_padding;
 #else
+#ifdef IPOD_COLOR
+    /* The native Photo layout uses a little vertical breathing room without
+     * imposing touchscreen-sized rows or changing any other target. */
+    list->line_height[screen] = line_height + 2;
+#else
     list->line_height[screen] = line_height;
+#endif
 #endif
 }
 

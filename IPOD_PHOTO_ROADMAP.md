@@ -168,11 +168,11 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 
 ## Responsiveness and native 220x176 UI
 
-- [ ] Redesign menu, browser, and now-playing geometry for 220x176 instead of
+- [x] Redesign menu, browser, and now-playing geometry for 220x176 instead of
       shrinking 320x240 layouts; improve typography, spacing, icons, focus and
       status presentation; keep skin playlist viewers useful when a viewport is
-      shorter than the selected font; and evaluate configurable center-button
-      behavior.
+      shorter than the selected font.
+- [ ] Evaluate configurable center-button behavior.
 - [ ] Profile and tune PictureFlow slide count, cache size, clipping, scaling,
       storage activity, and parallel-slide projection on Photo hardware,
       including spacing and visible-slide count; begin with the current 64-entry

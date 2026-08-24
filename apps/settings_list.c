@@ -330,11 +330,20 @@ static const int backlight_fade[] = {0,100,200,300,500,1000,2000,3000,5000,10000
 static const char graphic_numeric[] = "graphic,numeric";
 
 /* Default theme settings */
+#ifdef IPOD_COLOR
+#define DEFAULT_WPSNAME  "ipodphoto"
+#define DEFAULT_SBSNAME  "ipodphoto"
+#else
 #define DEFAULT_WPSNAME  "cabbiev2"
 #define DEFAULT_SBSNAME  "-"
+#endif
 #define DEFAULT_FMS_NAME "cabbiev2"
 
-#if LCD_HEIGHT <= 64
+#ifdef IPOD_COLOR
+  /* Condensed glyphs stay legible while preserving useful browser width. */
+  #define DEFAULT_FONT_HEIGHT 13
+  #define DEFAULT_FONTNAME "13-Fixed-SemiCond"
+#elif LCD_HEIGHT <= 64
   #define DEFAULT_FONT_HEIGHT 8
   #define DEFAULT_FONTNAME "08-Rockfont"
 #elif LCD_HEIGHT <= 80
@@ -404,12 +413,21 @@ static const char graphic_numeric[] = "graphic,numeric";
 #endif
 #endif /* HAVE_REMOTE_LCD */
 
+#ifdef IPOD_COLOR
+#define DEFAULT_THEME_FOREGROUND LCD_RGBPACK(0xe8, 0xed, 0xf2)
+#define DEFAULT_THEME_BACKGROUND LCD_RGBPACK(0x10, 0x15, 0x1c)
+#define DEFAULT_THEME_SELECTOR_START LCD_RGBPACK(0x2f, 0x73, 0xd0)
+#define DEFAULT_THEME_SELECTOR_END LCD_RGBPACK(0x2f, 0x73, 0xd0)
+#define DEFAULT_THEME_SELECTOR_TEXT LCD_RGBPACK(0xff, 0xff, 0xff)
+#define DEFAULT_THEME_SEPARATOR  LCD_RGBPACK(0x46, 0x53, 0x65)
+#else
 #define DEFAULT_THEME_FOREGROUND LCD_RGBPACK(0xce, 0xcf, 0xce)
 #define DEFAULT_THEME_BACKGROUND LCD_RGBPACK(0x00, 0x00, 0x00)
 #define DEFAULT_THEME_SELECTOR_START LCD_RGBPACK(0xff, 0xeb, 0x9c)
 #define DEFAULT_THEME_SELECTOR_END LCD_RGBPACK(0xb5, 0x8e, 0x00)
 #define DEFAULT_THEME_SELECTOR_TEXT LCD_RGBPACK(0x00, 0x00, 0x00)
 #define DEFAULT_THEME_SEPARATOR  LCD_RGBPACK(0x80, 0x80, 0x80)
+#endif
 
 /* The Photo's 80 MHz CPU has less headroom for a per-pixel gradient during
  * wheel-driven list redraws. Keep the default selector visible and themeable,
@@ -420,7 +438,11 @@ static const char graphic_numeric[] = "graphic,numeric";
 #define DEFAULT_CURSOR_STYLE 3
 #endif
 
+#ifdef IPOD_COLOR
+#define DEFAULT_BACKDROP    "-"
+#else
 #define DEFAULT_BACKDROP    BACKDROP_DIR "/cabbiev2.bmp"
+#endif
 
 #ifdef HAVE_RECORDING
 /* these should be in the config.h files */
@@ -499,8 +521,8 @@ static const char graphic_numeric[] = "graphic,numeric";
 # define MAX_FILES_IN_DIR_STEP      50
 #endif
 
-#ifdef HAVE_TOUCHSCREEN
-/* on touchscreen, it makes more sense to put the scrollbar on the right */
+#if defined(HAVE_TOUCHSCREEN) || defined(IPOD_COLOR)
+/* Touch targets and the iPod Photo conventionally place it on the right. */
 # define SCROLLBAR_DEFAULT SCROLLBAR_RIGHT
 #else
 # define SCROLLBAR_DEFAULT SCROLLBAR_LEFT
