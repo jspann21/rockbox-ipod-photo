@@ -219,7 +219,10 @@
 #define HAVE_ATA_DMA
 #define HAVE_ATA_DMA_RECOVERY
 #define HAVE_ATA_DMA_IRQ
+#ifndef SIMULATOR
+/* PP5020 telemetry reads hardware timers and masks ARM interrupts. */
 #define HAVE_PP5020_PERF
+#endif
 #define HAVE_ATA_EXACT_DEADLINES
 /* The PP5020 forced-IRQ PCM bridge remains unqualified. Enabling its
  * provisional interrupt bit prevented an A1099 from reaching Rockbox, so
