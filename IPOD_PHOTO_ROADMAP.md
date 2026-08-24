@@ -119,10 +119,12 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       no ATA work is pending.
 - [x] **A1099 performance telemetry:** retain RAM-only aggregate measurements
       for whole-cache maintenance, ATA DMA latency and busy polling, IRQ quality,
-      PIO recovery, storage wakeup sources, and PCM transition delivery; expose
+      PIO recovery, storage wakeup sources, and PCM transition production; expose
       the counters and detected adapter policy as coherent per-boot debug data,
       with explicit reset and one-shot snapshot actions but no continuous writes
-      to the SD card.
+      to the SD card. The provisional PP5020 forced-normal-IRQ consumer is
+      disabled after it prevented the installed A1099 from reaching Rockbox;
+      PCM track changes retain the existing polling consumer.
 - [x] **PMU, battery, and I2C robustness:** preserve the last valid ADC value
       after I2C failure; allow realistic modern replacement-battery capacities
       without changing voltage calibration; propagate I2C/RTC failures; validate
@@ -155,9 +157,10 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [ ] Compare the new 250 microsecond ATA DMA poll plus IDE-interrupt path against
       the prior 5 ms threshold on the installed ATA1, including USB throughput,
       busy-poll time, timeouts, IRQ misses, and PIO fallback counts.
-- [x] Generate and review the `ipodcolor` linker map: PCM mixer buffers, cache
-      maintenance, ATA completion, deferred PCM interrupt trigger, and PCM FIQ
-      handlers remain in IRAM, with 3,048 bytes free after the main stack.
+- [x] Generate and review the conservative `ipodcolor` linker map: PCM mixer
+      buffers, cache maintenance, ATA completion, and PCM FIQ handlers remain
+      in IRAM, with 3,072 bytes free after the main stack. The unqualified
+      deferred PCM interrupt trigger is compiled out.
 
 ## Responsiveness and native 220x176 UI
 
@@ -202,7 +205,12 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       `f7df10413dfad5c3c41ea9eb2b07794def568a5d0974570615da0147e56749b2`
       for `rockbox.zip`; the validation-only bootloader artifact is
       `37cde9a34c2f3aef302d3cb85002279ead669842e66f2ef731fc1f0444f0041c`.
-      Installed A1099 qualification remains pending.
+      Installed A1099 qualification remains pending. Hardware boot testing
+      rejected modernization build `c336e188cb`: it did not reach Rockbox,
+      while restoring `4f8e949945` booted successfully. The only new boot-time
+      hardware mechanism, the provisional PP5020 forced PCM interrupt, was
+      consequently disabled in `e87a9dcd23`; storage changes remain enabled for
+      the next conservative qualification build.
 - [ ] Smoke-test playback, wheel, hold, shutdown, suspend/resume, and USB after
       the latest kernel, power, LCD, and ATA batch; test each changed behavior
       directly and use a broader pass for storage, power, USB, or other

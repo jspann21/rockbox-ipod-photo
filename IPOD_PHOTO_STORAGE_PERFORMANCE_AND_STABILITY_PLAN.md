@@ -5,12 +5,16 @@ Date: 2026-08-23
 Scope: fourth-generation iPod Photo/Color (A1099, Rockbox target
 **ipodcolor**) with an iFlash ATA1 and a Samsung EVO-family SD card.
 
-Status: the conservative recovery subset and the first measured scheduling/IRQ
-experiment are implemented in source. Normal firmware, packaged ZIP, and
-bootloader builds pass at commit `4f8e949945`. The IRQ-assisted DMA path, 250 us
-initial poll, and exact storage deadlines still require installed A1099
-qualification before they should be treated as production-safe. This document
-does not format the card or alter installed firmware by itself.
+Status: the conservative recovery subset and storage scheduling/IRQ experiment
+are implemented in source. Normal firmware, packaged ZIP, and bootloader builds
+pass at commit `4f8e949945`. A broader build at `c336e188cb` failed its first
+installed A1099 boot and the restored `4f8e949945` build booted successfully.
+The provisional forced-normal-IRQ PCM bridge introduced by the broader build is
+therefore disabled at `e87a9dcd23`; its existing polling consumer remains in
+use. The ATA IRQ-assisted DMA path, 250 us initial poll, and exact storage
+deadlines still require installed A1099 qualification before they should be
+treated as production-safe. This document does not format the card or alter
+installed firmware by itself.
 
 ## Implemented source subset
 
@@ -724,21 +728,24 @@ compatible shell. A representative sequence is:
 
 ### Measured IRAM placement after the modernization batch
 
-The `ipodcolor` linker map generated on 2026-08-23 from code commit
-`29d969bf34` confirms the hot-path placement without moving any additional
-large or cold routines:
+The conservative `ipodcolor` linker map generated on 2026-08-23 after code
+commit `e87a9dcd23` confirms the hot-path placement without moving any
+additional large or cold routines:
 
 - `.ibss` occupies `0x40000000` through `0x40006b64`; `pcm_mixer.o` retains
   its `0x884`-byte IRAM buffer block at `0x40004ef0`.
-- `.iram` occupies `0x40006b64` through `0x40009314`. The PCM mixer code,
-  `ata_dma_irq_handler`, `pp5020_defer_pcm_track_change`, `commit_dcache`,
-  `commit_discard_dcache`, and PCM FIQ handlers all remain in this region.
-- CPU/COP idle stacks occupy `0x40009314` through `0x40009418`, and the main
-  stack ends at `0x4000b418`. Against the linker script's `0x4000c000` IRAM
-  limit, this preserves `0xbe8` (3,048 bytes) of post-stack headroom.
+- `.iram` occupies `0x40006b64` through `0x400092fc`. The PCM mixer code,
+  `ata_dma_irq_handler`, `commit_dcache`, `commit_discard_dcache`, and PCM FIQ
+  handlers all remain in this region. `pp5020_defer_pcm_track_change` is absent
+  because the unqualified forced-interrupt bridge is compiled out.
+- CPU/COP idle stacks occupy `0x400092fc` through `0x40009400`, and the main
+  stack ends at `0x4000b400`. Against the linker script's `0x4000c000` IRAM
+  limit, this preserves `0xc00` (3,072 bytes) of post-stack headroom.
 
 No further IRAM promotion is justified before hardware measurements identify a
 specific hot routine. The PCM buffers remain cached IRAM, not uncached DRAM.
+The forced-normal-IRQ bridge must remain disabled until a documented and
+hardware-qualified PP5020 software-interrupt source is available.
 
 For each artifact:
 
