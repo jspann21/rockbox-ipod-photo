@@ -1,0 +1,19 @@
+# Native iPod Color/Photo status and list layout
+#
+# Keep a predictable compact header and four-pixel side/bottom margins.
+# A dedicated compact font keeps the header usable when the UI font is enlarged.
+%Fl(2,13-Fixed-SemiCond.fnt)
+%Vi(-,4,16,212,156,1)
+
+# Prefer the current list title; otherwise show compact playback state.
+%?Lt<%Vd(t)|%Vd(s)>
+%Vl(t,4,1,212,13,2)
+%s%ac%?Lt<%Lt>
+%Vl(s,4,1,212,13,2)
+%al%?mp<Stop|Play|Pause|Fwd|Rew>
+%ac%?cc<%?ca<%?St(time format)<%cH|%cI>:%cM|--:-->|>
+%ar%bl%%
+
+# One-pixel divider between status and content.
+%V(4,15,212,1,-)%Vf(465365)
+%dr(0,0,-,1)

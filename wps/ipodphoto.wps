@@ -1,0 +1,48 @@
+# Native 220x176 iPod Color/Photo while-playing screen
+#
+# Geometry is deliberately independent of the 320x240 Cabbie layout.
+%wd
+%ax
+%Fl(2,13-Fixed-SemiCond.fnt)
+
+# Compact status row
+%V(4,1,212,13,2)
+%al%?mp<Stop|Play|Pause|Fwd|Rew>
+%ac%?cc<%?ca<%?St(time format)<%cH|%cI>:%cM|--:-->|>
+%ar%bl%%
+%V(4,15,212,1,-)%Vf(465365)
+%dr(0,0,-,1)
+
+# Use an 88px square for artwork and give metadata the remaining width.
+%?C<%Vd(a)|%Vd(b)>
+%Vl(a,4,20,88,88,-)
+%Cl(0,0,88,88,c,c)
+%Cd
+%Vl(a,100,20,116,88,1)
+%s%al%?it<%it|%fn>
+%s%al%?ia<%ia|%?iA<%iA|>>
+%s%al%?id<%id|%?d(1)<%d(1)|>>
+%al%?iy<%iy|>
+
+# Without artwork, center the same hierarchy across the full content width.
+%Vl(b,4,20,212,88,1)
+%s%ac%?it<%it|%fn>
+%s%ac%?ia<%ia|%?iA<%iA|>>
+%s%ac%?id<%id|%?d(1)<%d(1)|>>
+%ac%?iy<%iy|>
+
+# Playback position and time use fixed geometry regardless of UI font size.
+%V(4,112,212,7,-)
+%pb(0,0,212,7)
+%V(4,122,212,13,2)
+%al%pc%ac%pp/%pe%ar%pr
+
+# Keep the next-track title useful even when the selected UI font is large.
+%V(4,138,212,20,1)
+%s%al%?It<%Sx(Next:) %It|>
+
+# Compact playback details
+%V(4,162,212,13,2)
+%al%?pv<Mute|Vol %pv|Vol %pv|Vol %pv>
+%ac%?ps<Shuffle|%?mm<|Repeat|Repeat 1|Shuffle|A-B>>
+%ar%fbk

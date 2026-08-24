@@ -416,6 +416,7 @@ while(<WPS>) {
     if($l =~ /^ *<theme>/i) {
         # undef is a unary operator (!)
         undef $theme;
+        undef $req_t;
         undef $has_wps;
         undef $has_rwps;
         undef $has_sbs;
@@ -455,6 +456,9 @@ while(<WPS>) {
     }
     elsif($l =~ /^Name: *(.*)/i) {
         $theme = $1;
+    }
+    elsif($l =~ /^Target: *(.*)/i) {
+        $req_t = $1;
     }
     elsif($l =~ /^Authors: *(.*)/i) {
         $author = $1;
@@ -580,6 +584,11 @@ while(<WPS>) {
         }
     }
     elsif($l =~ /^ *<\/theme>/i) {
+        if (defined($req_t)) {
+            my @models = split(/\s*,\s*/, $req_t);
+            next unless grep { $_ eq $modelname } @models;
+        }
+
         # for each wps,sbs,fms (+ remote variants) check if <theme>[.<model>].wps
         # exists if no filename was specified in WPSLIST
         my $req_skin;
@@ -629,7 +638,9 @@ while(<WPS>) {
         # WPS
         #
         #print "Size requirement is fine!\n";
-        mkdirs() if (-e "$wpsdir/$theme");
+        # Skin files do not need a same-named bitmap directory.  Create the
+        # package destinations for text-only and target-specific skins too.
+        mkdirs();
         # Do the copying before building the .cfg - buildcfg()
         # mangles some filenames
         if (defined($backdrop) && $backdrop ne "-") {

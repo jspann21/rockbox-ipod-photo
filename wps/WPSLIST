@@ -66,6 +66,38 @@ ui viewport: -
 </theme>
 
 <theme>
+Name: ipodphoto
+Target: ipodcolor
+Authors: Rockbox team
+
+WPS: yes
+RWPS: no
+SBS: yes
+RSBS: no
+FMS: no
+RFMS: no
+
+<main>
+backdrop: -
+font: 13-Fixed-SemiCond.fnt
+statusbar: top
+foreground color: E8EDF2
+background color: 10151C
+selector type: bar (color)
+line selector start color: 2F73D0
+line selector end color: 2F73D0
+line selector text color: FFFFFF
+list separator color: 465365
+list separator height: 0
+iconset: icons/tango_icons.12x12.bmp
+viewers iconset: icons/tango_icons_viewers.12x12.bmp
+show icons: on
+ui viewport: -
+</main>
+
+</theme>
+
+<theme>
 Name: cabbiev2
 # Real name of the creator of the WPS
 Authors: Johannes Voggenthaler, Apoo Maha, Marc Guay, Alex Vanderpol, Jerry Lange, Keith Perri, Mark Fawcus, and Marianne Arnold with support from Rockbox developers and forums. Based on Cabbie by Yohann Misquitta.
