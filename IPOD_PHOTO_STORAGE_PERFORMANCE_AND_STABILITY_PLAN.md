@@ -36,7 +36,10 @@ The implementation deliberately stays narrower than the experimental roadmap:
 - Debug > View disk info reports configured/current DMA mode, active policy,
   and recovery results. A separate View PP5020 performance page reports
   per-boot DMA/cache timing, IRQ quality, and storage wakeup sources using
-  RAM-only aggregate counters. No event log or persistent logging was added.
+  RAM-only aggregate counters. Its manual snapshot also records the ATA DMA
+  finish, PIO recovery, pre-command deadline, configured/IDENTIFY mode, and
+  quarantine state needed for a single-pass hardware decision. No event log or
+  persistent logging was added.
 - UDMA2, Apple PIO timings, whole-cache DMA maintenance, write-cache behavior,
   and card formatting are unchanged.
 

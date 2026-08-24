@@ -122,7 +122,10 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       PIO recovery, storage wakeup sources, and PCM transition production; expose
       the counters and detected adapter policy as coherent per-boot debug data,
       with explicit reset and one-shot snapshot actions but no continuous writes
-      to the SD card. The provisional PP5020 forced-normal-IRQ consumer is
+      to the SD card. The snapshot also includes configured/IDENTIFY DMA modes,
+      finish failures, PIO recovery outcomes, pre-command deadline expiry, and
+      DMA quarantine state so one collection covers the storage decision. The
+      provisional PP5020 forced-normal-IRQ consumer is
       disabled after it prevented the installed A1099 from reaching Rockbox;
       PCM track changes retain the existing polling consumer.
 - [x] **PMU, battery, and I2C robustness:** preserve the last valid ADC value
