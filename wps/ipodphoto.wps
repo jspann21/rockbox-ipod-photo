@@ -16,7 +16,7 @@
 # Rockbox's standard conditional-label pattern. Prime the album-art palette
 # before resolving the card colour.
 %?C<%Vd(Art)|>
-%V(0,21,114,144,-)%Vf(fg)%dr(0,0,-,-)%Vf(bg)%dr(106,0,8,1)%dr(109,1,5,1)%dr(111,2,3,1)%dr(112,3,2,1)%dr(113,4,1,1)%dr(113,139,1,1)%dr(112,140,2,1)%dr(111,141,3,1)%dr(109,142,5,1)%dr(106,143,8,1)
+%V(0,21,114,144,-)%Vf(fg)%dr(0,0,-,-)%Vf(bg)%dr(102,0,12,1)%dr(105,1,9,1)%dr(107,2,7,1)%dr(108,3,6,1)%dr(110,4,4,1)%dr(111,5,3,1)%dr(111,6,3,1)%dr(112,7,2,1)%dr(112,8,2,1)%dr(113,9,1,1)%dr(113,10,1,1)%dr(113,11,1,1)%dr(113,132,1,1)%dr(113,133,1,1)%dr(113,134,1,1)%dr(112,135,2,1)%dr(112,136,2,1)%dr(111,137,3,1)%dr(111,138,3,1)%dr(110,139,4,1)%dr(108,140,6,1)%dr(107,141,7,1)%dr(105,142,9,1)%dr(102,143,12,1)
 %?C<%Vd(Art)|%Vd(No_Art)>
 
 # Keep the cover's allocation square so aspect-preserving scaling leaves no
@@ -26,30 +26,47 @@
 %Cl(0,0,110,110,c,c)
 %Cd
 %Vl(Art,102,25,8,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,105,26,5,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,107,27,3,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,108,28,2,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,109,29,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,109,130,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,108,131,2,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,107,132,3,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,105,133,5,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,104,26,6,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,106,27,4,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,107,28,3,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,108,29,2,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,109,30,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,109,31,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,109,32,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,109,127,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,109,128,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,109,129,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,108,130,2,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,107,131,3,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,106,132,4,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,104,133,6,1,-)%Vf(fg)%dr(0,0,-,-)
 %Vl(Art,102,134,8,1,-)%Vf(fg)%dr(0,0,-,-)
 
 %Vl(No_Art,0,25,110,110,-)%Vf(muted)%dr(0,0,-,-)
 %Vl(No_Art,102,25,8,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,105,26,5,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,107,27,3,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,108,28,2,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,109,29,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,109,130,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,108,131,2,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,107,132,3,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,105,133,5,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,104,26,6,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,106,27,4,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,107,28,3,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,108,29,2,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,109,30,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,109,31,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,109,32,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,109,127,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,109,128,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,109,129,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,108,130,2,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,107,131,3,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,106,132,4,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,104,133,6,1,-)%Vf(fg)%dr(0,0,-,-)
 %Vl(No_Art,102,134,8,1,-)%Vf(fg)%dr(0,0,-,-)
 
+# Repaint the Rockpod-scaled four-pixel crown after the album-art layers.
+%V(0,21,102,1,-)%Vf(fg)%dr(0,0,-,-)
+%V(0,22,105,1,-)%Vf(fg)%dr(0,0,-,-)
+%V(0,23,107,1,-)%Vf(fg)%dr(0,0,-,-)
+%V(0,24,108,1,-)%Vf(fg)%dr(0,0,-,-)
 # Complete the cyan outer arc after the cover masks have painted the inner arc.
-%V(110,25,4,8,-)%Vb(bg)%Vf(fg)%dr(0,1,2,1)%dr(0,2,3,1)%dr(0,3,4,5)
+%V(110,25,4,9,-)%Vb(bg)%Vf(fg)%dr(0,1,1,2)%dr(0,3,2,2)%dr(0,5,3,3)%dr(0,8,4,1)
 
 # Seven-pixel live pill built from row-sized progress bars. Played time uses
 # the muted accent, empty time stays navy, and the surrounding card stays cyan.
