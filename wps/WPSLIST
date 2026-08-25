@@ -68,7 +68,7 @@ ui viewport: -
 <theme>
 Name: ipodphoto
 Target: ipodcolor
-Authors: Rockbox team
+Authors: Dook; iPod Photo adaptation for Rockpod
 
 WPS: yes
 RWPS: no
@@ -79,15 +79,17 @@ RFMS: no
 
 <main>
 backdrop: -
-font: 13-Fixed-SemiCond.fnt
+font: 12-Adobe-Helvetica.fnt
 statusbar: top
-foreground color: E8EDF2
-background color: 10151C
-selector type: bar (color)
-line selector start color: 2F73D0
-line selector end color: 2F73D0
-line selector text color: FFFFFF
-list separator color: 465365
+scrollbar: right
+scrollbar width: 4
+foreground color: 00FBD6
+background color: 000C21
+selector type: bar (inverse)
+line selector start color: 00FBD6
+line selector end color: 00FBD6
+line selector text color: 000C21
+list separator color: 007570
 list separator height: 0
 iconset: icons/tango_icons.12x12.bmp
 viewers iconset: icons/tango_icons_viewers.12x12.bmp

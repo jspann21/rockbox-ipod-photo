@@ -102,6 +102,23 @@
   </voice>
 </phrase>
 <phrase>
+  id: LANG_DYNAMIC_COLORS
+  desc: in theme settings
+  user: core
+  <source>
+    *: none
+    lcd_color: "Dynamic Colors"
+  </source>
+  <dest>
+    *: none
+    lcd_color: "Dynamic Colors"
+  </dest>
+  <voice>
+    *: none
+    lcd_color: "Dynamic Colors"
+  </voice>
+</phrase>
+<phrase>
   id: LANG_SET_BOOL_YES
   desc: bool true representation
   user: core

@@ -1,0 +1,12 @@
+The compact icon font bundled for the iPod Photo Themify adaptation is
+derived from the font assets distributed with Themify 2 by Dook.
+
+Copyright 2026 Micro Noto Sans Authors
+(https://github.com/D0-0K/MicroNotoSans)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+The full license is available at https://scripts.sil.org/OFL.
+
+The three small Rockpod Themify drawing fonts in fonts/ were created for this
+220x176 adaptation and are also distributed under the SIL Open Font License,
+Version 1.1.

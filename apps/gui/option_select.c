@@ -527,6 +527,8 @@ bool option_screen(const struct settings_list *setting,
     gui_synclist_speak_item(&lists);
     while (!done)
     {
+        bool redraw_after_setting_change = false;
+
         /* override user wraparound setting; used mainly by EQ settings.
          * Not sure this is justified? */
         if (!allow_wrap)
@@ -540,6 +542,7 @@ bool option_screen(const struct settings_list *setting,
             *variable = selection_to_val(setting, selected);
             if (var_type == F_T_BOOL && !use_temp_var)
                 *(bool*)setting->setting = (*variable==1);
+            redraw_after_setting_change = true;
         }
         else if (action == ACTION_NONE)
             continue;
@@ -598,6 +601,12 @@ bool option_screen(const struct settings_list *setting,
                     global_status.last_volume_change = current_tick;
             }
         }
+
+        /* list_do_action() redraws before the selected value is copied to the
+         * setting. Redraw once more so setting-dependent list skins (for
+         * example the live scrollbar width preview) use the current value. */
+        if (redraw_after_setting_change)
+            gui_synclist_draw(&lists);
 
     }
     pop_current_activity();

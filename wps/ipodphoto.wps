@@ -1,48 +1,79 @@
-# Native 220x176 iPod Color/Photo while-playing screen
-#
-# Geometry is deliberately independent of the 320x240 Cabbie layout.
+# Themify 2 player adapted from 320x240 to the iPod Photo's 220x176 LCD.
+# Original theme by Dook (2026).
+
 %wd
 %ax
-%Fl(2,13-Fixed-SemiCond.fnt)
+%Fl(2,13-LeagueSpartan-Bold-Photo.fnt)
+%Fl(3,11-LeagueSpartan-Medium-Photo.fnt)
+%Fl(7,32-Themify-Player.fnt)
 
-# Compact status row
-%V(4,1,212,13,2)
-%al%?mp<Stop|Play|Pause|Fwd|Rew>
-%ac%?cc<%?ca<%?St(time format)<%cH|%cI>:%cM|--:-->|>
-%ar%bl%%
-%V(4,15,212,1,-)%Vf(465365)
-%dr(0,0,-,1)
+# Navy/dominant canvas on the backdrop; foreground stays transparent.
+%V(0,0,-,-,-)%VB%Vf(bg)%dr(0,0,-,-)
+%V(0,0,-,-,-)
 
-# Use an 88px square for artwork and give metadata the remaining width.
-%?C<%Vd(a)|%Vd(b)>
-%Vl(a,4,20,88,88,-)
-%Cl(0,0,88,88,c,c)
+# Accent card, then an unconditional album-art declaration rendered through
+# Rockbox's standard conditional-label pattern. Prime the album-art palette
+# before resolving the card colour.
+%?C<%Vd(Art)|>
+%V(0,12,114,151,-)%Vf(fg)%dr(0,0,-,-)%Vf(bg)%dr(103,0,11,1)%dr(106,1,8,1)%dr(107,2,7,1)%dr(109,3,5,1)%dr(110,4,4,1)%dr(111,5,3,1)%dr(111,6,3,1)%dr(112,7,2,1)%dr(113,8,1,1)%dr(113,9,1,1)%dr(113,10,1,1)%dr(113,140,1,1)%dr(113,141,1,1)%dr(113,142,1,1)%dr(112,143,2,1)%dr(111,144,3,1)%dr(111,145,3,1)%dr(110,146,4,1)%dr(109,147,5,1)%dr(107,148,7,1)%dr(106,149,8,1)%dr(103,150,11,1)
+%?C<%Vd(Art)|%Vd(No_Art)>
+
+# Keep the cover's allocation square so aspect-preserving scaling leaves no
+# letterbox strips. The following accent mask is the card's foreground frame:
+# it sits above the cover and rounds only its exposed right-hand corners.
+%Vl(Art,0,16,110,110,-)
+%Cl(0,0,110,110,c,c)
 %Cd
-%Vl(a,100,20,116,88,1)
-%s%al%?it<%it|%fn>
-%s%al%?ia<%ia|%?iA<%iA|>>
-%s%al%?id<%id|%?d(1)<%d(1)|>>
-%al%?iy<%iy|>
+%Vl(Art,102,16,8,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,105,17,5,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,106,18,4,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,107,19,3,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,108,20,2,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,109,21,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,109,22,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,109,23,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,109,118,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,109,119,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,109,120,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,108,121,2,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,107,122,3,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,106,123,4,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,105,124,5,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,102,125,8,1,-)%Vf(fg)%dr(0,0,-,-)
 
-# Without artwork, center the same hierarchy across the full content width.
-%Vl(b,4,20,212,88,1)
-%s%ac%?it<%it|%fn>
-%s%ac%?ia<%ia|%?iA<%iA|>>
-%s%ac%?id<%id|%?d(1)<%d(1)|>>
-%ac%?iy<%iy|>
+%Vl(No_Art,0,16,110,110,-)%Vf(muted)%dr(0,0,-,-)
+%Vl(No_Art,102,16,8,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,105,17,5,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,106,18,4,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,107,19,3,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,108,20,2,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,109,21,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,109,22,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,109,23,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,109,118,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,109,119,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,109,120,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,108,121,2,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,107,122,3,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,106,123,4,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,105,124,5,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,102,125,8,1,-)%Vf(fg)%dr(0,0,-,-)
 
-# Playback position and time use fixed geometry regardless of UI font size.
-%V(4,112,212,7,-)
-%pb(0,0,212,7)
-%V(4,122,212,13,2)
-%al%pc%ac%pp/%pe%ar%pr
+# Inset seek bar. Its background is the muted full-track rail and its
+# foreground is the elapsed portion, so %pb derives the split from elapsed /
+# track length instead of obscuring either half with a pre-drawn rectangle.
+%V(10,144,90,4,-)%Vb(muted)%Vf(bg)%pb(0,0,-,-,noborder)
 
-# Keep the next-track title useful even when the selected UI font is large.
-%V(4,138,212,20,1)
-%s%al%?It<%Sx(Next:) %It|>
+# Compact status pill in the upper-right. The dot and battery are negative
+# space inside the single glyph, matching the reference instead of layering
+# destructive background-coloured viewports over it.
+%V(174,10,46,22,-)%Vf(fg)%dr(0,0,-,-)%Vf(bg)%dr(0,0,8,1)%dr(0,1,6,1)%dr(0,2,5,1)%dr(0,3,3,1)%dr(0,4,3,1)%dr(0,5,2,1)%dr(0,6,1,1)%dr(0,7,1,1)%dr(0,8,1,1)%dr(0,9,1,1)%dr(0,10,1,1)%dr(0,11,1,1)%dr(0,12,1,1)%dr(0,13,1,1)%dr(0,14,1,1)%dr(0,15,1,1)%dr(0,16,2,1)%dr(0,17,3,1)%dr(0,18,3,1)%dr(0,19,5,1)%dr(0,20,6,1)%dr(0,21,8,1)%dr(9,10,2,2)%dr(32,6,7,1)%dr(32,15,7,1)%dr(32,6,1,10)%dr(38,6,1,10)%dr(34,4,3,2)
 
-# Compact playback details
-%V(4,162,212,13,2)
-%al%?pv<Mute|Vol %pv|Vol %pv|Vol %pv>
-%ac%?ps<Shuffle|%?mm<|Repeat|Repeat 1|Shuffle|A-B>>
-%ar%fbk
+# Song hierarchy on the right.
+%V(120,56,100,14,2)%?it<%it|%fn>
+%V(120,75,100,12,3)%?ia<%ia|%?iA<%iA|>>
+
+# Themify playback pill: muted capsule, accent play disc, and playlist count.
+%V(132,103,88,47,-)%Vf(muted)%dr(0,0,-,-)%Vf(bg)%dr(0,0,23,1)%dr(0,1,17,1)%dr(0,2,14,1)%dr(0,3,12,1)%dr(0,4,11,1)%dr(0,5,9,1)%dr(0,6,8,1)%dr(0,7,7,1)%dr(0,8,6,1)%dr(0,9,5,1)%dr(0,10,5,1)%dr(0,11,4,1)%dr(0,12,3,1)%dr(0,13,3,1)%dr(0,14,2,1)%dr(0,15,2,1)%dr(0,16,2,1)%dr(0,17,1,1)%dr(0,18,1,1)%dr(0,19,1,1)%dr(0,20,1,1)%dr(0,21,1,1)%dr(0,22,1,1)%dr(0,24,1,1)%dr(0,25,1,1)%dr(0,26,1,1)%dr(0,27,1,1)%dr(0,28,1,1)%dr(0,29,1,1)%dr(0,30,2,1)%dr(0,31,2,1)%dr(0,32,2,1)%dr(0,33,3,1)%dr(0,34,3,1)%dr(0,35,4,1)%dr(0,36,5,1)%dr(0,37,5,1)%dr(0,38,6,1)%dr(0,39,7,1)%dr(0,40,8,1)%dr(0,41,9,1)%dr(0,42,11,1)%dr(0,43,12,1)%dr(0,44,14,1)%dr(0,45,17,1)%dr(0,46,23,1)
+%V(138,109,32,32,7)%Vg(muted,muted,fg)%Vs(gradient)C
+%V(180,120,40,11,3)%Vg(muted,muted,fg)%Vs(gradient)%al%pp of %pe

@@ -333,9 +333,11 @@ static const char graphic_numeric[] = "graphic,numeric";
 #ifdef IPOD_COLOR
 #define DEFAULT_WPSNAME  "ipodphoto"
 #define DEFAULT_SBSNAME  "ipodphoto"
+#define DEFAULT_DYNAMIC_COLORS true
 #else
 #define DEFAULT_WPSNAME  "cabbiev2"
 #define DEFAULT_SBSNAME  "-"
+#define DEFAULT_DYNAMIC_COLORS false
 #endif
 #define DEFAULT_FMS_NAME "cabbiev2"
 
@@ -414,12 +416,12 @@ static const char graphic_numeric[] = "graphic,numeric";
 #endif /* HAVE_REMOTE_LCD */
 
 #ifdef IPOD_COLOR
-#define DEFAULT_THEME_FOREGROUND LCD_RGBPACK(0xe8, 0xed, 0xf2)
-#define DEFAULT_THEME_BACKGROUND LCD_RGBPACK(0x10, 0x15, 0x1c)
-#define DEFAULT_THEME_SELECTOR_START LCD_RGBPACK(0x2f, 0x73, 0xd0)
-#define DEFAULT_THEME_SELECTOR_END LCD_RGBPACK(0x2f, 0x73, 0xd0)
-#define DEFAULT_THEME_SELECTOR_TEXT LCD_RGBPACK(0xff, 0xff, 0xff)
-#define DEFAULT_THEME_SEPARATOR  LCD_RGBPACK(0x46, 0x53, 0x65)
+#define DEFAULT_THEME_FOREGROUND LCD_RGBPACK(0x00, 0xfb, 0xd6)
+#define DEFAULT_THEME_BACKGROUND LCD_RGBPACK(0x00, 0x0c, 0x21)
+#define DEFAULT_THEME_SELECTOR_START LCD_RGBPACK(0x00, 0xfb, 0xd6)
+#define DEFAULT_THEME_SELECTOR_END LCD_RGBPACK(0x00, 0xfb, 0xd6)
+#define DEFAULT_THEME_SELECTOR_TEXT LCD_RGBPACK(0x00, 0x0c, 0x21)
+#define DEFAULT_THEME_SEPARATOR  LCD_RGBPACK(0x00, 0x75, 0x70)
 #else
 #define DEFAULT_THEME_FOREGROUND LCD_RGBPACK(0xce, 0xcf, 0xce)
 #define DEFAULT_THEME_BACKGROUND LCD_RGBPACK(0x00, 0x00, 0x00)
@@ -2344,6 +2346,10 @@ const struct settings_list settings[] = {
 #ifdef HAVE_LCD_COLOR
     TEXT_SETTING(F_THEMESETTING|F_NEEDAPPLY, colors_file, "filetype colours", "-",
                      THEME_DIR "/", ".colours"),
+#ifdef HAVE_ALBUMART
+    OFFON_SETTING(0, dynamic_colors, LANG_DYNAMIC_COLORS, DEFAULT_DYNAMIC_COLORS,
+                  "dynamic colors", NULL),
+#endif
 #endif
 #ifdef HAVE_BUTTON_LIGHT
     TABLE_SETTING_LIST(F_TIME_SETTING | F_ALLOW_ARBITRARY_VALS,

@@ -57,6 +57,8 @@ my $bgcolor;
 my $sepcolor;
 my $sep;
 my $statusbar;
+my $scrollbar;
+my $scrollbarwidth;
 my $remotestatusbar;
 my $author;
 my $backdrop;
@@ -218,6 +220,7 @@ sub copywps
                      "rsbs", $rsbs,
                      "rfms", $rfms);
     my @filelist;
+    my @fontlist;
     my $file;
 
     if($wpslist =~ /(.*)\/WPSLIST/) {
@@ -231,6 +234,7 @@ sub copywps
             open(SKIN, "$dir/$file");
             while (<SKIN>) {
                 $filelist[$#filelist + 1] = $1 if (/[\(,]([^,]*?.bmp)[\),]/);
+                $fontlist[$#fontlist + 1] = $1 if (/%Fl\([^,]+,([^,\)]+\.fnt)/);
             }
             close(SKIN);
         }
@@ -243,6 +247,27 @@ sub copywps
             }
             else {
                 print STDERR "beep, no dir to copy WPS from!\n";
+            }
+        }
+
+        if ($#fontlist >= 0) {
+            mkdir "$tempdir/fonts";
+            foreach $file (uniq(@fontlist)) {
+                if (-e "$dir/$theme/$file") {
+                    system("cp \"$dir/$theme/$file\" \"$tempdir/fonts/$file\"");
+                }
+                else {
+                    my $source = $file;
+                    $source =~ s/\.fnt$/\.bdf/;
+                    if (-e "$ROOT/fonts/$source") {
+                        system("$ROOT/tools/convbdf -f -o \"$tempdir/fonts/$file\" \"$ROOT/fonts/$source\"");
+                    }
+                }
+            }
+
+            my $license = "$dir/$theme/Themify_Font_Licenses.txt";
+            if (-e $license) {
+                system("cp \"$license\" \"$tempdir/fonts/Themify_Font_Licenses.txt\"");
             }
         }
     } else {
@@ -299,6 +324,8 @@ MOO
 
     push @out, "font: $font\n"                  if (defined($font));
     push @out, "statusbar: $statusbar\n"        if (defined($statusbar));
+    push @out, "scrollbar: $scrollbar\n"        if (defined($scrollbar));
+    push @out, "scrollbar width: $scrollbarwidth\n" if (defined($scrollbarwidth));
     push @out, "iconset: $iconset\n"            if (defined($iconset));
     push @out, "viewers iconset: $viewericon\n" if (defined($viewericon));
     push @out, "show icons: $showicons\n"       if (defined($viewericon) && defined($showicons));
@@ -438,6 +465,8 @@ while(<WPS>) {
         undef $sepcolor;
         undef $sep;
         undef $statusbar;
+        undef $scrollbar;
+        undef $scrollbarwidth;
         undef $remotestatusbar;
         undef $author;
         undef $backdrop;
@@ -485,6 +514,7 @@ while(<WPS>) {
         # parse main unit settings
         while(<WPS>) {
             my $l = $_;
+            $l =~ s/\r//g;
             if ($l =~ /^ *<\/main>/i) {
                 last;
             }
@@ -502,6 +532,12 @@ while(<WPS>) {
             }
             elsif($_ = check_res_feature($l, "Statusbar")) {
                 $statusbar = $_;
+            }
+            elsif($_ = check_res_feature($l, "Scrollbar")) {
+                $scrollbar = $_;
+            }
+            elsif($_ = check_res_feature($l, "Scrollbar Width")) {
+                $scrollbarwidth = $_;
             }
             elsif($_ = check_res_feature($l, "Backdrop")) {
                 $backdrop = $_;
@@ -551,6 +587,7 @@ while(<WPS>) {
         while(<WPS>) {
             # parse remote settings
             my $l = $_;
+            $l =~ s/\r//g;
             if ($l =~ /^ *<\/remote>/i) {
                 last;
             }

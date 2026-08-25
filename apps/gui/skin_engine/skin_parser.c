@@ -109,6 +109,40 @@ get_param_code(struct skin_element *element, int param_number)
     return SKINOFFSETTOPTR(skin_buffer, params[param_number].data.code);
 }
 
+#ifdef HAVE_LCD_COLOR
+/* Skin colours may name a Rockbox theme role instead of baking in the RGB
+ * value that happened to be active when the skin was authored.  The role is
+ * resolved while the skin is loaded, so settings_apply_skins() naturally
+ * picks up changes made in Theme Settings > Colours. */
+static bool parse_skin_color(enum screen_type screen, char *text, int *value)
+{
+    if (screen == SCREEN_MAIN)
+    {
+        if (!strcasecmp(text, "fg"))
+            *value = global_settings.fg_color;
+        else if (!strcasecmp(text, "bg"))
+            *value = global_settings.bg_color;
+        else if (!strcasecmp(text, "lss"))
+            *value = global_settings.lss_color;
+        else if (!strcasecmp(text, "lse"))
+            *value = global_settings.lse_color;
+        else if (!strcasecmp(text, "lst"))
+            *value = global_settings.lst_color;
+        else if (!strcasecmp(text, "sep"))
+            *value = global_settings.list_separator_color;
+        else if (!strcasecmp(text, "muted"))
+            *value = LCD_RGBPACK(0x29, 0x2d, 0x3a);
+        else
+            return parse_color(screen, text, value);
+        return true;
+    }
+
+    return parse_color(screen, text, value);
+}
+#else
+#define parse_skin_color parse_color
+#endif
+
 static inline struct skin_tag_parameter*
 get_param(struct skin_element *element, int param_number)
 {
@@ -537,12 +571,12 @@ static int parse_viewport_gradient_setup(struct skin_element *element,
     cfg = skin_buffer_alloc(sizeof(*cfg));
     if (!cfg)
         return 1;
-    if (!parse_color(curr_screen, get_param_text(element, 0), &cfg->start) ||
-        !parse_color(curr_screen, get_param_text(element, 1), &cfg->end))
+    if (!parse_skin_color(curr_screen, get_param_text(element, 0), &cfg->start) ||
+        !parse_skin_color(curr_screen, get_param_text(element, 1), &cfg->end))
         return 1;
     if (element->params_count > 2)
     {
-        if (!parse_color(curr_screen, get_param_text(element, 2), &cfg->text))
+        if (!parse_skin_color(curr_screen, get_param_text(element, 2), &cfg->text))
             return 1;
     }
     else
@@ -633,7 +667,7 @@ static int parse_viewporttextstyle(struct skin_element *element,
     else if (vp_op == 1 || vp_op == 2) /*color/colour*/
     {
         if (element->params_count < 2 ||
-            !parse_color(curr_screen, get_param_text(element, 1), &colour))
+            !parse_skin_color(curr_screen, get_param_text(element, 1), &colour))
             return 1;
         /* STYLE_COLORED is only a modifier and can't be used on its own */
         line->style = STYLE_COLORED | STYLE_DEFAULT;
@@ -695,14 +729,14 @@ static int parse_drawrectangle( struct skin_element *element,
 
     if (element->params_count > 4)
     {
-        if (!parse_color(curr_screen, get_param_text(element, 4),
+        if (!parse_skin_color(curr_screen, get_param_text(element, 4),
                     &rect->start_colour))
             return -1;
         rect->end_colour = rect->start_colour;
     }
     if (element->params_count > 5)
     {
-        if (!parse_color(curr_screen, get_param_text(element, 5),
+        if (!parse_skin_color(curr_screen, get_param_text(element, 5),
                     &rect->end_colour))
             return -1;
     }
@@ -754,7 +788,7 @@ static int parse_viewportcolour(struct skin_element *element,
     }
     else
     {
-        if (!parse_color(curr_screen, SKINOFFSETTOPTR(skin_buffer, param->data.text),
+        if (!parse_skin_color(curr_screen, SKINOFFSETTOPTR(skin_buffer, param->data.text),
                     &colour->colour))
             return -1;
     }
@@ -762,9 +796,19 @@ static int parse_viewportcolour(struct skin_element *element,
     if (element->line == curr_viewport_element->line)
     {
         if (token->type == SKIN_TOKEN_VIEWPORT_FGCOLOUR)
+        {
             curr_vp->vp.fg_pattern = colour->colour;
+#if defined(HAVE_LCD_COLOR) && defined(HAVE_ALBUMART)
+            curr_vp->dc_orig_fg = colour->colour;
+#endif
+        }
         else
+        {
             curr_vp->vp.bg_pattern = colour->colour;
+#if defined(HAVE_LCD_COLOR) && defined(HAVE_ALBUMART)
+            curr_vp->dc_orig_bg = colour->colour;
+#endif
+        }
     }
     return 0;
 }
@@ -2291,6 +2335,10 @@ static int convert_viewport(struct wps_data *data, struct skin_element* element)
     skin_vp->start_gradient.start = global_settings.lss_color;
     skin_vp->start_gradient.end = global_settings.lse_color;
     skin_vp->start_gradient.text = global_settings.lst_color;
+#ifdef HAVE_ALBUMART
+    skin_vp->dc_orig_fg = skin_vp->vp.fg_pattern;
+    skin_vp->dc_orig_bg = skin_vp->vp.bg_pattern;
+#endif
 #endif
 
 

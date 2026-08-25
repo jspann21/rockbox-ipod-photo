@@ -1,19 +1,63 @@
-# Native iPod Color/Photo status and list layout
-#
-# Keep a predictable compact header and four-pixel side/bottom margins.
-# A dedicated compact font keeps the header usable when the UI font is enlarged.
-%Fl(2,13-Fixed-SemiCond.fnt)
-%Vi(-,4,16,212,156,1)
+# Themify 2 adaptation for the 220x176 iPod Photo
+# Original theme by Dook (2026); compact layout adapted for Rockpod Photo.
 
-# Prefer the current list title; otherwise show compact playback state.
-%?Lt<%Vd(t)|%Vd(s)>
-%Vl(t,4,1,212,13,2)
-%s%ac%?Lt<%Lt>
-%Vl(s,4,1,212,13,2)
-%al%?mp<Stop|Play|Pause|Fwd|Rew>
-%ac%?cc<%?ca<%?St(time format)<%cH|%cI>:%cM|--:-->|>
-%ar%bl%%
+%Fl(2,13-LeagueSpartan-Bold-Photo.fnt)
+%Fl(3,11-LeagueSpartan-Medium-Photo.fnt)
+%Fl(5,18-Themify-Caps.fnt)
+%Fl(6,12-Themify-Masks.fnt)
+%Fl(8,ipodphoto-icons.fnt)
+%Fl(9,19-Themify-Scrollbar.fnt)
 
-# One-pixel divider between status and content.
-%V(4,15,212,1,-)%Vf(465365)
-%dr(0,0,-,1)
+# Clear both drawing layers before choosing the current screen layout.
+%V(0,0,-,-,-)%VB%Vf(bg)%dr(0,0,-,-)
+%V(0,0,-,-,-)
+
+# Home uses Themify's narrow menu rail and live album-art card. Status Bar
+# controls whether the custom title bar is off, top, or bottom.
+%?St(statusbar)<%?if(%cs,=,1)<%VI(Home_Off)%Lb(Home_Row,118,18)%?mp<|%Vd(Home_Player)>|%VI(Sub_Off)%Lb(Sub_Row,210,18)>|%?if(%cs,=,1)<%VI(Home_Top)%Lb(Home_Row,118,18)%?mp<|%Vd(Home_Player)>|%VI(Sub_Top)%Lb(Sub_Row,210,18)>|%?if(%cs,=,1)<%VI(Home_Bottom)%Lb(Home_Row,118,18)%?mp<|%Vd(Home_Player)>|%VI(Sub_Bottom)%Lb(Sub_Row,210,18)>>
+%?St(statusbar)<|%Vd(Header_Bar_Top_BD)%Vd(Header_Bar_Top)%?if(%cs,=,1)<%Vd(Header_Time_Top_BD)%Vd(Header_Time_Top)|%?Lt<%Vd(Header_Title_Top_BD)%Vd(Header_Title_Top)>>%Vd(Header_Battery_Number_Top_BD)%Vd(Header_Battery_Number_Top)|%Vd(Header_Bar_Bottom_BD)%Vd(Header_Bar_Bottom)%?if(%cs,=,1)<%Vd(Header_Time_Bottom_BD)%Vd(Header_Time_Bottom)|%?Lt<%Vd(Header_Title_Bottom_BD)%Vd(Header_Title_Bottom)>>%Vd(Header_Battery_Number_Bottom_BD)%Vd(Header_Battery_Number_Bottom)>
+
+%Vi(Home_Off,0,2,118,174,1)
+%Vi(Home_Top,0,22,118,154,1)
+%Vi(Home_Bottom,0,2,118,154,1)
+%Vi(Sub_Off,2,2,216,174,1)
+%Vi(Sub_Top,2,22,216,154,1)
+%Vi(Sub_Bottom,2,2,216,154,1)
+
+# Dynamic accent status bar: time on home, current list title elsewhere.
+# Draw the bar on the backdrop and invert its foreground text, matching
+# Themify's original two-layer rendering strategy.
+%Vl(Header_Bar_Top_BD,0,0,220,18,-)%VB%Vf(lss)%dr(0,0,-,-,lss,lse)
+%Vl(Header_Bar_Top,0,0,220,18,-)%Vf(lss)%dr(0,0,-,-,lss,lse)
+%Vl(Header_Time_Top_BD,3,4,195,13,2)%VB%Vg(lss,lse,lst)%Vs(gradient)%cH:%cM
+%Vl(Header_Time_Top,3,4,195,13,2)%Vg(lss,lse,lst)%Vs(gradient)%cH:%cM
+%Vl(Header_Title_Top_BD,22,4,176,13,2)%VB%Vg(lss,lse,lst)%Vs(gradient)%ac%Lt
+%Vl(Header_Title_Top,22,4,176,13,2)%Vg(lss,lse,lst)%Vs(gradient)%ac%Lt
+%Vl(Header_Battery_Number_Top_BD,185,4,32,13,3)%VB%Vg(lss,lse,lst)%Vs(gradient)%?if(%St(battery display),=,numeric)<%ar%bl%%|%Vf(lss)%dr(0,0,-,-,lss,lse)%Vf(bg)%dr(22,1,8,1)%dr(22,9,8,1)%dr(22,1,1,9)%dr(29,1,1,9)%dr(30,4,2,4)>
+%Vl(Header_Battery_Number_Top,185,4,32,13,3)%Vg(lss,lse,lst)%Vs(gradient)%?if(%St(battery display),=,numeric)<%ar%bl%%|%Vf(lss)%dr(0,0,-,-,lss,lse)%Vf(bg)%dr(22,1,8,1)%dr(22,9,8,1)%dr(22,1,1,9)%dr(29,1,1,9)%dr(30,4,2,4)>
+%Vl(Header_Bar_Bottom_BD,0,158,220,18,-)%VB%Vf(lss)%dr(0,0,-,-,lss,lse)
+%Vl(Header_Bar_Bottom,0,158,220,18,-)%Vf(lss)%dr(0,0,-,-,lss,lse)
+%Vl(Header_Time_Bottom_BD,3,162,195,13,2)%VB%Vg(lss,lse,lst)%Vs(gradient)%cH:%cM
+%Vl(Header_Time_Bottom,3,162,195,13,2)%Vg(lss,lse,lst)%Vs(gradient)%cH:%cM
+%Vl(Header_Title_Bottom_BD,22,162,176,13,2)%VB%Vg(lss,lse,lst)%Vs(gradient)%ac%Lt
+%Vl(Header_Title_Bottom,22,162,176,13,2)%Vg(lss,lse,lst)%Vs(gradient)%ac%Lt
+%Vl(Header_Battery_Number_Bottom_BD,185,162,32,13,3)%VB%Vg(lss,lse,lst)%Vs(gradient)%?if(%St(battery display),=,numeric)<%ar%bl%%|%Vf(lss)%dr(0,0,-,-,lss,lse)%Vf(bg)%dr(22,1,8,1)%dr(22,9,8,1)%dr(22,1,1,9)%dr(29,1,1,9)%dr(30,4,2,4)>
+%Vl(Header_Battery_Number_Bottom,185,162,32,13,3)%Vg(lss,lse,lst)%Vs(gradient)%?if(%St(battery display),=,numeric)<%ar%bl%%|%Vf(lss)%dr(0,0,-,-,lss,lse)%Vf(bg)%dr(22,1,8,1)%dr(22,9,8,1)%dr(22,1,1,9)%dr(29,1,1,9)%dr(30,4,2,4)>
+
+# Home selector follows Line Selector Type. The inverse branch deliberately
+# uses Themify's original %Vs(invert) contract across every child viewport.
+%Vl(Home_Row,0,0,110,18,5)%?Lc<%?St(selector type)<%Vf(fg)%dr(0,3,2,12)|%Vf(lss)G|%Vf(lss)G|%Vf(lss)G>>
+%Vl(Home_Row,7,2,14,14,8)%?Lc<%?St(selector type)<|%Vs(invert)|%Vs(color,lst)|%Vs(color,lst)>|%Vs(color,fg)>%?St(show icons)<%?or(%if(%LT,=,%Sx(Now Playing)),%if(%LT,=,%Sx(Resume Playback)))<r|%?LI<1|2|3|4|5|6|7|8|5_|%?if(%LT,=,%Sx(Shortcuts))<z|6>|11|12|13|14|15|16|16|18|19|4_|7_|22|23|k_|3|26|27|9_|1_|30|31|32|0>>|>
+%Vl(Home_Row,25,3,81,13,1)%?Lc<%?St(selector type)<|%Vs(invert)|%Vs(color,lst)|%Vs(color,lst)>|%Vs(color,fg)>%LT
+# Full-width rows use the same selector policy.
+%Vl(Sub_Row,0,0,210,18,5)%?Lc<%?St(selector type)<%Vf(fg)%dr(0,3,2,12)|%Vf(lss)F|%Vf(lss)F|%Vf(lss)F>>
+%Vl(Sub_Row,7,3,196,13,1)%?Lc<%?St(selector type)<|%Vs(invert)|%Vs(color,lst)|%Vs(color,lst)>|%Vs(color,fg)>%LT
+
+%Vl(Home_Player,126,25,94,88,-)%Vf(fg)%dr(0,0,-,-)%Vf(bg)%dr(0,0,13,1)%dr(0,1,10,1)%dr(0,2,8,1)%dr(0,3,7,1)%dr(0,4,5,1)%dr(0,5,4,1)%dr(0,6,4,1)%dr(0,7,3,1)%dr(0,8,2,1)%dr(0,9,2,1)%dr(0,10,1,1)%dr(0,11,1,1)%dr(0,12,1,1)%dr(0,87,13,1)%dr(0,86,10,1)%dr(0,85,8,1)%dr(0,84,7,1)%dr(0,83,5,1)%dr(0,82,4,1)%dr(0,81,4,1)%dr(0,80,3,1)%dr(0,79,2,1)%dr(0,78,2,1)%dr(0,77,1,1)%dr(0,76,1,1)%dr(0,75,1,1)
+%Vl(Home_Player,134,33,72,72,-)%Cl(0,0,72,72,c,c)%?C<%Cd|%Vf(sep)%dr(0,0,-,-)>
+%Vl(Home_Player,134,33,12,12,6)%Vf(fg)A
+%Vl(Home_Player,194,33,12,12,6)%Vf(fg)B
+%Vl(Home_Player,134,93,12,12,6)%Vf(fg)C
+%Vl(Home_Player,194,93,12,12,6)%Vf(fg)D
+%Vl(Home_Player,130,116,90,17,2)%?it<%it|%fn>
+%Vl(Home_Player,130,132,90,15,3)%?ia<%ia|%?iA<%iA|>>
