@@ -167,7 +167,7 @@ static int current_avg, current_now;
 
 /* The battery level can be obtained in two ways. If the target reports
  * voltage, the battery level can be estminated using percent_to_volt_*
- * curves. If the target can report the percentage directly, then that
+ * curves. If the target can report the percentage directly, that
  * will be used instead of voltage-based estimation. */
 int battery_level(void)
 {
@@ -1191,11 +1191,21 @@ void set_keypress_restarts_sleep_timer(bool enable)
 }
 
 #ifndef BOOTLOADER
+/* Charging-only USB should not block shutdown on capable targets. */
+static bool usb_blocks_poweroff(void)
+{
+#if defined(HAVE_POWEROFF_WHILE_CHARGING) && defined(HAVE_USB_POWER)
+    return usb_inserted() && !usb_powered_only();
+#else
+    return usb_inserted();
+#endif
+}
+
 static void handle_sleep_timer(void)
 {
     if (TIME_AFTER(current_tick, sleeptimer_endtick)) {
-        if (usb_inserted()
-#if CONFIG_CHARGING
+        if (usb_blocks_poweroff()
+#if CONFIG_CHARGING && !defined(HAVE_POWEROFF_WHILE_CHARGING)
             || charger_input_state != NO_CHARGER
 #endif
         ) {
@@ -1219,8 +1229,8 @@ static void handle_sleep_timer(void)
  * 3) The battery level has reached shutdown limit
  *
  * We do not shut off in the following cases:
- * 1) The USB is connected
- * 2) The charger is connected
+ * 1) An active USB mode is connected
+ * 2) A charger is connected on targets that cannot power off while charging
  * 3) We are recording, or recording with pause
  * 4) The radio is playing
  */
@@ -1232,11 +1242,11 @@ void handle_auto_poweroff(void)
     long tick = current_tick;
 
     /*
-     * Inhibit shutdown as long as the charger is plugged in.  If it is
-     * unplugged, wait for a timeout period and then shut down.
+     * Inhibit shutdown while charging on targets that cannot power off with
+     * external power present. If unplugged, wait for the timeout and shut down.
      */
     if (audio_stat == AUDIO_STATUS_PLAY
-#if CONFIG_CHARGING
+#if CONFIG_CHARGING && !defined(HAVE_POWEROFF_WHILE_CHARGING)
         || charger_input_state == CHARGER
 #endif
     ) {
@@ -1252,7 +1262,7 @@ void handle_auto_poweroff(void)
 #if CONFIG_TUNER
         !(get_radio_status() & FMRADIO_PLAYING) &&
 #endif
-        !usb_inserted() &&
+        !usb_blocks_poweroff() &&
         (audio_stat == 0 ||
          audio_stat == (AUDIO_STATUS_PLAY | AUDIO_STATUS_PAUSE)))
     {
