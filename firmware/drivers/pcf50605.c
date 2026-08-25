@@ -26,6 +26,7 @@
  ****************************************************************************/
 #include "system.h"
 #include "config.h"
+#include "power.h"
 #if CONFIG_I2C == I2C_PP5020 || CONFIG_I2C == I2C_PP5002
 #include "i2c-pp.h"
 #endif
@@ -78,11 +79,19 @@ int pcf50605_write_multiple(int address, const unsigned char* buf, int count)
    power on your iPod again. */
 int pcf50605_standby_mode(void)
 {
+    unsigned char wakeup_flags = CHGWAK | EXTONWAK |
+                                 pcf50605_wakeup_flags;
+
+#if defined(HAVE_POWEROFF_WHILE_CHARGING) && CONFIG_CHARGING
+    /* CHGWAK immediately wakes a unit that is already externally powered. */
+    if (power_input_status() & POWER_INPUT_CHARGER)
+        wakeup_flags &= ~CHGWAK;
+#endif
+
     int rc = -1;
     for (int attempt = 0; attempt < 3 && rc < 0; attempt++)
         rc = pcf50605_write(PCF5060X_OOCC1,
-                            GOSTDBY | CHGWAK | EXTONWAK |
-                            pcf50605_wakeup_flags);
+                            GOSTDBY | wakeup_flags);
     return rc;
 }
 
