@@ -138,6 +138,15 @@ static bool do_non_text_tags(struct gui_wps *gwps, struct skin_draw_info *info,
             }
             else
                 *linedes = *data;
+
+#ifdef HAVE_LCD_COLOR
+            /* %Vs(color,...) stores the theme colour that was active when
+             * the skin was parsed. Resolve it again while drawing so named
+             * roles such as fg/lst follow the current album-art palette. */
+            if (linedes->style & STYLE_COLORED)
+                linedes->text_color =
+                    dynamic_colors_resolve(linedes->text_color);
+#endif
         }
         break;
 #endif

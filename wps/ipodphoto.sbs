@@ -33,16 +33,16 @@
 %Vl(Header_Time_Top,3,4,195,13,2)%Vg(lss,lse,lst)%Vs(gradient)%cH:%cM
 %Vl(Header_Title_Top_BD,22,4,176,13,2)%VB%Vg(lss,lse,lst)%Vs(gradient)%ac%Lt
 %Vl(Header_Title_Top,22,4,176,13,2)%Vg(lss,lse,lst)%Vs(gradient)%ac%Lt
-%Vl(Header_Battery_Number_Top_BD,185,4,32,13,3)%VB%Vg(lss,lse,lst)%Vs(gradient)%?if(%St(battery display),=,numeric)<%ar%bl%%|%Vf(lss)%dr(0,0,-,-,lss,lse)%Vf(bg)%dr(22,1,8,1)%dr(22,9,8,1)%dr(22,1,1,9)%dr(29,1,1,9)%dr(30,4,2,4)>
-%Vl(Header_Battery_Number_Top,185,4,32,13,3)%Vg(lss,lse,lst)%Vs(gradient)%?if(%St(battery display),=,numeric)<%ar%bl%%|%Vf(lss)%dr(0,0,-,-,lss,lse)%Vf(bg)%dr(22,1,8,1)%dr(22,9,8,1)%dr(22,1,1,9)%dr(29,1,1,9)%dr(30,4,2,4)>
+%Vl(Header_Battery_Number_Top_BD,185,4,32,13,3)%VB%Vg(lss,lse,lst)%Vs(gradient)%?if(%St(battery display),=,numeric)<%?bc<%t(3)%ar%bl%%;%t(2)%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)|%?if(%bl,<=,15)<%t(2)%ar%bl%%;%t(.5)|%ar%bl%%>>|%Vf(lss)%dr(0,0,-,-,lss,lse)%Vf(lss)%dr(25,0,3,2)%dr(22,2,9,1)%dr(22,2,1,11)%dr(30,2,1,11)%dr(22,12,9,1)%?bc<%Vf(lss)%dr(23,3,7,9)%Vf(bg)%dr(26,3,2,3)%dr(25,6,3,2)%dr(24,7,2,1)%dr(25,8,2,3)|%Vf(bg)%Vb(lss)%bl(23,3,7,9,vertical,noborder)>>
+%Vl(Header_Battery_Number_Top,185,4,32,13,3)%Vg(lss,lse,lst)%Vs(gradient)%?if(%St(battery display),=,numeric)<%?bc<%t(3)%ar%bl%%;%t(2)%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)|%?if(%bl,<=,15)<%t(2)%ar%bl%%;%t(.5)|%ar%bl%%>>|%Vf(lss)%dr(0,0,-,-,lss,lse)%Vf(lss)%dr(25,0,3,2)%dr(22,2,9,1)%dr(22,2,1,11)%dr(30,2,1,11)%dr(22,12,9,1)%?bc<%Vf(lss)%dr(23,3,7,9)%Vf(bg)%dr(26,3,2,3)%dr(25,6,3,2)%dr(24,7,2,1)%dr(25,8,2,3)|%Vf(bg)%Vb(lss)%bl(23,3,7,9,vertical,noborder)>>
 %Vl(Header_Bar_Bottom_BD,0,158,220,18,-)%VB%Vf(lss)%dr(0,0,-,-,lss,lse)
 %Vl(Header_Bar_Bottom,0,158,220,18,-)%Vf(lss)%dr(0,0,-,-,lss,lse)
 %Vl(Header_Time_Bottom_BD,3,162,195,13,2)%VB%Vg(lss,lse,lst)%Vs(gradient)%cH:%cM
 %Vl(Header_Time_Bottom,3,162,195,13,2)%Vg(lss,lse,lst)%Vs(gradient)%cH:%cM
 %Vl(Header_Title_Bottom_BD,22,162,176,13,2)%VB%Vg(lss,lse,lst)%Vs(gradient)%ac%Lt
 %Vl(Header_Title_Bottom,22,162,176,13,2)%Vg(lss,lse,lst)%Vs(gradient)%ac%Lt
-%Vl(Header_Battery_Number_Bottom_BD,185,162,32,13,3)%VB%Vg(lss,lse,lst)%Vs(gradient)%?if(%St(battery display),=,numeric)<%ar%bl%%|%Vf(lss)%dr(0,0,-,-,lss,lse)%Vf(bg)%dr(22,1,8,1)%dr(22,9,8,1)%dr(22,1,1,9)%dr(29,1,1,9)%dr(30,4,2,4)>
-%Vl(Header_Battery_Number_Bottom,185,162,32,13,3)%Vg(lss,lse,lst)%Vs(gradient)%?if(%St(battery display),=,numeric)<%ar%bl%%|%Vf(lss)%dr(0,0,-,-,lss,lse)%Vf(bg)%dr(22,1,8,1)%dr(22,9,8,1)%dr(22,1,1,9)%dr(29,1,1,9)%dr(30,4,2,4)>
+%Vl(Header_Battery_Number_Bottom_BD,185,162,32,13,3)%VB%Vg(lss,lse,lst)%Vs(gradient)%?if(%St(battery display),=,numeric)<%?bc<%t(3)%ar%bl%%;%t(2)%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)|%?if(%bl,<=,15)<%t(2)%ar%bl%%;%t(.5)|%ar%bl%%>>|%Vf(lss)%dr(0,0,-,-,lss,lse)%Vf(lss)%dr(25,0,3,2)%dr(22,2,9,1)%dr(22,2,1,11)%dr(30,2,1,11)%dr(22,12,9,1)%?bc<%Vf(lss)%dr(23,3,7,9)%Vf(bg)%dr(26,3,2,3)%dr(25,6,3,2)%dr(24,7,2,1)%dr(25,8,2,3)|%Vf(bg)%Vb(lss)%bl(23,3,7,9,vertical,noborder)>>
+%Vl(Header_Battery_Number_Bottom,185,162,32,13,3)%Vg(lss,lse,lst)%Vs(gradient)%?if(%St(battery display),=,numeric)<%?bc<%t(3)%ar%bl%%;%t(2)%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)|%?if(%bl,<=,15)<%t(2)%ar%bl%%;%t(.5)|%ar%bl%%>>|%Vf(lss)%dr(0,0,-,-,lss,lse)%Vf(lss)%dr(25,0,3,2)%dr(22,2,9,1)%dr(22,2,1,11)%dr(30,2,1,11)%dr(22,12,9,1)%?bc<%Vf(lss)%dr(23,3,7,9)%Vf(bg)%dr(26,3,2,3)%dr(25,6,3,2)%dr(24,7,2,1)%dr(25,8,2,3)|%Vf(bg)%Vb(lss)%bl(23,3,7,9,vertical,noborder)>>
 
 # Home selector follows Line Selector Type. The inverse branch deliberately
 # uses Themify's original %Vs(invert) contract across every child viewport.
