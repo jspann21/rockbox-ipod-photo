@@ -16,54 +16,48 @@
 # Rockbox's standard conditional-label pattern. Prime the album-art palette
 # before resolving the card colour.
 %?C<%Vd(Art)|>
-%V(0,18,114,151,-)%Vf(fg)%dr(0,0,-,-)%Vf(bg)%dr(103,0,11,1)%dr(106,1,8,1)%dr(107,2,7,1)%dr(109,3,5,1)%dr(110,4,4,1)%dr(111,5,3,1)%dr(111,6,3,1)%dr(112,7,2,1)%dr(113,8,1,1)%dr(113,9,1,1)%dr(113,10,1,1)%dr(113,140,1,1)%dr(113,141,1,1)%dr(113,142,1,1)%dr(112,143,2,1)%dr(111,144,3,1)%dr(111,145,3,1)%dr(110,146,4,1)%dr(109,147,5,1)%dr(107,148,7,1)%dr(106,149,8,1)%dr(103,150,11,1)
+%V(0,21,114,144,-)%Vf(fg)%dr(0,0,-,-)%Vf(bg)%dr(106,0,8,1)%dr(109,1,5,1)%dr(111,2,3,1)%dr(112,3,2,1)%dr(113,4,1,1)%dr(113,139,1,1)%dr(112,140,2,1)%dr(111,141,3,1)%dr(109,142,5,1)%dr(106,143,8,1)
 %?C<%Vd(Art)|%Vd(No_Art)>
 
 # Keep the cover's allocation square so aspect-preserving scaling leaves no
 # letterbox strips. The following accent mask is the card's foreground frame:
 # it sits above the cover and rounds only its exposed right-hand corners.
-%Vl(Art,0,22,110,110,-)
+%Vl(Art,0,25,110,110,-)
 %Cl(0,0,110,110,c,c)
 %Cd
-%Vl(Art,102,22,8,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,105,23,5,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,106,24,4,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,107,25,3,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,108,26,2,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,109,27,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,109,28,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,102,25,8,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,105,26,5,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,107,27,3,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,108,28,2,1,-)%Vf(fg)%dr(0,0,-,-)
 %Vl(Art,109,29,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,109,124,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,109,125,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,109,126,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,108,127,2,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,107,128,3,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,106,129,4,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,105,130,5,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Art,102,131,8,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,109,130,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,108,131,2,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,107,132,3,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,105,133,5,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(Art,102,134,8,1,-)%Vf(fg)%dr(0,0,-,-)
 
-%Vl(No_Art,0,22,110,110,-)%Vf(muted)%dr(0,0,-,-)
-%Vl(No_Art,102,22,8,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,105,23,5,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,106,24,4,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,107,25,3,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,108,26,2,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,109,27,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,109,28,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,0,25,110,110,-)%Vf(muted)%dr(0,0,-,-)
+%Vl(No_Art,102,25,8,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,105,26,5,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,107,27,3,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,108,28,2,1,-)%Vf(fg)%dr(0,0,-,-)
 %Vl(No_Art,109,29,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,109,124,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,109,125,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,109,126,1,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,108,127,2,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,107,128,3,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,106,129,4,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,105,130,5,1,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(No_Art,102,131,8,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,109,130,1,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,108,131,2,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,107,132,3,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,105,133,5,1,-)%Vf(fg)%dr(0,0,-,-)
+%Vl(No_Art,102,134,8,1,-)%Vf(fg)%dr(0,0,-,-)
 
-# Inset seek bar. Its background is the muted full-track rail and its
-# foreground is the elapsed portion, so %pb derives the split from elapsed /
-# track length instead of obscuring either half with a pre-drawn rectangle.
-%V(10,150,90,4,-)%Vb(muted)%Vf(bg)%pb(0,0,-,-,noborder)
+# Complete the cyan outer arc after the cover masks have painted the inner arc.
+%V(110,25,4,8,-)%Vb(bg)%Vf(fg)%dr(0,1,2,1)%dr(0,2,3,1)%dr(0,3,4,5)
+
+# Seven-pixel live pill built from row-sized progress bars. Played time uses
+# the muted accent, empty time stays navy, and the surrounding card stays cyan.
+%V(13,147,84,1,-)%Vb(bg)%Vf(007570)%pb(0,0,-,-,noborder)
+%V(11,148,88,1,-)%Vb(bg)%Vf(007570)%pb(0,0,-,-,noborder)
+%V(10,149,90,3,-)%Vb(bg)%Vf(007570)%pb(0,0,-,-,noborder)
+%V(11,152,88,1,-)%Vb(bg)%Vf(007570)%pb(0,0,-,-,noborder)
+%V(13,153,84,1,-)%Vb(bg)%Vf(007570)%pb(0,0,-,-,noborder)
 
 # Full-width 18-pixel status bar matching the main menu. The battery stays at
 # x=185, y=4 while shuffle, repeat, HQ, hold, and sleep populate slots to its left.
