@@ -153,6 +153,7 @@ __pycache__
 /tools/.vagrant
 /tools/*-console.log
 /tools/*.dSYM
+/tools/jpegbench/
 
 # /tools/database/
 /tools/database/database
