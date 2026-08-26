@@ -867,8 +867,16 @@ void check_bootfile(bool do_rolo)
                     button_clear_queue(); /* Empty the keyboard buffer */
                     if(gui_syncyesno_run(&message, NULL, NULL) == YESNO_YES)
                     {
+#if defined(IPOD_COLOR) && !defined(SIMULATOR)
+                        /* The PP5020's dual-core ROLO handoff can stall after
+                         * a USB session. Use the normal clean reboot path for
+                         * automatic firmware updates; the bootloader will
+                         * load the new image from storage. */
+                        sys_reboot();
+#else
                         audio_hard_stop();
                         rolo_load(BOOTDIR "/" BOOTFILE);
+#endif
                     }
                 }
             }
