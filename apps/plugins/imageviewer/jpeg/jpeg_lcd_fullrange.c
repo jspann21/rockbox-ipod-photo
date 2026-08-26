@@ -139,8 +139,7 @@ static inline fb_data jpeg_pack_rgb565(unsigned int y, int cb, int cr)
 
 static bool jpeg_lcd_write_two_lines(unsigned char const * const src[3],
                                      int width, int stride,
-                                     fb_data *dst, int dst_stride,
-                                     uint32_t *crc)
+                                     fb_data *dst, int dst_stride)
 {
     int row;
 
@@ -167,9 +166,6 @@ static bool jpeg_lcd_write_two_lines(unsigned char const * const src[3],
             out[col] = pair[0];
             out[col + 1] = pair[1];
 
-            if (crc != NULL)
-                *crc = rb->crc_32(pair, sizeof(pair), *crc);
-
             packed = (uint16_t)pair[0] |
                      ((uint32_t)(uint16_t)pair[1] << 16);
             if (!jpeg_lcd_wait_block(LCD2_BLOCK_TXOK))
@@ -183,13 +179,11 @@ static bool jpeg_lcd_write_two_lines(unsigned char const * const src[3],
 
 bool jpeg_lcd_blit_yuv420_fullrange(unsigned char * const src[3],
                                     int src_x, int src_y, int stride,
-                                    int x, int y, int width, int height,
-                                    uint32_t *rgb_crc)
+                                    int x, int y, int width, int height)
 {
     struct viewport *vp_main;
     unsigned char const *yuv_src[3];
     fb_data *fb_dst;
-    uint32_t crc = 0xffffffff;
 
     if (src == NULL || src[0] == NULL || src[1] == NULL || src[2] == NULL ||
         width <= 0 || height <= 0 || (width & 1) || (height & 1) ||
@@ -233,8 +227,7 @@ bool jpeg_lcd_blit_yuv420_fullrange(unsigned char * const src[3],
         do
         {
             if (!jpeg_lcd_write_two_lines(yuv_src, width, stride,
-                                          fb_dst, LCD_WIDTH,
-                                          rgb_crc != NULL ? &crc : NULL))
+                                          fb_dst, LCD_WIDTH))
             {
                 LCD2_BLOCK_CONFIG = 0;
                 return false;
@@ -255,8 +248,6 @@ bool jpeg_lcd_blit_yuv420_fullrange(unsigned char * const src[3],
         height -= rows;
     }
 
-    if (rgb_crc != NULL)
-        *rgb_crc = crc;
     return true;
 }
 #endif /* IPOD_COLOR */

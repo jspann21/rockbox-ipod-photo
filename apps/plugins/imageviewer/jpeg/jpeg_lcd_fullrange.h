@@ -10,10 +10,15 @@
 #include "cpu.h"
 #include "hwcompat.h"
 
+bool jpeg_lcd_stream_begin(int x, int y, int width, int height);
+bool jpeg_lcd_stream_write_yuv420(unsigned char * const src[3],
+                                  int stride, int rows);
+bool jpeg_lcd_stream_end(void);
+void jpeg_lcd_stream_abort(void);
+
 bool jpeg_lcd_blit_yuv420_fullrange(unsigned char * const src[3],
                                     int src_x, int src_y, int stride,
-                                    int x, int y, int width, int height,
-                                    uint32_t *rgb_crc);
+                                    int x, int y, int width, int height);
 #endif
 
 #endif /* JPEG_LCD_FULLRANGE_H */
