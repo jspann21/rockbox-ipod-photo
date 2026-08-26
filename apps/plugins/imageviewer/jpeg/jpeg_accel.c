@@ -4,8 +4,9 @@
  * The original jpeg.c remains untouched and is included with its entry
  * points renamed.  This file adds a screen-sized RGB565 cache and an
  * opt-in microsecond/CRC logger.  A .rockbox/jpegbench.reference sentinel
- * selects the legacy decode/conversion loops, so reference and accelerated
- * measurements can be collected from the same installed build.
+ * selects the legacy decode/conversion loops. The control sentinels are
+ * sampled at the start of every image load so a persistent decoder overlay
+ * cannot retain a stale reference/accelerated mode between corpus passes.
  ****************************************************************************/
 
 #include "plugin.h"
@@ -74,7 +75,6 @@ struct jpeg_rgb_cache
 static struct jpeg_rgb_cache rgb_cache[9];
 #endif
 
-static bool jpegbench_configured;
 static bool jpegbench_enabled;
 static char jpegbench_filename[MAX_PATH];
 static uint32_t jpegbench_load_us;
@@ -95,6 +95,16 @@ static bool jpeg_path_exists(const char *path)
         return false;
     rb->close(fd);
     return true;
+}
+
+static void jpegbench_refresh_mode(void)
+{
+    /* Image decoder overlays can remain resident while Image Viewer is
+       reopened. Never cache these sentinels for the lifetime of the overlay. */
+    jpegbench_enabled =
+        jpeg_path_exists(ROCKBOX_DIR "/jpegbench.enabled");
+    jpeg_accel_reference_mode = jpegbench_enabled &&
+        jpeg_path_exists(ROCKBOX_DIR "/jpegbench.reference");
 }
 
 #ifdef HAVE_LCD_COLOR
@@ -259,14 +269,7 @@ static int load_image(char *filename, struct image_info *info,
 #ifdef HAVE_LCD_COLOR
     jpeg_cache_clear();
 #endif
-    if (!jpegbench_configured)
-    {
-        jpegbench_enabled =
-            jpeg_path_exists(ROCKBOX_DIR "/jpegbench.enabled");
-        jpeg_accel_reference_mode = jpegbench_enabled &&
-            jpeg_path_exists(ROCKBOX_DIR "/jpegbench.reference");
-        jpegbench_configured = true;
-    }
+    jpegbench_refresh_mode();
     rb->snprintf(jpegbench_filename, sizeof(jpegbench_filename),
                  "%s", filename);
 
