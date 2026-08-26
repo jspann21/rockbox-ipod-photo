@@ -69,5 +69,5 @@
 # The engine draws album art first, then this monochrome mask image. One-bits
 # use the live foreground colour; zero-bits are transparent.
 %Vl(Home_Player,134,33,72,72,-)%Vf(sep)%dr(0,0,-,-)%Cl(0,0,72,72,c,c)%Cd%Vf(fg)%xd(Home_Art_Mask)
-%Vl(Home_Player,130,116,90,17,2)%?it<%it|%fn>
-%Vl(Home_Player,130,132,90,15,3)%?ia<%ia|%?iA<%iA|>>
+%Vl(Home_Player,130,116,90,17,2)%?if(%St(scroll speed),=,1)<|%s>%?it<%it|%fn>
+%Vl(Home_Player,130,132,90,15,3)%?if(%St(scroll speed),=,1)<|%s>%?ia<%ia|%?iA<%iA|>>

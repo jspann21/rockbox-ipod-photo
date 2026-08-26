@@ -110,8 +110,8 @@
 %Vl(Status_Sleep,167,0,18,18,-)%Vb(fg)%Vf(fg)%dr(0,0,-,-)%Vf(bg)%dr(6,3,5,1)%dr(4,4,8,1)%dr(3,5,9,2)%dr(2,7,10,5)%dr(3,12,9,2)%dr(4,14,8,1)%dr(6,15,5,1)%Vf(fg)%dr(8,3,5,1)%dr(9,4,4,2)%dr(10,6,3,6)%dr(9,12,4,2)%dr(8,14,5,1)
 
 # Song hierarchy on the right.
-%V(120,56,100,14,2)%?it<%it|%fn>
-%V(120,75,100,12,3)%?ia<%ia|%?iA<%iA|>>
+%V(120,56,100,14,2)%?if(%St(scroll speed),=,1)<|%s>%?it<%it|%fn>
+%V(120,75,100,12,3)%?if(%St(scroll speed),=,1)<|%s>%?ia<%ia|%?iA<%iA|>>
 
 # Themify playback pill: muted capsule, live playback state, and playlist
 # count. The control viewport clears and redraws inside every dynamic branch.
