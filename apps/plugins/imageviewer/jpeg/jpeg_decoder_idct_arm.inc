@@ -9,6 +9,15 @@ extern void jpeg_idct2v(int16_t *ws, int16_t *end);
 extern void jpeg_idct4v(int16_t *ws, int16_t *end);
 extern void jpeg_idct8v(int16_t *ws, int16_t *end);
 
+static inline bool jpeg_idct_store_i16(int16_t *dst, int value)
+{
+    if (value < -32768 || value > 32767)
+        return false;
+
+    *dst = (int16_t)value;
+    return true;
+}
+
 static void idct2x2_arm(unsigned char *dst, int *block, int *quant,
                         int stride)
 {
@@ -16,10 +25,14 @@ static void idct2x2_arm(unsigned char *dst, int *block, int *quant,
     int row;
 
     MEMSET(ws, 0, sizeof(ws));
-    ws[0] = (int16_t)DEQUANTIZE(block[0], quant[0]);
-    ws[1] = (int16_t)DEQUANTIZE(block[1], quant[1]);
-    ws[8] = (int16_t)DEQUANTIZE(block[8], quant[8]);
-    ws[9] = (int16_t)DEQUANTIZE(block[9], quant[9]);
+    if (!jpeg_idct_store_i16(&ws[0], DEQUANTIZE(block[0], quant[0])) ||
+        !jpeg_idct_store_i16(&ws[1], DEQUANTIZE(block[1], quant[1])) ||
+        !jpeg_idct_store_i16(&ws[8], DEQUANTIZE(block[8], quant[8])) ||
+        !jpeg_idct_store_i16(&ws[9], DEQUANTIZE(block[9], quant[9])))
+    {
+        idct2x2(dst, block, quant, stride);
+        return;
+    }
 
     jpeg_idct2v(ws, ws + 2);
 
@@ -44,7 +57,13 @@ static void idct4x4_arm(unsigned char *dst, int *block, int *quant,
         for (col = 0; col < 4; col++)
         {
             int index = row * 8 + col;
-            ws[index] = (int16_t)DEQUANTIZE(block[index], quant[index]);
+            int value = DEQUANTIZE(block[index], quant[index]);
+
+            if (!jpeg_idct_store_i16(&ws[index], value))
+            {
+                idct4x4(dst, block, quant, stride);
+                return;
+            }
         }
 
     jpeg_idct4v(ws, ws + 4);
@@ -95,8 +114,13 @@ static void idct8x8_arm(unsigned char *dst, int *block, int *quant,
         for (col = 0; col < 8; col++)
         {
             int source = row * 8 + col;
-            ws[col * 8 + row] =
-                (int16_t)DEQUANTIZE(block[source], quant[source]);
+            int value = DEQUANTIZE(block[source], quant[source]);
+
+            if (!jpeg_idct_store_i16(&ws[col * 8 + row], value))
+            {
+                idct8x8(dst, block, quant, stride);
+                return;
+            }
         }
 
     jpeg_idct8v(ws, ws + 64);
