@@ -47,6 +47,9 @@ assertions = {
     "RGB565 viewport cache": "jpeg_allocate_cache" in PLUGIN,
     "microsecond timer": "USEC_TIMER" in PLUGIN,
     "CRC logging": "jpegbench.csv" in PLUGIN,
+    "benchmark mode refreshed per image": "jpegbench_refresh_mode();" in PLUGIN,
+    "benchmark mode is not overlay-cached": "jpegbench_configured" not in PLUGIN,
+    "reference sentinel is sampled": "jpegbench.reference" in PLUGIN,
     "acceleration sources selected": "jpeg_decoder_accel.c" in SOURCES,
     "no workflow directory": not (ROOT / ".github/workflows").exists(),
 }
