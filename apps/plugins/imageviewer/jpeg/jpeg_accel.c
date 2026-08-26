@@ -363,7 +363,7 @@ const struct image_decoder image_decoder = {
 
 #if (CONFIG_PLATFORM & PLATFORM_NATIVE)
 const struct plugin_api *rb DATA_ATTR;
-const struct imgdec_api *iv DATA_ATTR;
+struct imgdec_api *iv DATA_ATTR;
 const struct imgdec_header __header
 __attribute__ ((section (".header"))) = {
     { PLUGIN_MAGIC, TARGET_ID, IMGDEC_API_VERSION,
@@ -373,7 +373,7 @@ __attribute__ ((section (".header"))) = {
 };
 #else
 const struct plugin_api *rb DATA_ATTR;
-const struct imgdec_api *iv DATA_ATTR;
+struct imgdec_api *iv DATA_ATTR;
 const struct imgdec_header __header
 __attribute__((visibility("default"))) = {
     { PLUGIN_MAGIC, TARGET_ID, IMGDEC_API_VERSION, NULL, NULL },
