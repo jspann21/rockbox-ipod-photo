@@ -3,8 +3,7 @@
  *
  * The original jpeg.c remains unchanged and is included with its public
  * entry points renamed. This file adds an opportunistic screen-sized RGB565
- * cache while preserving the existing image memory, zoom, dither, and
- * fallback behaviour.
+ * cache plus the iPod Color full-range direct LCD path.
  ****************************************************************************/
 
 #include "plugin.h"
@@ -13,12 +12,10 @@
 #ifdef HAVE_LCD_COLOR
 #include "yuv2rgb.h"
 #endif
+#if defined(IPOD_COLOR)
+#include "jpeg_lcd_fullrange.h"
+#endif
 
-/*
- * Renaming the legacy decoder object also renames its struct tag while the
- * source is included. Provide a layout-identical private tag so the legacy
- * initializer remains type-correct without changing imageviewer.h.
- */
 struct jpeg_legacy_decoder
 {
     const bool unscaled_avail;
@@ -31,7 +28,6 @@ struct jpeg_legacy_decoder
                             int x, int y, int width, int height);
 };
 
-/* Prevent the included legacy integration from emitting the plugin header. */
 #undef IMGDEC_HEADER
 #define IMGDEC_HEADER
 #define draw_image_rect jpeg_legacy_draw_image_rect
@@ -104,7 +100,23 @@ static void jpeg_allocate_cache(const struct image_info *info, int ds)
     buf_images += bytes;
     buf_images_size -= bytes;
 }
-#endif /* HAVE_LCD_COLOR */
+
+static bool jpeg_prepare_cache(const struct image_info *info,
+                               struct t_disp *pdisp,
+                               struct jpeg_rgb_cache *cache)
+{
+    if (cache == NULL || cache->pixels == NULL)
+        return false;
+
+    if (!cache->valid)
+        cache->valid = yuv_bitmap_part_to_buffer(
+            pdisp->bitmap, pdisp->csub_x, pdisp->csub_y,
+            0, 0, pdisp->stride, info->width, info->height,
+            cache->pixels, cache->stride);
+
+    return cache->valid;
+}
+#endif
 
 static int load_image(char *filename, struct image_info *info,
                       unsigned char *buf, ssize_t *buf_size,
@@ -114,6 +126,7 @@ static int load_image(char *filename, struct image_info *info,
 
 #ifdef HAVE_LCD_COLOR
     jpeg_cache_clear();
+    iv->skip_next_update = false;
 #endif
 
     status = jpeg_legacy_load_image(filename, info, buf, buf_size,
@@ -139,10 +152,6 @@ static int get_image(struct image_info *info, int frame, int ds)
 
 #ifdef HAVE_LCD_COLOR
     already_decoded = disp[ds].bitmap[0] != NULL;
-    /*
-     * jpeg_legacy_get_image() resets the shared image pool when the next
-     * planar image will not fit. Invalidate any RGB cache before that reset.
-     */
     if (!already_decoded && buf_images_size <= img_mem(ds))
         jpeg_cache_clear();
 #endif
@@ -166,27 +175,44 @@ static void draw_image_rect(struct image_info *info,
     struct jpeg_rgb_cache *cache = ds ? &rgb_cache[ds] : NULL;
     int dst_x = x + MAX(0, (LCD_WIDTH - info->width) / 2);
     int dst_y = y + MAX(0, (LCD_HEIGHT - info->height) / 2);
-
-    if (cache != NULL && cache->pixels != NULL &&
+    bool colour_fast =
         iv->settings->jpeg_colour_mode == COLOURMODE_COLOUR &&
-        iv->settings->jpeg_dither_mode == DITHER_NONE)
-    {
-        if (!cache->valid)
-        {
-            cache->valid = yuv_bitmap_part_to_buffer(
-                pdisp->bitmap, pdisp->csub_x, pdisp->csub_y,
-                0, 0, pdisp->stride, info->width, info->height,
-                cache->pixels, cache->stride);
-        }
+        iv->settings->jpeg_dither_mode == DITHER_NONE;
 
-        if (cache->valid)
+#if defined(IPOD_COLOR)
+    if (colour_fast &&
+        pdisp->csub_x == 2 && pdisp->csub_y == 2 &&
+        info->width == LCD_WIDTH && info->height == LCD_HEIGHT &&
+        info->x == 0 && info->y == 0 &&
+        x == 0 && y == 0 && width == LCD_WIDTH && height == LCD_HEIGHT)
+    {
+        bool direct_ok;
+
+#ifdef HAVE_ADJUSTABLE_CPU_FREQ
+        rb->cpu_boost(true);
+#endif
+        direct_ok = jpeg_lcd_blit_yuv420_fullrange(
+            pdisp->bitmap, 0, 0, pdisp->stride,
+            0, 0, LCD_WIDTH, LCD_HEIGHT);
+#ifdef HAVE_ADJUSTABLE_CPU_FREQ
+        rb->cpu_boost(false);
+#endif
+
+        if (direct_ok)
         {
-            rb->lcd_bitmap_part(cache->pixels,
-                                info->x + x, info->y + y,
-                                cache->stride,
-                                dst_x, dst_y, width, height);
+            imgdec_skip_next_lcd_update();
             return;
         }
+    }
+#endif
+
+    if (colour_fast && jpeg_prepare_cache(info, pdisp, cache))
+    {
+        rb->lcd_bitmap_part(cache->pixels,
+                            info->x + x, info->y + y,
+                            cache->stride,
+                            dst_x, dst_y, width, height);
+        return;
     }
 
     jpeg_legacy_draw_image_rect(info, x, y, width, height);
@@ -203,10 +229,9 @@ const struct image_decoder image_decoder = {
     draw_image_rect,
 };
 
-/* Equivalent to IMGDEC_HEADER, emitted after the public decoder above. */
 #if (CONFIG_PLATFORM & PLATFORM_NATIVE)
 const struct plugin_api *rb DATA_ATTR;
-const struct imgdec_api *iv DATA_ATTR;
+struct imgdec_api *iv DATA_ATTR;
 const struct imgdec_header __header
 __attribute__ ((section (".header"))) = {
     { PLUGIN_MAGIC, TARGET_ID, IMGDEC_API_VERSION,
@@ -216,7 +241,7 @@ __attribute__ ((section (".header"))) = {
 };
 #else
 const struct plugin_api *rb DATA_ATTR;
-const struct imgdec_api *iv DATA_ATTR;
+struct imgdec_api *iv DATA_ATTR;
 const struct imgdec_header __header
 __attribute__((visibility("default"))) = {
     { PLUGIN_MAGIC, TARGET_ID, IMGDEC_API_VERSION, NULL, NULL },
