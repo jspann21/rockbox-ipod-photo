@@ -1,64 +1,120 @@
-               __________               __   ___.
-     Open      \______   \ ____   ____ |  | _\_ |__   _______  ___
-     Source     |       _//  _ \_/ ___\|  |/ /| __ \ /  _ \  \/  /
-     Jukebox    |    |   (  <_> )  \___|    < | \_\ (  <_> > <  <
-     Firmware   |____|_  /\____/ \___  >__|_ \|___  /\____/__/\_ \
-                       \/            \/     \/    \/            \/
+~~~text
+               __________               __   ___.                __________.__            __
+     Open      \______   \ ____   ____ |  | _\_ |__   _______  __\______   \  |__   _____/  |_  ____
+     Source     |       _//  _ \_/ ___\|  |/ /| __ \ /  _ \  \/  /|     ___/  |  \ /  _ \   __\/  _ \
+     Jukebox    |    |   (  <_> )  \___|    < | \_\ (  <_> >    < |    |   |   Y  (  <_> )  | (  <_> )
+     Firmware   |____|_  /\____/ \___  >__|_ \|___  /\____/__/\_ \|____|   |___|  /\____/|__|  \____/
+                       \/            \/     \/    \/            \/              \/
+~~~
 
-Build Your Own Rockbox
+# RockboxPhoto
 
-1. Clone 'rockbox' from git (or extract a downloaded archive).
+> Custom Rockbox firmware for the fourth-generation iPod Photo/Color.
+> Native 220x176 UI, dynamic colors, iFlash reliability, and lower overhead.
 
-   $ git clone git://git.rockbox.org/rockbox
+RockboxPhoto develops directly on official Rockbox history while focusing on
+the 32 MB iPod Photo, initially the A1099. It keeps the full Rockbox playback
+experience and makes the interface, storage path, power behavior, and recovery
+logic fit this hardware rather than treating it as a scaled-down later iPod.
 
-     or
+## Highlights
 
-   $ tar xJf rockbox.tar.xz
+### A native Photo interface
 
-2. Create a build directory, preferably in the same directory as the firmware/
-   and apps/ directories. This is where all generated files will be written.
+- Purpose-built 220x176 menu, browser, status bar, and now-playing layouts with
+  Photo-sized fonts, icons, spacing, and selectors.
+- Cover Flow is a first-class main-menu destination. Album art uses a rounded,
+  color-aware mask in both the menu and now-playing card.
+- Battery graphics distinguish discharging, charging, and fully charged states.
+  Large fonts, short viewports, list pagination, and click-wheel edge cases are
+  handled without sacrificing the Photo's limited screen space.
 
-   $ cd rockbox
-   $ mkdir build
-   $ cd build
+### Dynamic album-art colors
 
-3. Make sure you have mips/m68k/arm-elf-gcc and siblings in the PATH. Make sure
-   that you have 'perl' in your PATH too. Your gcc cross compiler needs to be
-   a particular version depending on what player you are compiling for. These
-   can be generated using the rockboxdev.sh script in the /tools/ folder of the
-   source.
+- Dominant and accent colors are extracted when artwork changes and cached;
+  the UI does not rebuild a histogram on every frame.
+- Foreground, background, selector, separator, muted-surface, status-bar, and
+  now-playing colors follow the current album with a 250 ms transition.
+- Contrast is enforced, missing artwork falls back to theme colors, and the
+  feature can be changed under Theme Settings. It is enabled by default on the
+  iPod Photo.
 
-   $ which arm-elf-eabi-gcc
-   $ which perl
+### iFlash-ready storage
 
-4. In your build directory, run the 'tools/configure' script and enter what
-   target you want to build for and if you want a debug version or not (and a
-   few more questions). It'll prompt you. The debug version is for making a
-   gdb version out of it. It is only useful if you run gdb towards your target
-   Archos.
+- Brings up the installed ATA1 iFlash adapter and SD card for normal boot,
+  database generation, playback, and USB mass storage.
+- Retains conservative Apple PIO timing and the Photo's UDMA2 ceiling while
+  adding responsive DMA completion, IDE-interrupt waits, bounded timeouts, and
+  automatic per-transfer PIO recovery.
+- Uses exact idle, retry, wake, and delayed-power-off deadlines and flushes
+  durable data before shutdown, USB cache sync, eject, and disconnect.
 
-   $ ../tools/configure
+### Faster library and artwork workflows
 
-5. *ploink*. Now you have got a Makefile generated for you.
+- Buffers database records and indexes, batches updates, reuses metadata work,
+  and reduces database-ready polling.
+- Publishes database and persistent state atomically, recovers interrupted
+  commits, and rejects malformed records, paths, filesystem structures, media
+  metadata, skins, and artwork before unsafe access.
+- PictureFlow caching is paced and failure-safe, skips unchanged idle redraws,
+  and presents an immediate placeholder when artwork is missing or corrupt.
 
-6. Run 'make' and soon the necessary pieces from the firmware and the apps
-   directories have been compiled, linked and scrambled for you.
+### Better power and USB behavior
 
-   $ make
-   $ make zip
+- Reduces idle PMU, backlight, database, and storage-thread wakeups while
+  preserving responsive accessory and input handling.
+- Supports realistic replacement-battery capacities and clean shutdown while
+  charging or using charge-only USB without immediately waking again.
+- Shows **Safe to disconnect** after the host ejects every exposed disk and
+  uses a clean reboot to apply firmware copied over USB when the PP5020's
+  post-USB ROLO handoff would be unreliable.
 
-7. unzip the rockbox.zip on your music player, reboot it and
-   *smile*.
+### Reliability with useful telemetry
 
-If you want to build for more than one target, just create several build
-directories and create a setup for each target:
+- Hardens iAP, USB mass storage, ATA, FAT/GPT, codecs, playlists, database
+  navigation, PictureFlow, skins, click-wheel input, and persistent files
+  against invalid lengths, indices, partial writes, and failed recovery.
+- Keeps performance telemetry in RAM: cache maintenance, DMA latency, IRQ
+  quality, PIO recovery, wake sources, and PCM transition production can be
+  captured as a one-shot snapshot without continuous SD-card logging.
 
-   $ mkdir build-fuzeplus
-   $ cd build-fuzeplus
-   $ ../tools/configure
+## Hardware status
 
-   $ mkdir build-xduoox3
-   $ cd build-xduoox3
-   $ ../tools/configure
+Conservative firmware has booted successfully on an installed A1099. A
+deterministic 256 MiB USB integrity pass and the first measured playback
+transition pass completed without DMA timeouts, PIO fallbacks, IRQ anomalies,
+recovery failures, or audio underruns. Broader power, accessory, theme, and
+full-lifecycle qualification remains in progress.
 
-Questions anyone? Ask on the mailing list or on IRC. We'll be happy to help you!
+See the [iPod Photo roadmap](../IPOD_PHOTO_ROADMAP.md) for the complete
+implementation checklist, measurements, and remaining hardware work.
+
+## Build from source
+
+The validated Photo builds use the Rockbox GCC 9.5.0 ARM toolchain. It can be
+generated with **tools/rockboxdev.sh**; Perl is also required.
+
+~~~sh
+git clone https://github.com/jspann21/rockbox-ipod-photo.git
+cd rockbox-ipod-photo
+mkdir build-ipodcolor
+cd build-ipodcolor
+../tools/configure
+~~~
+
+Select the **iPod Color/Photo** target and a normal firmware build, then build
+and package it:
+
+~~~sh
+make
+make zip
+~~~
+
+Extract **rockbox.zip** to an iPod that already has the official Rockbox
+bootloader installed, safely eject it, and reboot.
+
+## Upstream and license
+
+RockboxPhoto is built on the work of the
+[Rockbox project](https://www.rockbox.org/) and its contributors. It remains
+free software under the [GNU General Public License v2](COPYING).
