@@ -93,6 +93,10 @@ struct imgdec_api {
     const struct imgview_settings *settings;
     bool slideshow_enabled;   /* run slideshow */
     bool running_slideshow;   /* loading image because of slideshw */
+
+    /* One-shot handoff for a decoder that has already updated the panel. */
+    bool skip_next_update;
+
 #ifdef DISK_SPINDOWN
     bool immediate_ata_off;   /* power down disk after loading */
 #endif
@@ -102,11 +106,6 @@ struct imgdec_api {
 
     /* callback updating a progress meter while image decoding */
     void (*cb_progress)(int current, int total);
-
-#ifdef HAVE_LCD_COLOR
-    /* Decoder has already written the target panel for this draw call. */
-    void (*lcd_direct_update)(void);
-#endif
 
 #ifdef USEGSLIB
     void (*gray_bitmap_part)(const unsigned char *src, int src_x, int src_y,
@@ -151,25 +150,25 @@ struct imgdec_header {
     const struct plugin_api **api;
     unsigned short plugin_api_version;
     size_t plugin_api_size;
-    const struct imgdec_api **img_api;
+    struct imgdec_api **img_api;
     size_t img_api_size;
 };
 
 #ifdef IMGDEC
-extern const struct imgdec_api *iv;
+extern struct imgdec_api *iv;
 extern const struct image_decoder image_decoder;
 
 #ifdef HAVE_LCD_COLOR
-static inline void imgdec_lcd_direct_update(void)
+static inline void imgdec_skip_next_lcd_update(void)
 {
-    iv->lcd_direct_update();
+    iv->skip_next_update = true;
 }
 #endif
 
 #if (CONFIG_PLATFORM & PLATFORM_NATIVE)
 #define IMGDEC_HEADER \
         const struct plugin_api *rb DATA_ATTR; \
-        const struct imgdec_api *iv DATA_ATTR; \
+        struct imgdec_api *iv DATA_ATTR; \
         const struct imgdec_header __header \
         __attribute__ ((section (".header")))= { \
         { PLUGIN_MAGIC, TARGET_ID, IMGDEC_API_VERSION, \
@@ -179,13 +178,23 @@ static inline void imgdec_lcd_direct_update(void)
 #else /* PLATFORM_HOSTED */
 #define IMGDEC_HEADER \
         const struct plugin_api *rb DATA_ATTR; \
-        const struct imgdec_api *iv DATA_ATTR; \
+        struct imgdec_api *iv DATA_ATTR; \
         const struct imgdec_header __header \
         __attribute__((visibility("default"))) = { \
         { PLUGIN_MAGIC, TARGET_ID, IMGDEC_API_VERSION, NULL, NULL }, \
           &image_decoder, &rb, PLUGIN_API_VERSION, sizeof(struct plugin_api), \
           &iv, sizeof(struct imgdec_api), };
 #endif /* CONFIG_PLATFORM */
+#endif
+
+#if !defined(IMGDEC) && LCD_DEPTH >= 4
+#undef mylcd_ub_update
+#define mylcd_ub_update() do { \
+    if (iv_api.skip_next_update) \
+        iv_api.skip_next_update = false; \
+    else \
+        rb->lcd_update(); \
+} while (0)
 #endif
 
 #endif /* _IMAGE_VIEWER_H */
