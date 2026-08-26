@@ -85,6 +85,7 @@ static void handle_usb_events(struct usb_screen_vps_t *usb_screen_vps_ar,
 #if (CONFIG_STORAGE & STORAGE_MMC) && !defined(SIMULATOR)
     int next_update = 0;
 #endif /* STORAGE_MMC */
+    bool safe_to_disconnect = false;
     int button;
 
     /* Don't return until we get SYS_USB_DISCONNECTED */
@@ -103,14 +104,20 @@ static void handle_usb_events(struct usb_screen_vps_t *usb_screen_vps_ar,
         else
 #endif
         {
-            /* hid emits the event in get_action */
+            /* HID emits the event in get_action. A skinned status bar may
+             * clear the UI viewport during this update, so restore the USB
+             * screen immediately afterwards. */
             send_event(GUI_EVENT_ACTIONUPDATE, NULL);
+            usb_screens_draw(usb_screen_vps_ar, safe_to_disconnect);
             button = button_get_w_tmo(HZ/2);
         }
         if (button == SYS_USB_DISCONNECTED)
             return;
         if (button == SYS_USB_SAFE_TO_DISCONNECT)
-            usb_screens_draw(usb_screen_vps_ar, true);
+        {
+            safe_to_disconnect = true;
+            usb_screens_draw(usb_screen_vps_ar, safe_to_disconnect);
+        }
         if (button == SYS_CHARGER_DISCONNECTED)
             reset_runtime();
 
