@@ -1,15 +1,12 @@
 /***************************************************************************
- * Low-risk JPEG decoder extensions for the iPod Photo workstream.
+ * JPEG decoder extensions for the iPod Photo acceleration path.
  *
  * The original decoder remains in jpeg_decoder.c. It is included with its
- * public entry points renamed so the accelerated parser and block loop can
- * reuse the proven bitstream, Huffman and IDCT primitives. The implementation
- * is split into review-sized includes; all code is compiled as this single
- * translation unit.
+ * public entry points renamed so the enhanced parser and block loop can reuse
+ * the existing bitstream, Huffman, and IDCT primitives.
  ****************************************************************************/
 
 #include "plugin.h"
-#include "jpeg_accel.h"
 
 #define process_markers jpeg_legacy_process_markers
 #define build_lut       jpeg_legacy_build_lut

@@ -84,7 +84,6 @@
                     }
                 }
 
-                p_jpeg->decoded_blocks++;
                 if (!output_block)
                     continue;
 
@@ -100,7 +99,6 @@
                     {
                         idct_dc_fill(dst, block, p_jpeg->qt_idct[ti],
                                      skip_line[ci], 8 / downscale);
-                        p_jpeg->dc_only_blocks++;
                     }
                     else
                     {

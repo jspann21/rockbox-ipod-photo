@@ -47,9 +47,6 @@ static int jpeg_decode_accel(struct jpeg *p_jpeg, unsigned char **p_pixel,
     else
         return -1;
 
-    p_jpeg->decoded_blocks = 0;
-    p_jpeg->dc_only_blocks = 0;
-
     bs.get_buffer = 0;
     bs.next_input_byte = p_jpeg->p_entropy_data;
     bs.bits_left = 0;

@@ -63,9 +63,6 @@ struct jpeg
     unsigned char dht_ac_present;
     int table_error;
 
-    uint32_t decoded_blocks;
-    uint32_t dc_only_blocks;
-
     int mcu_membership[6]; /* component index per entropy block */
     int mcu_block_pos[6];  /* position within that component */
     int tab_membership[6];

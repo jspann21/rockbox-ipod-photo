@@ -52,11 +52,4 @@ bool yuv_bitmap_part_to_buffer(unsigned char *src[3], int csub_x, int csub_y,
                                int width, int height,
                                fb_data *dst, int dst_stride);
 
-bool yuv_bitmap_verify_rgb565(unsigned char *src[3], int csub_x, int csub_y,
-                              int src_x, int src_y, int stride,
-                              int width, int height,
-                              const fb_data *fast, int fast_stride,
-                              uint32_t *reference_crc,
-                              uint32_t *mismatch_count);
-
 #endif

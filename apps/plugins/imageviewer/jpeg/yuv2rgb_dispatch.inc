@@ -4,8 +4,7 @@ void yuv_bitmap_part(unsigned char *src[3], int csub_x, int csub_y,
                      int colour_mode, int dither_mode)
 {
 #if LCD_STRIDEFORMAT == HORIZONTAL_STRIDE
-    if (!jpeg_accel_reference_mode &&
-        colour_mode == COLOURMODE_COLOUR &&
+    if (colour_mode == COLOURMODE_COLOUR &&
         dither_mode == DITHER_NONE &&
         x >= 0 && y >= 0 && width > 0 && height > 0 &&
         x + width <= LCD_WIDTH && y + height <= LCD_HEIGHT &&
