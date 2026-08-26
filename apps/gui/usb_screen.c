@@ -56,6 +56,7 @@ struct usb_screen_vps_t
 {
     struct viewport parent;
     struct viewport logo;
+    struct viewport message;
 #ifndef USB_ENABLE_HID
 };
 #else
@@ -75,7 +76,11 @@ static void draw_usb_keypad_mode(struct viewport *title)
 }
 #endif /* USB_ENABLE_HID */
 
-static void handle_usb_events(struct viewport *title)
+static void usb_screens_draw(struct usb_screen_vps_t *usb_screen_vps_ar,
+                             bool safe_to_disconnect);
+
+static void handle_usb_events(struct usb_screen_vps_t *usb_screen_vps_ar,
+                              struct viewport *title)
 {
 #if (CONFIG_STORAGE & STORAGE_MMC) && !defined(SIMULATOR)
     int next_update = 0;
@@ -104,6 +109,8 @@ static void handle_usb_events(struct viewport *title)
         }
         if (button == SYS_USB_DISCONNECTED)
             return;
+        if (button == SYS_USB_SAFE_TO_DISCONNECT)
+            usb_screens_draw(usb_screen_vps_ar, true);
         if (button == SYS_CHARGER_DISCONNECTED)
             reset_runtime();
 
@@ -124,8 +131,10 @@ static void usb_screen_fix_viewports(struct screen *screen,
         struct usb_screen_vps_t *usb_screen_vps)
 {
     int logo_width, logo_height;
+    int char_height;
     struct viewport *parent = &usb_screen_vps->parent;
     struct viewport *logo = &usb_screen_vps->logo;
+    struct viewport *message = &usb_screen_vps->message;
 
 #ifdef HAVE_REMOTE_LCD
     if (screen->screen_type == SCREEN_REMOTE)
@@ -170,11 +179,16 @@ static void usb_screen_fix_viewports(struct screen *screen,
     logo->width = logo_width;
     logo->height = logo_height;
 
+    char_height = font_get(parent->font)->height;
+    *message = *parent;
+    message->y += (message->height - char_height) / 2;
+    message->height = char_height;
+    message->flags |= VP_FLAG_ALIGN_CENTER;
+
 #ifdef USB_ENABLE_HID
     if (global_settings.usb_hid)
     {
         struct viewport *title = &usb_screen_vps->title;
-        int char_height = font_get(parent->font)->height;
         *title = *parent;
         title->y = logo->y + logo->height + char_height;
         title->height = char_height;
@@ -193,9 +207,16 @@ static void usb_screen_fix_viewports(struct screen *screen,
         }
     }
 #endif
+
+#ifdef USB_ENABLE_STORAGE
+    /* The font files are closed during USB, so cache this message last. */
+    font_getstringsize(str(LANG_USB_SAFE_TO_DISCONNECT), NULL, NULL,
+                       parent->font);
+#endif
 }
 
-static void usb_screens_draw(struct usb_screen_vps_t *usb_screen_vps_ar)
+static void usb_screens_draw(struct usb_screen_vps_t *usb_screen_vps_ar,
+                             bool safe_to_disconnect)
 {
     struct viewport *last_vp;
     static const struct bitmap* logos[NB_SCREENS] = {
@@ -210,12 +231,25 @@ static void usb_screens_draw(struct usb_screen_vps_t *usb_screen_vps_ar)
         struct usb_screen_vps_t *usb_screen_vps = &usb_screen_vps_ar[i];
         struct viewport *parent = &usb_screen_vps->parent;
         struct viewport *logo = &usb_screen_vps->logo;
+        struct viewport *message = &usb_screen_vps->message;
 
         last_vp = screen->set_viewport(parent);
         screen->clear_viewport();
         screen->backlight_on();
-        screen->set_viewport(logo);
-        screen->bmp(logos[i], 0, 0);
+
+        if (safe_to_disconnect)
+        {
+            screen->set_viewport(message);
+            screen->puts_scroll(0, 0, str(LANG_USB_SAFE_TO_DISCONNECT));
+        }
+        else
+        {
+            screen->set_viewport(logo);
+            screen->bmp(logos[i], 0, 0);
+        }
+
+        screen->set_viewport(parent);
+        screen->update_viewport();
         screen->set_viewport(last_vp);
     }
 #ifdef USB_ENABLE_HID
@@ -276,8 +310,11 @@ void gui_usb_screen_run(bool early_usb, intptr_t seqnum)
         font_disable_all();
     }
     usb_acknowledge(SYS_USB_CONNECTED_ACK, seqnum);
-    usb_screens_draw(usb_screen_vps_ar);
-    handle_usb_events(title);
+    usb_screens_draw(usb_screen_vps_ar, false);
+    handle_usb_events(usb_screen_vps_ar, title);
+
+    FOR_NB_SCREENS(i)
+        screens[i].scroll_stop_viewport(&usb_screen_vps_ar[i].message);
 
 #if defined(USB_ENABLE_HID)
     if (global_settings.usb_hid)

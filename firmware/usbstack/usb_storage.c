@@ -386,6 +386,28 @@ static int usb_storage_drive_count(void)
     return count > NUM_DRIVES ? NUM_DRIVES : MAX(count, 0);
 }
 
+static bool usb_storage_all_luns_ejected(void)
+{
+    int first = 0;
+    int count = usb_storage_drive_count();
+
+#ifdef HAVE_MULTIDRIVE
+    if (skip_first)
+        first = 1;
+#endif
+
+    if (first >= count)
+        return false;
+
+    for (int i = first; i < count; i++)
+    {
+        if (!ejected[i])
+            return false;
+    }
+
+    return true;
+}
+
 static bool usb_storage_lun_available(int lun)
 {
     if (lun < 0 || lun >= usb_storage_drive_count() || ejected[lun])
@@ -1240,6 +1262,8 @@ static void handle_scsi(struct command_block_wrapper* cbw)
                             break;
                         }
                         ejected[lun]=true;
+                        if (usb_storage_all_luns_ejected())
+                            queue_broadcast(SYS_USB_SAFE_TO_DISCONNECT, 0);
                     }
                 }
             }

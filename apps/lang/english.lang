@@ -12324,6 +12324,20 @@
   </voice>
 </phrase>
 <phrase>
+  id: LANG_USB_SAFE_TO_DISCONNECT
+  desc: message shown after the host safely ejects USB mass storage
+  user: core
+  <source>
+    *: "Safe to disconnect"
+  </source>
+  <dest>
+    *: "Safe to disconnect"
+  </dest>
+  <voice>
+    *: "Safe to disconnect"
+  </voice>
+</phrase>
+<phrase>
   id: LANG_USB_MODE_CHARGE
   desc: in Settings -> General -> System -> USB Mode: Charge Only
   user: core
