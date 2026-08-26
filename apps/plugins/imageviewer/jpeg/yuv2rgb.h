@@ -47,4 +47,9 @@ void yuv_bitmap_part(unsigned char *src[3], int csub_x, int csub_y,
                      int x, int y, int width, int height,
                      int colour_mode, int dither_mode);
 
+bool yuv_bitmap_part_to_buffer(unsigned char *src[3], int csub_x, int csub_y,
+                               int src_x, int src_y, int stride,
+                               int width, int height,
+                               fb_data *dst, int dst_stride);
+
 #endif

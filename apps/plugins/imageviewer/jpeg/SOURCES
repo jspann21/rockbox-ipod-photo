@@ -1,5 +1,5 @@
-jpeg.c
-jpeg_decoder.c
+jpeg_accel.c
+jpeg_decoder_accel.c
 #ifdef HAVE_LCD_COLOR
-yuv2rgb.c
+yuv2rgb_accel.c
 #endif

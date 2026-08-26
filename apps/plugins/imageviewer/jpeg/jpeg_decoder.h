@@ -28,6 +28,9 @@
 #define _JPEG_JPEG_DECODER_H
 #include "jpeg_common.h"
 
+#define JPEG_MAX_COMPONENTS 3
+#define JPEG_MAX_TABLES     4
+
 struct jpeg
 {
     int x_size, y_size; /* size of image (can be less than block boundary) */
@@ -35,23 +38,33 @@ struct jpeg
     int x_mbl; /* x dimension of MBL */
     int y_mbl; /* y dimension of MBL */
     int blocks; /* blocks per MB */
+    int components; /* components in the frame/scan */
     int restart_interval; /* number of MCUs between RSTm markers */
     int store_pos[4]; /* for Y block ordering */
 
     unsigned char* p_entropy_data;
     unsigned char* p_entropy_end;
 
-    int quanttable[4][QUANT_TABLE_LENGTH]; /* raw quantization tables 0-3 */
-    int qt_idct[2][QUANT_TABLE_LENGTH]; /* quantization tables for IDCT */
+    int quanttable[JPEG_MAX_TABLES][QUANT_TABLE_LENGTH];
+    int qt_idct[JPEG_MAX_TABLES][QUANT_TABLE_LENGTH];
 
-    struct huffman_table hufftable[2]; /* Huffman tables  */
-    struct derived_tbl dc_derived_tbls[2]; /* Huffman-LUTs */
-    struct derived_tbl ac_derived_tbls[2];
+    struct huffman_table hufftable[JPEG_MAX_TABLES];
+    struct derived_tbl dc_derived_tbls[JPEG_MAX_TABLES];
+    struct derived_tbl ac_derived_tbls[JPEG_MAX_TABLES];
 
-    struct frame_component frameheader[3]; /* Component descriptor */
-    struct scan_component scanheader[3]; /* currently not used */
+    struct frame_component frameheader[JPEG_MAX_COMPONENTS];
+    struct scan_component scanheader[JPEG_MAX_COMPONENTS];
 
-    int mcu_membership[6]; /* info per block */
+    unsigned char component_quant[JPEG_MAX_COMPONENTS];
+    unsigned char component_dc[JPEG_MAX_COMPONENTS];
+    unsigned char component_ac[JPEG_MAX_COMPONENTS];
+    unsigned char dqt_present;
+    unsigned char dht_dc_present;
+    unsigned char dht_ac_present;
+    int table_error;
+
+    int mcu_membership[6]; /* component index per entropy block */
+    int mcu_block_pos[6];  /* position within that component */
     int tab_membership[6];
     int subsample_x[3]; /* info per component */
     int subsample_y[3];
@@ -70,6 +83,5 @@ int jpeg_decode(struct jpeg* p_jpeg, unsigned char* p_pixel[3],
 int jpeg_decode(struct jpeg* p_jpeg, unsigned char* p_pixel[1], int downscale,
                 void (*pf_progress)(int current, int total));
 #endif
-
 
 #endif /* _JPEG_JPEG_DECODER_H */
