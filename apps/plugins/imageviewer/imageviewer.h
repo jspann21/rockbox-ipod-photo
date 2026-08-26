@@ -23,6 +23,7 @@
 
 #include "plugin.h"
 
+/* different graphics libraries */
 #if LCD_DEPTH < 8
 #define USEGSLIB
 #include <lib/grey.h>
@@ -39,8 +40,16 @@
 #define myxlcd_ub_(fn)      iv->fn
 #endif
 
+/* Min memory allowing us to use the plugin buffer
+ * and thus not stopping the music
+ * *Very* rough estimation:
+ * Max 10 000 dir entries * 4bytes/entry (char **) = 40000 bytes
+ * + 30k code size = 70 000
+ * + 50k min for image = 120 000
+ */
 #define MIN_MEM 120000
 
+/* State code for output with return. */
 enum {
     PLUGIN_OTHER = 0x200,
     PLUGIN_ABORT,
@@ -59,6 +68,7 @@ enum {
 #define USE_PLUG_BUF
 #endif
 
+/* Settings. jpeg needs these */
 struct imgview_settings
 {
 #ifdef HAVE_LCD_COLOR
@@ -69,31 +79,34 @@ struct imgview_settings
     bool hide_info;
 };
 
+/* structure passed to image decoder. */
 struct image_info {
-    int x_size, y_size;
-    int width, height;
-    int x, y;
-    int frames_count;
-    int delay;
-    void *data;
+    int x_size, y_size; /* set size of loaded image in load_image(). */
+    int width, height;  /* set size of resized image in get_image(). */
+    int x, y;           /* display position */
+    int frames_count;   /* number of subframes */
+    int delay;          /* delay expressed in ticks between frames */
+    void *data;         /* use freely in decoder. not touched in ui. */
 };
 
 struct imgdec_api {
     const struct imgview_settings *settings;
-    bool slideshow_enabled;
-    bool running_slideshow;
-
-    /* One-shot handoff for a decoder that has already updated the panel. */
-    bool skip_next_update;
-
+    bool slideshow_enabled;   /* run slideshow */
+    bool running_slideshow;   /* loading image because of slideshw */
 #ifdef DISK_SPINDOWN
-    bool immediate_ata_off;
+    bool immediate_ata_off;   /* power down disk after loading */
 #endif
 #ifdef USE_PLUG_BUF
-    bool plug_buf;
+    bool plug_buf;  /* are we using the plugin buffer or the audio buffer? */
 #endif
 
+    /* callback updating a progress meter while image decoding */
     void (*cb_progress)(int current, int total);
+
+#ifdef HAVE_LCD_COLOR
+    /* Decoder has already written the target panel for this draw call. */
+    void (*lcd_direct_update)(void);
+#endif
 
 #ifdef USEGSLIB
     void (*gray_bitmap_part)(const unsigned char *src, int src_x, int src_y,
@@ -101,20 +114,39 @@ struct imgdec_api {
 #endif
 };
 
+/* functions need to be implemented in each image decoders. */
 struct image_decoder {
+    /* set true if unscaled image can be always displayed even when there isn't
+     * enough memory for resized image. e.g. when using native format to store
+     * image. */
     const bool unscaled_avail;
+
+    /* return needed size of buffer to store downscaled image by ds.
+     * this is used to calculate min downscale. */
     int (*img_mem)(int ds);
+
+    /* load image from filename. use the passed buffer to store loaded, decoded
+     * or resized image later, so save it to local variables if needed.
+     * set width and height of info properly. also, set buf_size to remaining
+     * size of buf after load image. it is used to calculate min downscale.
+     * return PLUGIN_ERROR for error. ui will skip to next image. */
     int (*load_image)(char *filename, struct image_info *info,
                       unsigned char *buf, ssize_t *buf_size, int offset, int filesize);
+    /* downscale loaded image by ds. use the buffer passed to load_image to
+     * reszie image and/or store resized image.
+     * return PLUGIN_ERROR for error. ui will skip to next image. */
     int (*get_image)(struct image_info *info, int frame, int ds);
+
+    /* draw part of image */
     void (*draw_image_rect)(struct image_info *info,
                             int x, int y, int width, int height);
 };
 
 #define IMGDEC_API_VERSION 2
 
+/* image decoder header */
 struct imgdec_header {
-    struct lc_header lc_hdr;
+    struct lc_header lc_hdr; /* must be the first */
     const struct image_decoder *decoder;
     const struct plugin_api **api;
     unsigned short plugin_api_version;
@@ -127,10 +159,12 @@ struct imgdec_header {
 extern const struct imgdec_api *iv;
 extern const struct image_decoder image_decoder;
 
-static inline void imgdec_skip_next_lcd_update(void)
+#ifdef HAVE_LCD_COLOR
+static inline void imgdec_lcd_direct_update(void)
 {
-    ((struct imgdec_api *)(uintptr_t)iv)->skip_next_update = true;
+    iv->lcd_direct_update();
 }
+#endif
 
 #if (CONFIG_PLATFORM & PLATFORM_NATIVE)
 #define IMGDEC_HEADER \
@@ -142,7 +176,7 @@ static inline void imgdec_skip_next_lcd_update(void)
           plugin_start_addr, plugin_end_addr, }, &image_decoder, \
           &rb, PLUGIN_API_VERSION, sizeof(struct plugin_api), \
           &iv, sizeof(struct imgdec_api) };
-#else
+#else /* PLATFORM_HOSTED */
 #define IMGDEC_HEADER \
         const struct plugin_api *rb DATA_ATTR; \
         const struct imgdec_api *iv DATA_ATTR; \
@@ -151,17 +185,7 @@ static inline void imgdec_skip_next_lcd_update(void)
         { PLUGIN_MAGIC, TARGET_ID, IMGDEC_API_VERSION, NULL, NULL }, \
           &image_decoder, &rb, PLUGIN_API_VERSION, sizeof(struct plugin_api), \
           &iv, sizeof(struct imgdec_api), };
-#endif
-#endif
-
-#if !defined(IMGDEC) && LCD_DEPTH >= 4
-#undef mylcd_ub_update
-#define mylcd_ub_update() do { \
-    if (iv_api.skip_next_update) \
-        iv_api.skip_next_update = false; \
-    else \
-        rb->lcd_update(); \
-} while (0)
+#endif /* CONFIG_PLATFORM */
 #endif
 
 #endif /* _IMAGE_VIEWER_H */
