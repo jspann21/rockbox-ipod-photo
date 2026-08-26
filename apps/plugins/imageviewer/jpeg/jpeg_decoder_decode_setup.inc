@@ -23,7 +23,7 @@ static int jpeg_decode_accel(struct jpeg *p_jpeg, unsigned char **p_pixel,
     if (downscale == 1)
     {
 #if defined(IPOD_COLOR) && defined(CPU_ARM)
-        pf_idct = jpeg_hwtest_reference_mode ? idct8x8 : idct8x8_arm;
+        pf_idct = idct8x8_arm;
 #else
         pf_idct = idct8x8;
 #endif
@@ -33,7 +33,7 @@ static int jpeg_decode_accel(struct jpeg *p_jpeg, unsigned char **p_pixel,
     else if (downscale == 2)
     {
 #if defined(IPOD_COLOR) && defined(CPU_ARM)
-        pf_idct = jpeg_hwtest_reference_mode ? idct4x4 : idct4x4_arm;
+        pf_idct = idct4x4_arm;
 #else
         pf_idct = idct4x4;
 #endif
@@ -43,7 +43,7 @@ static int jpeg_decode_accel(struct jpeg *p_jpeg, unsigned char **p_pixel,
     else if (downscale == 4)
     {
 #if defined(IPOD_COLOR) && defined(CPU_ARM)
-        pf_idct = jpeg_hwtest_reference_mode ? idct2x2 : idct2x2_arm;
+        pf_idct = idct2x2_arm;
 #else
         pf_idct = idct2x2;
 #endif
