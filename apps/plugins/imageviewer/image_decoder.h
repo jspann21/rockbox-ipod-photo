@@ -39,7 +39,7 @@ enum image_type {
 
 struct loader_info {
     enum image_type type;
-    const struct imgdec_api *iv;
+    struct imgdec_api *iv;
     unsigned char* buffer;
     size_t size;
 };
