@@ -98,6 +98,70 @@
 /* compiled-in font */
 extern struct font sysfont;
 
+/*
+ * Small theme fonts are often limited to printable ASCII. Preserve common
+ * typographic punctuation in metadata by using an ASCII look-alike when the
+ * selected font does not contain the original Unicode glyph.
+ */
+static ucschar_t font_missing_glyph_fallback(struct font *pf, ucschar_t ch)
+{
+    if (ch >= pf->firstchar && ch < pf->firstchar + pf->size)
+        return ch;
+
+    switch (ch)
+    {
+        case 0x00a0: /* no-break space */
+            ch = ' ';
+            break;
+
+        case 0x00ad: /* soft hyphen */
+        case 0x2010: /* hyphen */
+        case 0x2011: /* non-breaking hyphen */
+        case 0x2012: /* figure dash */
+        case 0x2013: /* en dash */
+        case 0x2014: /* em dash */
+        case 0x2015: /* horizontal bar */
+        case 0x2212: /* minus sign */
+        case 0xff0d: /* fullwidth hyphen-minus */
+            ch = '-';
+            break;
+
+        case 0x02bc: /* modifier letter apostrophe */
+        case 0x2018: /* left single quotation mark */
+        case 0x2019: /* right single quotation mark */
+        case 0x201a: /* single low-9 quotation mark */
+        case 0x201b: /* single high-reversed-9 quotation mark */
+        case 0x2032: /* prime */
+        case 0x2039: /* single left-pointing angle quotation mark */
+        case 0x203a: /* single right-pointing angle quotation mark */
+        case 0xff07: /* fullwidth apostrophe */
+            ch = '\'';
+            break;
+
+        case 0x00ab: /* left-pointing double angle quotation mark */
+        case 0x00bb: /* right-pointing double angle quotation mark */
+        case 0x201c: /* left double quotation mark */
+        case 0x201d: /* right double quotation mark */
+        case 0x201e: /* double low-9 quotation mark */
+        case 0x201f: /* double high-reversed-9 quotation mark */
+        case 0x2033: /* double prime */
+        case 0xff02: /* fullwidth quotation mark */
+            ch = '"';
+            break;
+
+        case 0x00b7: /* middle dot */
+        case 0x2022: /* bullet */
+        case 0x2026: /* horizontal ellipsis */
+            ch = '.';
+            break;
+    }
+
+    if (ch < pf->firstchar || ch >= pf->firstchar + pf->size)
+        ch = pf->defaultchar;
+
+    return ch;
+}
+
 #if !defined(BOOTLOADER) || defined(SONY_NWZ_LINUX) || defined(HIBY_LINUX) || defined(FIIO_M3K_LINUX)
 
 struct buflib_alloc_data {
@@ -837,9 +901,7 @@ int font_get_width(struct font* pf, ucschar_t char_code)
     int width;
     struct font_cache_entry *e;
 
-    /* check input range*/
-    if (char_code < pf->firstchar || char_code >= pf->firstchar+pf->size)
-        char_code = pf->defaultchar;
+    char_code = font_missing_glyph_fallback(pf, char_code);
     char_code -= pf->firstchar;
 
     if (pf->fd >= 0 && pf != &sysfont)
@@ -859,9 +921,7 @@ const unsigned char* font_get_bits(struct font* pf, ucschar_t char_code)
 {
     const unsigned char* bits;
 
-    /* check input range*/
-    if (char_code < pf->firstchar || char_code >= pf->firstchar+pf->size)
-        char_code = pf->defaultchar;
+    char_code = font_missing_glyph_fallback(pf, char_code);
     char_code -= pf->firstchar;
 
     if (pf->fd >= 0 && pf != &sysfont)
@@ -1094,9 +1154,7 @@ struct font* font_get(int font)
  */
 int font_get_width(struct font* pf, ucschar_t char_code)
 {
-    /* check input range*/
-    if (char_code < pf->firstchar || char_code >= pf->firstchar+pf->size)
-        char_code = pf->defaultchar;
+    char_code = font_missing_glyph_fallback(pf, char_code);
     char_code -= pf->firstchar;
 
     return pf->width? pf->width[char_code]: pf->maxwidth;
@@ -1106,9 +1164,7 @@ const unsigned char* font_get_bits(struct font* pf, ucschar_t char_code)
 {
     const unsigned char* bits;
 
-    /* check input range*/
-    if (char_code < pf->firstchar || char_code >= pf->firstchar+pf->size)
-        char_code = pf->defaultchar;
+    char_code = font_missing_glyph_fallback(pf, char_code);
     char_code -= pf->firstchar;
 
     /* assume small font with uint16_t offsets*/
