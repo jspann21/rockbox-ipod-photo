@@ -77,6 +77,13 @@ int process_markers(unsigned char* p_src, long size, struct jpeg* p_jpeg);
 
 /* the main decode function */
 #ifdef HAVE_LCD_COLOR
+typedef void (*jpeg_mcu_row_callback)(unsigned char * const row[3],
+                                      int y, int height, int stride,
+                                      void *user);
+
+void jpeg_decode_set_mcu_row_callback(jpeg_mcu_row_callback callback,
+                                      void *user);
+
 int jpeg_decode(struct jpeg* p_jpeg, unsigned char* p_pixel[3],
                 int downscale, void (*pf_progress)(int current, int total));
 #else
