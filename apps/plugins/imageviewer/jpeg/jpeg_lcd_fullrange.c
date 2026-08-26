@@ -220,7 +220,8 @@ static bool jpeg_lcd_stream_finish_block(void)
 
 void jpeg_lcd_stream_abort(void)
 {
-    LCD2_BLOCK_CONFIG = 0;
+    if (jpeg_lcd_stream.block_rows != 0)
+        LCD2_BLOCK_CONFIG = 0;
     jpeg_lcd_stream.active = false;
     jpeg_lcd_stream.width = 0;
     jpeg_lcd_stream.remaining_rows = 0;
@@ -255,13 +256,6 @@ bool jpeg_lcd_stream_begin(int x, int y, int width, int height)
     jpeg_lcd_stream.block_rows = 0;
     jpeg_lcd_stream.fb_dst = vp_main->buffer->fb_ptr + y * LCD_WIDTH + x;
     jpeg_lcd_stream.fb_stride = LCD_WIDTH;
-
-    if (!jpeg_lcd_stream_start_block())
-    {
-        jpeg_lcd_stream_abort();
-        return false;
-    }
-
     return true;
 }
 
@@ -272,7 +266,8 @@ bool jpeg_lcd_stream_write_yuv420(unsigned char * const src[3],
 
     if (!jpeg_lcd_stream.active || src == NULL ||
         src[0] == NULL || src[1] == NULL || src[2] == NULL ||
-        stride <= 0 || (stride & 1) || rows <= 0 || (rows & 1) ||
+        stride < jpeg_lcd_stream.width || (stride & 1) ||
+        rows <= 0 || (rows & 1) ||
         rows > jpeg_lcd_stream.remaining_rows)
         return false;
 
@@ -344,7 +339,8 @@ bool jpeg_lcd_blit_yuv420_fullrange(unsigned char * const src[3],
 
     if (src == NULL || src[0] == NULL || src[1] == NULL || src[2] == NULL ||
         width <= 0 || height <= 0 || (width & 1) || (height & 1) ||
-        (src_x & 1) || (src_y & 1))
+        (src_x & 1) || (src_y & 1) || src_x < 0 || src_y < 0 ||
+        src_x + width > stride)
         return false;
 
     yuv_src[0] = src[0] + src_y * stride + src_x;
