@@ -252,6 +252,7 @@ static int load_image(char *filename, struct image_info *info,
 
 #ifdef HAVE_LCD_COLOR
     jpeg_cache_clear();
+    iv->skip_next_update = false;
 #endif
     jpeg_hwtest_refresh();
     rb->snprintf(jpeg_hwtest_filename, sizeof(jpeg_hwtest_filename),
