@@ -4,10 +4,12 @@
 #ifdef HAVE_LCD_COLOR
         for (i = 0; i < 3; i++)
         {
+            p_strip[i] = p_line[i];
             p_byte[i] = p_line[i];
             p_line[i] += skip_strip[i];
         }
 #else
+        p_strip[0] = p_line[0];
         p_byte[0] = p_line[0];
         p_line[0] += skip_strip[0];
 #endif
@@ -121,6 +123,18 @@
                 last_dc_val[0] = last_dc_val[1] = last_dc_val[2] = 0;
             }
         }
+
+#ifdef HAVE_LCD_COLOR
+        if (jpeg_mcu_row_cb != NULL)
+        {
+            int row_y = y * strip_height;
+            int row_height = MIN(strip_height, visible_height - row_y);
+
+            if (row_height > 0)
+                jpeg_mcu_row_cb(p_strip, row_y, row_height, skip_line[0],
+                                jpeg_mcu_row_cb_data);
+        }
+#endif
 
         if (pf_progress != NULL)
             pf_progress(y, p_jpeg->y_mbl - 1);
