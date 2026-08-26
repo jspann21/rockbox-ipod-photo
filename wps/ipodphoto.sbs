@@ -28,7 +28,8 @@
 
 # Dynamic accent status bar: time on home, current list title elsewhere.
 # Draw the bar on the backdrop and invert its foreground text, matching
-# Themify's original two-layer rendering strategy.
+# Themify's original two-layer rendering strategy. The lightning mark blinks
+# while charging and stays solid at charge completion.
 %Vl(Header_Bar_Top_BD,0,0,220,18,-)%VB%Vf(lss)%dr(0,0,-,-,lss,lse)
 %Vl(Header_Bar_Top,0,0,220,18,-)%Vf(lss)%dr(0,0,-,-,lss,lse)
 %Vl(Header_Time_Top_BD,3,4,176,13,2)%VB%Vg(lss,lse,lst)%Vs(gradient)%cH:%cM
@@ -36,11 +37,11 @@
 %Vl(Header_Title_Top_BD,22,4,157,13,2)%VB%Vg(lss,lse,lst)%Vs(gradient)%ac%Lt
 %Vl(Header_Title_Top,22,4,157,13,2)%Vg(lss,lse,lst)%Vs(gradient)%ac%Lt
 %Vl(Header_Battery_Number_Top_BD,0,0,1,1,-)%?if(%St(battery display),=,numeric)<%Vd(Header_Battery_Numeric_Top_BD)|%Vd(Header_Battery_Graphical_Top_BD)>
-%Vl(Header_Battery_Numeric_Top_BD,185,4,32,13,3)%VB%Vf(lss)%dr(0,0,-,-,lss,lse)%Vg(lss,lse,lst)%Vs(gradient)%?bc<%t(3)%ar%bl%%;%t(2)%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)|%?if(%bl,<=,15)<%t(2)%ar%bl%%;%t(.5)|%ar%bl%%>>
+%Vl(Header_Battery_Numeric_Top_BD,185,4,32,13,3)%VB%Vf(lss)%dr(0,0,-,-,lss,lse)%Vg(lss,lse,lst)%Vs(gradient)%?bp<%?bc<%t(1)%ar%bl%%;%t(1)%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)|%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)>|%?if(%bl,<=,15)<%t(2)%ar%bl%%;%t(.5)|%ar%bl%%>>
 %Vl(Header_Battery_Graphical_Top_BD,185,4,32,13,8)%VB
 %Vl(Header_Battery_Number_Top,0,0,1,1,-)%?if(%St(battery display),=,numeric)<%Vd(Header_Battery_Numeric_Top)|%Vd(Header_Battery_Graphical_Top)>
-%Vl(Header_Battery_Numeric_Top,185,4,32,13,3)%Vf(lss)%dr(0,0,-,-,lss,lse)%Vg(lss,lse,lst)%Vs(gradient)%?bc<%t(3)%ar%bl%%;%t(2)%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)|%?if(%bl,<=,15)<%t(2)%ar%bl%%;%t(.5)|%ar%bl%%>>
-%Vl(Header_Battery_Graphical_Top,185,4,32,13,7)%Vg(lss,lse,lst)%Vs(invert)%?bc<%?bl<a|a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v>|%?bl<A|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V>>
+%Vl(Header_Battery_Numeric_Top,185,4,32,13,3)%Vf(lss)%dr(0,0,-,-,lss,lse)%Vg(lss,lse,lst)%Vs(gradient)%?bp<%?bc<%t(1)%ar%bl%%;%t(1)%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)|%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)>|%?if(%bl,<=,15)<%t(2)%ar%bl%%;%t(.5)|%ar%bl%%>>
+%Vl(Header_Battery_Graphical_Top,185,4,32,13,7)%Vg(lss,lse,lst)%Vs(invert)%?bp<%?bc<%t(1)%?bl<a|a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v>;%t(1)%?bl<A|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V>|v>|%?bl<A|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V>>
 %Vl(Header_Bar_Bottom_BD,0,158,220,18,-)%VB%Vf(lss)%dr(0,0,-,-,lss,lse)
 %Vl(Header_Bar_Bottom,0,158,220,18,-)%Vf(lss)%dr(0,0,-,-,lss,lse)
 %Vl(Header_Time_Bottom_BD,3,162,176,13,2)%VB%Vg(lss,lse,lst)%Vs(gradient)%cH:%cM
@@ -48,11 +49,11 @@
 %Vl(Header_Title_Bottom_BD,22,162,157,13,2)%VB%Vg(lss,lse,lst)%Vs(gradient)%ac%Lt
 %Vl(Header_Title_Bottom,22,162,157,13,2)%Vg(lss,lse,lst)%Vs(gradient)%ac%Lt
 %Vl(Header_Battery_Number_Bottom_BD,0,0,1,1,-)%?if(%St(battery display),=,numeric)<%Vd(Header_Battery_Numeric_Bottom_BD)|%Vd(Header_Battery_Graphical_Bottom_BD)>
-%Vl(Header_Battery_Numeric_Bottom_BD,185,162,32,13,3)%VB%Vf(lss)%dr(0,0,-,-,lss,lse)%Vg(lss,lse,lst)%Vs(gradient)%?bc<%t(3)%ar%bl%%;%t(2)%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)|%?if(%bl,<=,15)<%t(2)%ar%bl%%;%t(.5)|%ar%bl%%>>
+%Vl(Header_Battery_Numeric_Bottom_BD,185,162,32,13,3)%VB%Vf(lss)%dr(0,0,-,-,lss,lse)%Vg(lss,lse,lst)%Vs(gradient)%?bp<%?bc<%t(1)%ar%bl%%;%t(1)%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)|%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)>|%?if(%bl,<=,15)<%t(2)%ar%bl%%;%t(.5)|%ar%bl%%>>
 %Vl(Header_Battery_Graphical_Bottom_BD,185,162,32,13,8)%VB
 %Vl(Header_Battery_Number_Bottom,0,0,1,1,-)%?if(%St(battery display),=,numeric)<%Vd(Header_Battery_Numeric_Bottom)|%Vd(Header_Battery_Graphical_Bottom)>
-%Vl(Header_Battery_Numeric_Bottom,185,162,32,13,3)%Vf(lss)%dr(0,0,-,-,lss,lse)%Vg(lss,lse,lst)%Vs(gradient)%?bc<%t(3)%ar%bl%%;%t(2)%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)|%?if(%bl,<=,15)<%t(2)%ar%bl%%;%t(.5)|%ar%bl%%>>
-%Vl(Header_Battery_Graphical_Bottom,185,162,32,13,7)%Vg(lss,lse,lst)%Vs(invert)%?bc<%?bl<a|a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v>|%?bl<A|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V>>
+%Vl(Header_Battery_Numeric_Bottom,185,162,32,13,3)%Vf(lss)%dr(0,0,-,-,lss,lse)%Vg(lss,lse,lst)%Vs(gradient)%?bp<%?bc<%t(1)%ar%bl%%;%t(1)%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)|%Vf(lss)%dr(16,2,2,3)%dr(15,5,3,2)%dr(14,6,2,1)%dr(15,7,2,3)>|%?if(%bl,<=,15)<%t(2)%ar%bl%%;%t(.5)|%ar%bl%%>>
+%Vl(Header_Battery_Graphical_Bottom,185,162,32,13,7)%Vg(lss,lse,lst)%Vs(invert)%?bp<%?bc<%t(1)%?bl<a|a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v>;%t(1)%?bl<A|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V>|v>|%?bl<A|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V>>
 
 # Home selector follows Line Selector Type. The inverse branch deliberately
 # uses Themify's original %Vs(invert) contract across every child viewport.

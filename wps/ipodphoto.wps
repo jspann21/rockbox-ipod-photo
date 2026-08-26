@@ -78,11 +78,12 @@
 
 # Full-width 18-pixel status bar matching the main menu. The battery stays at
 # x=185, y=4 while shuffle, repeat, HQ, hold, and sleep populate slots to its left.
+# Its lightning mark blinks while charging and stays solid at charge completion.
 %V(0,0,1,1,-)%Vd(Status_Battery_BG)%Vd(Status_Battery)%?bs<%Vd(Status_Long_Select)%?mh<%t(3)%Vd(Status_Hold);%t(3)%Vd(Status_Sleep)|%Vd(Status_Sleep)>|%?mh<%Vd(Status_Long_Select)%Vd(Status_Hold)|%Vd(Status_Short_Select)>>
 %Vl(Status_Short_Select,0,0,1,1,-)%?and(%if(%ps,=,1),%if(%mm,>,1),%or(%if(%fc,=,4),%if(%fc,=,5),%if(%fc,=,7),%if(%fc,=,11)))<%Vd(Status_BG3)%Vd(Status_SRH)|%?and(%if(%ps,=,1),%if(%mm,>,1))<%Vd(Status_BG2)%Vd(Status_SR)|%?and(%if(%ps,=,1),%or(%if(%fc,=,4),%if(%fc,=,5),%if(%fc,=,7),%if(%fc,=,11)))<%Vd(Status_BG2)%Vd(Status_SH)|%?and(%if(%mm,>,1),%or(%if(%fc,=,4),%if(%fc,=,5),%if(%fc,=,7),%if(%fc,=,11)))<%Vd(Status_BG2)%Vd(Status_RH)|%?if(%ps,=,1)<%Vd(Status_BG1)%Vd(Status_S)|%?if(%mm,>,1)<%Vd(Status_BG1)%Vd(Status_R)|%?or(%if(%fc,=,4),%if(%fc,=,5),%if(%fc,=,7),%if(%fc,=,11))<%Vd(Status_BG1)%Vd(Status_H)|%Vd(Status_BG0)>>>>>>>>>>>>
 %Vl(Status_Long_Select,0,0,1,1,-)%?and(%if(%ps,=,1),%if(%mm,>,1),%or(%if(%fc,=,4),%if(%fc,=,5),%if(%fc,=,7),%if(%fc,=,11)))<%Vd(Status_BG4)%Vd(Status_L_SRH)|%?and(%if(%ps,=,1),%if(%mm,>,1))<%Vd(Status_BG3)%Vd(Status_L_SR)|%?and(%if(%ps,=,1),%or(%if(%fc,=,4),%if(%fc,=,5),%if(%fc,=,7),%if(%fc,=,11)))<%Vd(Status_BG3)%Vd(Status_L_SH)|%?and(%if(%mm,>,1),%or(%if(%fc,=,4),%if(%fc,=,5),%if(%fc,=,7),%if(%fc,=,11)))<%Vd(Status_BG3)%Vd(Status_L_RH)|%?if(%ps,=,1)<%Vd(Status_BG2)%Vd(Status_L_S)|%?if(%mm,>,1)<%Vd(Status_BG2)%Vd(Status_L_R)|%?or(%if(%fc,=,4),%if(%fc,=,5),%if(%fc,=,7),%if(%fc,=,11))<%Vd(Status_BG2)%Vd(Status_L_H)|%Vd(Status_BG1)>>>>>>>>>>>>
 %Vl(Status_Battery_BG,0,0,220,18,-)%Vf(fg)%dr(0,0,-,-)
-%Vl(Status_Battery,185,4,32,13,7)%Vg(fg,fg,bg)%Vs(invert)%?bc<%?bl<a|a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v>|%?bl<A|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V>>
+%Vl(Status_Battery,185,4,32,13,7)%Vg(fg,fg,bg)%Vs(invert)%?bp<%?bc<%t(1)%?bl<a|a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v>;%t(1)%?bl<A|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V>|v>|%?bl<A|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V>>
 %Vl(Status_BG0,0,0,1,1,-)
 %Vl(Status_BG1,0,0,1,1,-)
 %Vl(Status_BG2,0,0,1,1,-)
