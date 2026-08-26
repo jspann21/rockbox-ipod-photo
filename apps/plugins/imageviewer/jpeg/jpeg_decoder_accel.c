@@ -7,7 +7,6 @@
  ****************************************************************************/
 
 #include "plugin.h"
-#include "jpeg_hwtest.h"
 
 #define process_markers jpeg_legacy_process_markers
 #define build_lut       jpeg_legacy_build_lut
