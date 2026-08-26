@@ -22,19 +22,31 @@ static int jpeg_decode_accel(struct jpeg *p_jpeg, unsigned char **p_pixel,
 
     if (downscale == 1)
     {
+#if defined(IPOD_COLOR) && defined(CPU_ARM)
+        pf_idct = idct8x8_arm;
+#else
         pf_idct = idct8x8;
+#endif
         k_need = 64;
         zero_need = 63;
     }
     else if (downscale == 2)
     {
+#if defined(IPOD_COLOR) && defined(CPU_ARM)
+        pf_idct = idct4x4_arm;
+#else
         pf_idct = idct4x4;
+#endif
         k_need = 25;
         zero_need = 27;
     }
     else if (downscale == 4)
     {
+#if defined(IPOD_COLOR) && defined(CPU_ARM)
+        pf_idct = idct2x2_arm;
+#else
         pf_idct = idct2x2;
+#endif
         k_need = 5;
         zero_need = 9;
     }

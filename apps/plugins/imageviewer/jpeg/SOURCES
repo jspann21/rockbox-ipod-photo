@@ -3,3 +3,9 @@ jpeg_decoder_accel.c
 #ifdef HAVE_LCD_COLOR
 yuv2rgb_accel.c
 #endif
+#if defined(IPOD_COLOR)
+jpeg_lcd_fullrange.c
+#endif
+#if defined(IPOD_COLOR) && defined(CPU_ARM)
+jpeg_idct_arm.S
+#endif
