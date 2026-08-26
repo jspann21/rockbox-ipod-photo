@@ -139,6 +139,7 @@ static inline fb_data jpeg_pack_rgb565(unsigned int y, int cb, int cr)
 
 static bool jpeg_lcd_write_two_lines(unsigned char const * const src[3],
                                      int width, int stride,
+                                     fb_data *dst, int dst_stride,
                                      uint32_t *crc)
 {
     int row;
@@ -148,6 +149,7 @@ static bool jpeg_lcd_write_two_lines(unsigned char const * const src[3],
         const unsigned char *ysrc = src[0] + row * stride;
         const unsigned char *cb = src[1];
         const unsigned char *cr = src[2];
+        fb_data *out = dst + row * dst_stride;
         int col;
 
         for (col = 0; col < width; col += 2)
@@ -161,6 +163,9 @@ static bool jpeg_lcd_write_two_lines(unsigned char const * const src[3],
                                        (int)*cb - 128, (int)*cr - 128);
             cb++;
             cr++;
+
+            out[col] = pair[0];
+            out[col + 1] = pair[1];
 
             if (crc != NULL)
                 *crc = rb->crc_32(pair, sizeof(pair), *crc);
@@ -181,7 +186,9 @@ bool jpeg_lcd_blit_yuv420_fullrange(unsigned char * const src[3],
                                     int x, int y, int width, int height,
                                     uint32_t *rgb_crc)
 {
+    struct viewport *vp_main;
     unsigned char const *yuv_src[3];
+    fb_data *fb_dst;
     uint32_t crc = 0xffffffff;
 
     if (src == NULL || src[0] == NULL || src[1] == NULL || src[2] == NULL ||
@@ -189,6 +196,12 @@ bool jpeg_lcd_blit_yuv420_fullrange(unsigned char * const src[3],
         (src_x & 1) || (src_y & 1) || x < 0 || y < 0 ||
         x + width > LCD_WIDTH || y + height > LCD_HEIGHT)
         return false;
+
+    vp_main = *(rb->screens[SCREEN_MAIN]->current_viewport);
+    if (vp_main == NULL || vp_main->buffer == NULL ||
+        vp_main->buffer->fb_ptr == NULL)
+        return false;
+    fb_dst = vp_main->buffer->fb_ptr + y * LCD_WIDTH + x;
 
     if (!jpeg_lcd_setup_region(x, y, width, height))
         return false;
@@ -217,6 +230,7 @@ bool jpeg_lcd_blit_yuv420_fullrange(unsigned char * const src[3],
         do
         {
             if (!jpeg_lcd_write_two_lines(yuv_src, width, stride,
+                                          fb_dst, LCD_WIDTH,
                                           rgb_crc != NULL ? &crc : NULL))
             {
                 LCD2_BLOCK_CONFIG = 0;
@@ -225,6 +239,7 @@ bool jpeg_lcd_blit_yuv420_fullrange(unsigned char * const src[3],
             yuv_src[0] += stride << 1;
             yuv_src[1] += stride >> 1;
             yuv_src[2] += stride >> 1;
+            fb_dst += LCD_WIDTH << 1;
         }
         while (--pairs > 0);
 
