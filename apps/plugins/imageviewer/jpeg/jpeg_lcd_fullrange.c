@@ -25,6 +25,18 @@
 #define LCD_CNTL_HORIZ_RAM_ADDR_POS 0x44
 #define LCD_CNTL_VERT_RAM_ADDR_POS  0x45
 
+struct jpeg_lcd_stream_state
+{
+    bool active;
+    int width;
+    int remaining_rows;
+    int block_rows;
+    fb_data *fb_dst;
+    int fb_stride;
+};
+
+static struct jpeg_lcd_stream_state jpeg_lcd_stream;
+
 static inline bool jpeg_lcd_wait_write(void)
 {
     unsigned int count = JPEG_LCD_POLL_LIMIT;
@@ -177,17 +189,53 @@ static bool jpeg_lcd_write_two_lines(unsigned char const * const src[3],
     return true;
 }
 
-bool jpeg_lcd_blit_yuv420_fullrange(unsigned char * const src[3],
-                                    int src_x, int src_y, int stride,
-                                    int x, int y, int width, int height)
+static bool jpeg_lcd_stream_start_block(void)
+{
+    int rows = jpeg_lcd_stream.remaining_rows;
+    int maximum_rows = ((0x10000 / 2) / jpeg_lcd_stream.width) & ~1;
+    int bytes;
+
+    if (rows > maximum_rows)
+        rows = maximum_rows;
+    if (rows <= 0 || (rows & 1))
+        return false;
+
+    bytes = jpeg_lcd_stream.width * rows * 2;
+    LCD2_BLOCK_CTRL = 0x10000080;
+    LCD2_BLOCK_CONFIG = 0xc0010000 | (bytes - 1);
+    LCD2_BLOCK_CTRL = 0x34000000;
+    jpeg_lcd_stream.block_rows = rows;
+    return true;
+}
+
+static bool jpeg_lcd_stream_finish_block(void)
+{
+    if (!jpeg_lcd_wait_block(LCD2_BLOCK_READY))
+        return false;
+
+    LCD2_BLOCK_CONFIG = 0;
+    jpeg_lcd_stream.block_rows = 0;
+    return true;
+}
+
+void jpeg_lcd_stream_abort(void)
+{
+    if (jpeg_lcd_stream.active)
+        LCD2_BLOCK_CONFIG = 0;
+    jpeg_lcd_stream.active = false;
+    jpeg_lcd_stream.width = 0;
+    jpeg_lcd_stream.remaining_rows = 0;
+    jpeg_lcd_stream.block_rows = 0;
+    jpeg_lcd_stream.fb_dst = NULL;
+    jpeg_lcd_stream.fb_stride = 0;
+}
+
+bool jpeg_lcd_stream_begin(int x, int y, int width, int height)
 {
     struct viewport *vp_main;
-    unsigned char const *yuv_src[3];
-    fb_data *fb_dst;
 
-    if (src == NULL || src[0] == NULL || src[1] == NULL || src[2] == NULL ||
-        width <= 0 || height <= 0 || (width & 1) || (height & 1) ||
-        (src_x & 1) || (src_y & 1) || x < 0 || y < 0 ||
+    if (jpeg_lcd_stream.active || width <= 0 || height <= 0 ||
+        (width & 1) || (height & 1) || x < 0 || y < 0 ||
         x + width > LCD_WIDTH || y + height > LCD_HEIGHT)
         return false;
 
@@ -198,56 +246,113 @@ bool jpeg_lcd_blit_yuv420_fullrange(unsigned char * const src[3],
         vp_main->width != LCD_WIDTH || vp_main->height != LCD_HEIGHT ||
         vp_main->buffer->stride != LCD_WIDTH)
         return false;
-    fb_dst = vp_main->buffer->fb_ptr + y * LCD_WIDTH + x;
 
     if (!jpeg_lcd_setup_region(x, y, width, height))
+        return false;
+
+    jpeg_lcd_stream.active = true;
+    jpeg_lcd_stream.width = width;
+    jpeg_lcd_stream.remaining_rows = height;
+    jpeg_lcd_stream.block_rows = 0;
+    jpeg_lcd_stream.fb_dst = vp_main->buffer->fb_ptr + y * LCD_WIDTH + x;
+    jpeg_lcd_stream.fb_stride = LCD_WIDTH;
+    return true;
+}
+
+bool jpeg_lcd_stream_write_yuv420(unsigned char * const src[3],
+                                  int stride, int rows)
+{
+    unsigned char const *yuv_src[3];
+
+    if (!jpeg_lcd_stream.active || src == NULL ||
+        src[0] == NULL || src[1] == NULL || src[2] == NULL ||
+        stride < jpeg_lcd_stream.width || (stride & 1) ||
+        rows <= 0 || (rows & 1) ||
+        rows > jpeg_lcd_stream.remaining_rows)
+        return false;
+
+    yuv_src[0] = src[0];
+    yuv_src[1] = src[1];
+    yuv_src[2] = src[2];
+
+    while (rows > 0)
+    {
+        if (jpeg_lcd_stream.block_rows == 0)
+        {
+            if (!jpeg_lcd_stream_start_block())
+            {
+                jpeg_lcd_stream_abort();
+                return false;
+            }
+        }
+
+        if (!jpeg_lcd_write_two_lines(yuv_src, jpeg_lcd_stream.width, stride,
+                                      jpeg_lcd_stream.fb_dst,
+                                      jpeg_lcd_stream.fb_stride))
+        {
+            jpeg_lcd_stream_abort();
+            return false;
+        }
+
+        yuv_src[0] += stride << 1;
+        yuv_src[1] += stride >> 1;
+        yuv_src[2] += stride >> 1;
+        jpeg_lcd_stream.fb_dst += jpeg_lcd_stream.fb_stride << 1;
+        jpeg_lcd_stream.remaining_rows -= 2;
+        jpeg_lcd_stream.block_rows -= 2;
+        rows -= 2;
+
+        if (jpeg_lcd_stream.block_rows == 0)
+        {
+            if (!jpeg_lcd_stream_finish_block())
+            {
+                jpeg_lcd_stream_abort();
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool jpeg_lcd_stream_end(void)
+{
+    if (!jpeg_lcd_stream.active || jpeg_lcd_stream.remaining_rows != 0 ||
+        jpeg_lcd_stream.block_rows != 0)
+    {
+        jpeg_lcd_stream_abort();
+        return false;
+    }
+
+    jpeg_lcd_stream.active = false;
+    jpeg_lcd_stream.width = 0;
+    jpeg_lcd_stream.fb_dst = NULL;
+    jpeg_lcd_stream.fb_stride = 0;
+    return true;
+}
+
+bool jpeg_lcd_blit_yuv420_fullrange(unsigned char * const src[3],
+                                    int src_x, int src_y, int stride,
+                                    int x, int y, int width, int height)
+{
+    unsigned char *yuv_src[3];
+
+    if (src == NULL || src[0] == NULL || src[1] == NULL || src[2] == NULL ||
+        width <= 0 || height <= 0 || (width & 1) || (height & 1) ||
+        (src_x & 1) || (src_y & 1) || src_x < 0 || src_y < 0 ||
+        src_x + width > stride)
         return false;
 
     yuv_src[0] = src[0] + src_y * stride + src_x;
     yuv_src[1] = src[1] + (src_y >> 1) * (stride >> 1) + (src_x >> 1);
     yuv_src[2] = src[2] + (src_y >> 1) * (stride >> 1) + (src_x >> 1);
 
-    while (height > 0)
-    {
-        int rows = height;
-        int bytes = width * rows * 2;
-        int pairs;
+    if (!jpeg_lcd_stream_begin(x, y, width, height))
+        return false;
 
-        if (bytes > 0x10000)
-        {
-            rows = ((0x10000 / 2) / width) & ~1;
-            bytes = width * rows * 2;
-        }
+    if (!jpeg_lcd_stream_write_yuv420(yuv_src, stride, height))
+        return false;
 
-        LCD2_BLOCK_CTRL = 0x10000080;
-        LCD2_BLOCK_CONFIG = 0xc0010000 | (bytes - 1);
-        LCD2_BLOCK_CTRL = 0x34000000;
-
-        pairs = rows >> 1;
-        do
-        {
-            if (!jpeg_lcd_write_two_lines(yuv_src, width, stride,
-                                          fb_dst, LCD_WIDTH))
-            {
-                LCD2_BLOCK_CONFIG = 0;
-                return false;
-            }
-            yuv_src[0] += stride << 1;
-            yuv_src[1] += stride >> 1;
-            yuv_src[2] += stride >> 1;
-            fb_dst += LCD_WIDTH << 1;
-        }
-        while (--pairs > 0);
-
-        if (!jpeg_lcd_wait_block(LCD2_BLOCK_READY))
-        {
-            LCD2_BLOCK_CONFIG = 0;
-            return false;
-        }
-        LCD2_BLOCK_CONFIG = 0;
-        height -= rows;
-    }
-
-    return true;
+    return jpeg_lcd_stream_end();
 }
 #endif /* IPOD_COLOR */
