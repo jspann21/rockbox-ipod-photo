@@ -52,6 +52,7 @@ struct jpeg_rgb_cache
     int stride;
     int ds;
     bool valid;
+    bool crc_valid;
     bool logged;
     uint32_t decode_us;
     uint32_t yuv_crc;
@@ -191,11 +192,12 @@ static bool jpeg_prepare_cache(const struct image_info *info,
             0, 0, pdisp->stride, info->width, info->height,
             cache->pixels, cache->stride);
 
-    if (cache->valid && jpeg_hwtest_enabled && cache->rgb_crc == 0)
+    if (cache->valid && jpeg_hwtest_enabled && !cache->crc_valid)
     {
         cache->yuv_crc = jpeg_yuv_crc(info, pdisp);
         cache->rgb_crc = rb->crc_32(cache->pixels,
             info->width * info->height * sizeof(fb_data), 0xffffffff);
+        cache->crc_valid = true;
     }
 
     return cache->valid;
@@ -210,7 +212,7 @@ static void jpeg_hwtest_log(const struct image_info *info,
     int fd;
 
     if (!jpeg_hwtest_enabled || cache == NULL || cache->logged ||
-        !cache->valid)
+        !cache->valid || !cache->crc_valid)
         return;
 
     fd = rb->open(ROCKBOX_DIR "/jpeg56.csv",
@@ -317,18 +319,28 @@ static void draw_image_rect(struct image_info *info,
         x == 0 && y == 0 && width == LCD_WIDTH && height == LCD_HEIGHT)
     {
         uint32_t lcd_crc = 0;
-        uint32_t started = jpeg_now_us();
+        uint32_t direct_us;
+        uint32_t started;
+        bool direct_ok;
 
         if (jpeg_hwtest_enabled)
             jpeg_prepare_cache(info, pdisp, cache);
 
-        if (jpeg_lcd_blit_yuv420_fullrange(
-                pdisp->bitmap, 0, 0, pdisp->stride,
-                0, 0, LCD_WIDTH, LCD_HEIGHT,
-                jpeg_hwtest_enabled ? &lcd_crc : NULL))
-        {
-            uint32_t direct_us = jpeg_now_us() - started;
+#ifdef HAVE_ADJUSTABLE_CPU_FREQ
+        rb->cpu_boost(true);
+#endif
+        started = jpeg_now_us();
+        direct_ok = jpeg_lcd_blit_yuv420_fullrange(
+            pdisp->bitmap, 0, 0, pdisp->stride,
+            0, 0, LCD_WIDTH, LCD_HEIGHT,
+            jpeg_hwtest_enabled ? &lcd_crc : NULL);
+        direct_us = jpeg_now_us() - started;
+#ifdef HAVE_ADJUSTABLE_CPU_FREQ
+        rb->cpu_boost(false);
+#endif
 
+        if (direct_ok)
+        {
             if (jpeg_hwtest_enabled)
                 jpeg_hwtest_log(info, cache, true, lcd_crc, direct_us);
             imgdec_skip_next_lcd_update();
