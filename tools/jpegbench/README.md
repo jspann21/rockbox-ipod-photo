@@ -5,6 +5,11 @@ both the legacy hot loops and the accelerated hot loops, selected by a sentinel
 file, so the complete A/B check needs one firmware installation and two corpus
 passes—not repeated intermediate builds.
 
+The benchmark sentinels are sampled at the beginning of **every image load**.
+They are not cached for the lifetime of the image-decoder overlay. Removing
+`.rockbox/jpegbench.reference` therefore takes effect on the next image even if
+Rockbox keeps the decoder overlay resident.
+
 ## Pass 1: reference
 
 1. Generate the corpus once on the computer:
@@ -43,5 +48,6 @@ The checker requires both modes for every file. It verifies:
 - the screen-sized case reports useful timing rather than only parser overhead;
 - the solid-color case proves the DC-only shortcut was actually exercised.
 
-Delete both sentinel files afterward. Normal image viewing then performs no CRC
-work and writes no log file.
+Delete both sentinel files afterward. Because the sentinels are refreshed on
+every image load, normal image viewing stops CRC work and log writes on the next
+image without requiring a reboot.
