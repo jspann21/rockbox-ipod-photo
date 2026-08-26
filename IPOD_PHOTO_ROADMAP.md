@@ -43,6 +43,12 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       default while retaining the gradient option; suppress clean WPS/status
       viewport transfers; clip Color LCD rectangles; and bound LCD-controller
       waits.
+- [x] **Native Photo theme and dynamic colors:** adapt the Rockpod/Themify menu,
+      browser, and WPS to 220x176 with Photo-sized fonts, a first-class Cover
+      Flow entry, live list styling, rounded masked artwork, and accurate
+      battery/charging states. Add configurable album-art-derived colors,
+      enabled by default on `ipodcolor`, with cached extraction on artwork
+      changes, contrast enforcement, theme fallbacks, and 250 ms transitions.
 - [x] **ATA correctness and recovery:** validate transfer ranges, retry setup,
       IDENTIFY capacity, logical-sector geometry, LBA48 capabilities, and adapter
       replies; stop when reset recovery fails; detect and propagate flush and
@@ -68,7 +74,9 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       transfer sizes, controller descriptors, SMART results, command wrappers,
       command completions, and device geometry; propagate controller transfer
       errors; bound and retry PP502x controller resets; and harden reconnect and
-      media-removal handling.
+      media-removal handling; show "Safe to disconnect" after every exposed LUN
+      is ejected; and reboot `ipodcolor` cleanly to apply firmware copied over
+      USB instead of relying on the unreliable post-USB ROLO handoff.
 - [x] **Database build performance:** buffer initial records, generated indexes,
       and native-endian master-index writes; batch master-index and tag updates;
       bulk-load RAM indexes; reuse filename references and measured metadata
@@ -128,14 +136,16 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       provisional PP5020 forced-normal-IRQ consumer is
       disabled after it prevented the installed A1099 from reaching Rockbox;
       PCM track changes retain the existing polling consumer, with transition
-      latency measured at that safe consumer rather than through a forced IRQ.
+      latency measured at that safe consumer rather than through a forced IRQ;
+      compile the hardware-only telemetry out of simulator builds.
 - [x] **PMU, battery, and I2C robustness:** preserve the last valid ADC value
       after I2C failure; allow realistic modern replacement-battery capacities
       without changing voltage calibration; propagate I2C/RTC failures; validate
       ADC/RTC writes and battery interpolation intervals; recover the PP5020 I2C
       controller after timeouts; reduce PMU polling to 1 Hz while retaining
-      faster accessory detection; and include temporary backlight use in runtime
-      estimates.
+      faster accessory detection; include temporary backlight use in runtime
+      estimates; and allow shutdown on external or charge-only power without an
+      immediate charger-triggered wake.
 - [x] **Development baseline:** base development directly on official Rockbox
       history and retain target-specific changes behind explicit configuration
       guards.
@@ -178,12 +188,12 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       including spacing and visible-slide count; begin with the current 64-entry
       cache and increase it only if testing shows a benefit without harmful RAM
       or disk I/O, and do not copy 320x240 layouts or theme-specific font offsets.
-- [ ] Add optional album-art-derived dynamic colors, disabled by default: use
-      Rockbox's `RGB_UNPACK_*` helpers for the Photo's byte-swapped RGB565
-      framebuffer; extract and cache colors only when artwork changes; never
-      build a histogram per frame; limit fade redraws to roughly 15-20 fps; and
-      check contrast and flicker across WPS, menus, lists, hidden viewports,
-      theme changes, missing artwork, and track transitions.
+- [x] Add the shared, configurable album-art color engine and apply its semantic
+      foreground, background, selector, separator, and muted-surface colors to
+      WPS, menus, and lists without per-frame histogram work.
+- [ ] Qualify dynamic-color contrast, flicker, redraw cost, missing-art fallback,
+      theme changes, and track transitions on the installed Photo; tune the
+      enabled-by-default policy or fade cadence if hardware results require it.
 - [ ] After the shared dynamic-color engine is stable on the Photo, make
       PictureFlow background, edge, and text colors theme-aware; add text
       crossfading and configurable transition speed; and evaluate Bayer
@@ -194,8 +204,9 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 
 ## Power, USB, and accessories
 
-- [ ] Establish replacement-battery runtime and check charging, suspend, resume,
-      and shutdown after the hardware upgrade and related power changes.
+- [ ] Establish replacement-battery runtime and qualify charging, charge-only
+      shutdown without immediate wake, suspend, resume, and unplug/restart
+      behavior after the hardware upgrade and related power changes.
 - [ ] Exercise serial remotes, docks, and car accessories against the iAP fixes.
 - [ ] Leave USB digital audio and bootloader changes as later research work.
 
@@ -220,7 +231,9 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
 - [ ] Smoke-test playback, wheel, hold, shutdown, suspend/resume, and USB after
       the latest kernel, power, LCD, and ATA batch; test each changed behavior
       directly and use a broader pass for storage, power, USB, or other
-      hardware-sensitive changes.
+      hardware-sensitive changes. Include the native theme and dynamic colors,
+      charging states, safe-eject screen, charge-only shutdown, and post-USB
+      firmware-update reboot added through `36933513fe`.
 - [x] Complete the first installed storage/USB integrity pass on build
       `3be5cd9121`: a deterministic 256 MiB file matched SHA-256 on the host,
       iPod, and readback. Across 49,414 DMA requests and 411,737,088 bytes, the
