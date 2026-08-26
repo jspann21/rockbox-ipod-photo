@@ -94,7 +94,8 @@ struct imgdec_api {
     bool slideshow_enabled;   /* run slideshow */
     bool running_slideshow;   /* loading image because of slideshw */
 
-    /* One-shot handoff for a decoder that has already updated the panel. */
+    /* One-shot handoff for a decoder that has already rendered the frame. */
+    bool skip_next_clear;
     bool skip_next_update;
 
 #ifdef DISK_SPINDOWN
@@ -141,7 +142,7 @@ struct image_decoder {
                             int x, int y, int width, int height);
 };
 
-#define IMGDEC_API_VERSION 2
+#define IMGDEC_API_VERSION 3
 
 /* image decoder header */
 struct imgdec_header {
@@ -161,6 +162,12 @@ extern const struct image_decoder image_decoder;
 #ifdef HAVE_LCD_COLOR
 static inline void imgdec_skip_next_lcd_update(void)
 {
+    iv->skip_next_update = true;
+}
+
+static inline void imgdec_handoff_rendered_frame(void)
+{
+    iv->skip_next_clear = true;
     iv->skip_next_update = true;
 }
 #endif
@@ -188,6 +195,14 @@ static inline void imgdec_skip_next_lcd_update(void)
 #endif
 
 #if !defined(IMGDEC) && LCD_DEPTH >= 4
+#undef mylcd_ub_clear_display
+#define mylcd_ub_clear_display() do { \
+    if (iv_api.skip_next_clear) \
+        iv_api.skip_next_clear = false; \
+    else \
+        rb->lcd_clear_display(); \
+} while (0)
+
 #undef mylcd_ub_update
 #define mylcd_ub_update() do { \
     if (iv_api.skip_next_update) \
