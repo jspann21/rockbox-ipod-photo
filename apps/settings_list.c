@@ -342,9 +342,7 @@ static const char graphic_numeric[] = "graphic,numeric";
 #define DEFAULT_FMS_NAME "cabbiev2"
 
 #ifdef IPOD_COLOR
-  /* Condensed glyphs stay legible while preserving useful browser width. */
-  #define DEFAULT_FONT_HEIGHT 13
-  #define DEFAULT_FONTNAME "13-Fixed-SemiCond"
+  #define DEFAULT_FONT_HEIGHT 12
 #elif LCD_HEIGHT <= 64
   #define DEFAULT_FONT_HEIGHT 8
   #define DEFAULT_FONTNAME "08-Rockfont"
