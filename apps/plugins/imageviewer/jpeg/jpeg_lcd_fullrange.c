@@ -199,7 +199,10 @@ bool jpeg_lcd_blit_yuv420_fullrange(unsigned char * const src[3],
 
     vp_main = *(rb->screens[SCREEN_MAIN]->current_viewport);
     if (vp_main == NULL || vp_main->buffer == NULL ||
-        vp_main->buffer->fb_ptr == NULL)
+        vp_main->buffer->fb_ptr == NULL ||
+        vp_main->x != 0 || vp_main->y != 0 ||
+        vp_main->width != LCD_WIDTH || vp_main->height != LCD_HEIGHT ||
+        vp_main->buffer->stride != LCD_WIDTH)
         return false;
     fb_dst = vp_main->buffer->fb_ptr + y * LCD_WIDTH + x;
 
