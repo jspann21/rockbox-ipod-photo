@@ -106,6 +106,7 @@ struct gui_img {
     bool using_preloaded_icons; /* using the icon system instead of a bmp */
     bool is_9_segment;
     bool dither;
+    bool is_mask;           /* draw a monochrome bitmap with transparent zero bits */
 };
 
 struct image_display {

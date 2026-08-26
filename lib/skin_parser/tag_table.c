@@ -62,7 +62,7 @@ static const struct tag_info legal_tags[] =
     TAG(SKIN_TOKEN_FILE_VBR,              "Fv", "", SKIN_REFRESH_STATIC),
     TAG(SKIN_TOKEN_FILE_DIRECTORY,        "D"  , "I", SKIN_REFRESH_STATIC),
 
-    TAG(SKIN_TOKEN_IMAGE_PRELOAD,         "xl", "SF|[IP][IP]I", 0|NOBREAK),
+    TAG(SKIN_TOKEN_IMAGE_PRELOAD,         "xl", "SF|[IP][IP]I[S]", 0|NOBREAK),
     TAG(SKIN_TOKEN_IMAGE_PRELOAD_DISPLAY, "xd", "S|[IT]I", 0),
     TAG(SKIN_TOKEN_IMAGE_BACKDROP,        "X"  , "f", SKIN_REFRESH_STATIC|NOBREAK),
     TAG(SKIN_TOKEN_IMAGE_DISPLAY,         "x", "SF|II", SKIN_REFRESH_STATIC|NOBREAK),

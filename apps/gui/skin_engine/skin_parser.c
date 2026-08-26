@@ -474,6 +474,8 @@ static int parse_image_load(struct skin_element *element,
     img->is_9_segment = false;
     img->loaded = false;
     img->dither = false;
+    img->is_mask = element->params_count > 5 &&
+                   !strcasecmp(get_param_text(element, 5), "mask");
 
     if (token->type == SKIN_TOKEN_IMAGE_DISPLAY)
     {

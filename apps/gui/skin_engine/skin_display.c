@@ -407,13 +407,15 @@ void wps_draw_image(struct gui_wps *gwps, struct gui_img *img,
 {
     struct screen *display = gwps->display;
     img->bm.data = core_get_data(img->buflib_handle);
-    display->set_drawmode(DRMODE_SOLID);
+    display->set_drawmode(img->is_mask ? DRMODE_FG : DRMODE_SOLID);
 
     if (img->is_9_segment)
         display->nine_segment_bmp(&img->bm, 0, 0, vp->width, vp->height);
     else
         display->bmp_part(&img->bm, 0, img->subimage_height * subimage,
                           img->x, img->y, img->bm.width, img->subimage_height);
+
+    display->set_drawmode(DRMODE_SOLID);
 }
 
 void wps_display_images(struct gui_wps *gwps, struct viewport* vp)
