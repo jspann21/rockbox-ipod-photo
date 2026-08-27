@@ -2,6 +2,9 @@
                 bs.next_input_byte <= bs.input_end; y++)
     {
 #ifdef HAVE_LCD_COLOR
+        int row_ac_blocks = 0;
+        bool cop_row = jpeg_cop_row_active();
+
         for (i = 0; i < 3; i++)
         {
             p_strip[i] = p_line[i];
@@ -88,6 +91,11 @@
                 if (!output_block)
                     continue;
 
+#ifdef HAVE_LCD_COLOR
+                if (required_ac_nonzero)
+                    row_ac_blocks++;
+#endif
+
                 {
                     unsigned char *dst;
 #ifdef HAVE_LCD_COLOR
@@ -95,6 +103,22 @@
                         store_offs[p_jpeg->mcu_block_pos[blkn]] : p_byte[ci];
 #else
                     dst = p_byte[0] + store_offs[blkn];
+#endif
+#ifdef HAVE_LCD_COLOR
+                    if (cop_row)
+                    {
+                        bool end_of_row =
+                            x == p_jpeg->x_mbl - 1 &&
+                            blkn == p_jpeg->blocks - 1;
+
+                        if (!jpeg_cop_submit(dst, block,
+                                             p_jpeg->qt_idct[ti],
+                                             skip_line[ci],
+                                             !required_ac_nonzero,
+                                             end_of_row))
+                            return JPEG_DECODE_COP_ERROR;
+                    }
+                    else
 #endif
                     if (!required_ac_nonzero)
                     {
@@ -124,6 +148,9 @@
         }
 
 #ifdef HAVE_LCD_COLOR
+        if (cop_row && !jpeg_cop_drain())
+            return JPEG_DECODE_COP_ERROR;
+
         if (jpeg_mcu_row_cb != NULL)
         {
             int row_y = y * strip_height;
@@ -133,6 +160,13 @@
                 jpeg_mcu_row_cb(p_strip, row_y, row_height, skip_line[0],
                                 jpeg_mcu_row_cb_data);
         }
+
+        /* The first row is decoded on the CPU and acts as a content probe.
+           Start the COP only when the image has enough real AC work to
+           amortize thread and cache-maintenance overhead. */
+        if (y == 0)
+            jpeg_cop_consider_probe(row_ac_blocks,
+                                    p_jpeg->x_mbl * p_jpeg->blocks);
 
         if (jpeg_mcu_row_reuse)
         {

@@ -43,6 +43,9 @@ void jpeg_decode_set_mcu_row_reuse(bool reuse)
 #if defined(IPOD_COLOR) && defined(CPU_ARM)
 #include "jpeg_decoder_idct_arm.inc"
 #endif
+#ifdef HAVE_LCD_COLOR
+#include "jpeg_decoder_cop.inc"
+#endif
 #include "jpeg_decoder_decode_setup.inc"
 #include "jpeg_decoder_decode_loop.inc"
 #include "jpeg_decoder_dispatch.inc"

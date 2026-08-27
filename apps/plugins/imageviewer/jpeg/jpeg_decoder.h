@@ -1,5 +1,5 @@
 /***************************************************************************
-*             __________               __   ___.
+*             __________               __   ___
 *   Open      \______   \ ____   ____ |  | _\_ |__   _______  ___
 *   Source     |       _//  _ \_/ ___\|  |/ /| __ \ /  _ \  \/  /
 *   Jukebox    |    |   (  <_> )  \___|    < | \_\ (  <_> > <  <
@@ -81,12 +81,31 @@ typedef void (*jpeg_mcu_row_callback)(unsigned char * const row[3],
                                       int y, int height, int stride,
                                       void *user);
 
+struct jpeg_cop_stats
+{
+    uint32_t jobs;
+    uint32_t blocks;
+    uint32_t dc_blocks;
+    uint32_t row_commits;
+    uint32_t wait_us;
+    int probe_ac_blocks;
+    int probe_blocks;
+    bool selected;
+    bool start_failed;
+    bool failed;
+};
+
 void jpeg_decode_set_mcu_row_callback(jpeg_mcu_row_callback callback,
                                       void *user);
 
 /* Reuse the supplied output planes after every completed MCU row. The caller
  * must consume the row synchronously from jpeg_mcu_row_callback. */
 void jpeg_decode_set_mcu_row_reuse(bool reuse);
+
+/* Prepare and terminate the optional CPU/COP block pipeline. Entropy decode
+ * remains on the CPU; the COP receives bounded IDCT/output batches only. */
+void jpeg_decode_cop_prepare(bool enable, int downscale);
+void jpeg_decode_cop_finish(struct jpeg_cop_stats *stats);
 
 int jpeg_decode(struct jpeg* p_jpeg, unsigned char* p_pixel[3],
                 int downscale, void (*pf_progress)(int current, int total));
