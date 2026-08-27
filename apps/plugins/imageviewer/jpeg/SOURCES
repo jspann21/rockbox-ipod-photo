@@ -1,6 +1,6 @@
 jpeg_accel.c
 jpeg_decoder_accel.c
-jpeg_exif.c
+jpeg_exif_preview.c
 #ifdef HAVE_LCD_COLOR
 yuv2rgb_accel.c
 #endif
