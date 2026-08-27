@@ -2,8 +2,8 @@
  * JPEG imageviewer integration for the iPod Photo acceleration path.
  *
  * The original jpeg.c remains unchanged and is included with its public
- * entry points renamed. This file adds an opportunistic screen-sized RGB565
- * cache plus the iPod Color full-range direct LCD path.
+ * entry points renamed. This file adds fit-to-screen RGB565 caching, direct
+ * full-range LCD output, and MCU-row streaming for exact-screen JPEGs.
  ****************************************************************************/
 
 #include "plugin.h"
@@ -118,6 +118,53 @@ static bool jpeg_prepare_cache(const struct image_info *info,
 }
 #endif
 
+#if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR)
+struct jpeg_stream_state
+{
+    bool active;
+    bool ok;
+    bool frame_pending;
+    int strips;
+};
+
+static struct jpeg_stream_state jpeg_stream;
+
+static bool jpeg_stream_eligible(const struct image_info *info, int ds,
+                                 bool already_decoded)
+{
+    return !already_decoded && ds == 1 &&
+        (iv->settings->hide_info || iv->running_slideshow) &&
+        iv->settings->jpeg_colour_mode == COLOURMODE_COLOUR &&
+        iv->settings->jpeg_dither_mode == DITHER_NONE &&
+        info->x_size == LCD_WIDTH && info->y_size == LCD_HEIGHT &&
+        jpg.components == 3 && jpg.blocks > 1 &&
+        jpg.x_phys >= LCD_WIDTH && jpg.y_phys >= LCD_HEIGHT &&
+        jpg.y_mbl > 0 &&
+        jpg.subsample_x[0] == 1 && jpg.subsample_y[0] == 1 &&
+        jpg.subsample_x[1] == 2 && jpg.subsample_y[1] == 2 &&
+        jpg.subsample_x[2] == 2 && jpg.subsample_y[2] == 2;
+}
+
+static void jpeg_stream_mcu_row(unsigned char * const row[3],
+                                int y, int height, int stride, void *user)
+{
+    struct jpeg_stream_state *state =
+        (struct jpeg_stream_state *)user;
+
+    (void)y;
+    if (!state->ok)
+        return;
+
+    if (!jpeg_lcd_stream_write_yuv420(row, stride, height))
+    {
+        state->ok = false;
+        return;
+    }
+
+    state->strips++;
+}
+#endif
+
 static int load_image(char *filename, struct image_info *info,
                       unsigned char *buf, ssize_t *buf_size,
                       int offset, int filesize)
@@ -126,7 +173,13 @@ static int load_image(char *filename, struct image_info *info,
 
 #ifdef HAVE_LCD_COLOR
     jpeg_cache_clear();
+    iv->skip_next_clear = false;
     iv->skip_next_update = false;
+#endif
+#if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR)
+    jpeg_decode_set_mcu_row_callback(NULL, NULL);
+    jpeg_lcd_stream_abort();
+    rb->memset(&jpeg_stream, 0, sizeof(jpeg_stream));
 #endif
 
     status = jpeg_legacy_load_image(filename, info, buf, buf_size,
@@ -156,12 +209,53 @@ static int get_image(struct image_info *info, int frame, int ds)
         jpeg_cache_clear();
 #endif
 
+#if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR)
+    jpeg_stream.active = false;
+    jpeg_stream.ok = false;
+    jpeg_stream.frame_pending = false;
+    jpeg_stream.strips = 0;
+
+    if (jpeg_stream_eligible(info, ds, already_decoded) &&
+        jpeg_lcd_stream_begin(0, 0, LCD_WIDTH, LCD_HEIGHT))
+    {
+        jpeg_stream.active = true;
+        jpeg_stream.ok = true;
+        jpeg_decode_set_mcu_row_callback(jpeg_stream_mcu_row, &jpeg_stream);
+    }
+#endif
+
     status = jpeg_legacy_get_image(info, frame, ds);
+
+#if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR)
+    jpeg_decode_set_mcu_row_callback(NULL, NULL);
+
+    if (jpeg_stream.active)
+    {
+        bool complete = status == PLUGIN_OK && jpeg_stream.ok &&
+                        jpeg_stream.strips == jpg.y_mbl &&
+                        jpeg_lcd_stream_end();
+
+        if (!complete)
+            jpeg_lcd_stream_abort();
+
+        jpeg_stream.active = false;
+        jpeg_stream.ok = complete;
+    }
+#endif
+
     if (status != PLUGIN_OK)
         return status;
 
 #ifdef HAVE_LCD_COLOR
     jpeg_allocate_cache(info, ds);
+#endif
+
+#if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR)
+    if (jpeg_stream.ok)
+    {
+        jpeg_stream.frame_pending = true;
+        imgdec_handoff_rendered_frame();
+    }
 #endif
     return PLUGIN_OK;
 }
@@ -180,6 +274,15 @@ static void draw_image_rect(struct image_info *info,
         iv->settings->jpeg_dither_mode == DITHER_NONE;
 
 #if defined(IPOD_COLOR)
+    if (jpeg_stream.frame_pending &&
+        info->width == LCD_WIDTH && info->height == LCD_HEIGHT &&
+        info->x == 0 && info->y == 0 &&
+        x == 0 && y == 0 && width == LCD_WIDTH && height == LCD_HEIGHT)
+    {
+        jpeg_stream.frame_pending = false;
+        return;
+    }
+
     if (colour_fast &&
         pdisp->csub_x == 2 && pdisp->csub_y == 2 &&
         info->width == LCD_WIDTH && info->height == LCD_HEIGHT &&

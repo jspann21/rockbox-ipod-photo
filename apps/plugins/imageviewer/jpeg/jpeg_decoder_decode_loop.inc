@@ -9,7 +9,6 @@
             p_line[i] += skip_strip[i];
         }
 #else
-        p_strip[0] = p_line[0];
         p_byte[0] = p_line[0];
         p_line[0] += skip_strip[0];
 #endif
