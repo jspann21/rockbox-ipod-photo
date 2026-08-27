@@ -1,6 +1,6 @@
-jpegp.c
+jpegp_accel.c
 //FILEGETC.c
 BUFFILEGETC.c
-jpeg81.c
+jpeg81_accel.c
 idct.c
 mempool.c
