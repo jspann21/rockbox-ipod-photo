@@ -5,13 +5,18 @@ static int jpeg_decode_accel(struct jpeg *p_jpeg, unsigned char **p_pixel,
     struct bitstream bs;
     int block[64];
     int width, height;
-    int strip_height, visible_height;
+    int strip_height;
+#ifdef HAVE_LCD_COLOR
+    int visible_height;
+#endif
     int skip_line[3] = {0, 0, 0};
     int skip_strip[3] = {0, 0, 0};
     int skip_mcu[3] = {0, 0, 0};
     unsigned char *p_line[3] = {p_pixel[0], NULL, NULL};
     unsigned char *p_byte[3] = {NULL, NULL, NULL};
+#ifdef HAVE_LCD_COLOR
     unsigned char *p_strip[3] = {NULL, NULL, NULL};
+#endif
     void (*pf_idct)(unsigned char*, int*, int*, int);
     int k_need, zero_need;
     int last_dc_val[3] = {0, 0, 0};
@@ -69,7 +74,9 @@ static int jpeg_decode_accel(struct jpeg *p_jpeg, unsigned char **p_pixel,
     width = p_jpeg->x_phys / downscale;
     height = p_jpeg->y_phys / downscale;
     strip_height = height / p_jpeg->y_mbl;
+#ifdef HAVE_LCD_COLOR
     visible_height = p_jpeg->y_size / downscale;
+#endif
 
 #ifdef HAVE_LCD_COLOR
     p_line[1] = p_pixel[1];
