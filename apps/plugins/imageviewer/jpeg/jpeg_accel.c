@@ -3,7 +3,7 @@
  *
  * The original jpeg.c remains unchanged and is included with its public
  * entry points renamed. This file adds fit-to-screen RGB565 caching, direct
- * full-range LCD output, and MCU-row streaming for exact-screen JPEGs.
+ * full-range LCD output, and reusable MCU-row decoding for exact-screen JPEGs.
  ****************************************************************************/
 
 #include "plugin.h"
@@ -119,50 +119,8 @@ static bool jpeg_prepare_cache(const struct image_info *info,
 #endif
 
 #if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR)
-struct jpeg_stream_state
-{
-    bool active;
-    bool ok;
-    bool frame_pending;
-    int strips;
-};
-
-static struct jpeg_stream_state jpeg_stream;
-
-static bool jpeg_stream_eligible(const struct image_info *info, int ds,
-                                 bool already_decoded)
-{
-    return !already_decoded && ds == 1 &&
-        (iv->settings->hide_info || iv->running_slideshow) &&
-        iv->settings->jpeg_colour_mode == COLOURMODE_COLOUR &&
-        iv->settings->jpeg_dither_mode == DITHER_NONE &&
-        info->x_size == LCD_WIDTH && info->y_size == LCD_HEIGHT &&
-        jpg.components == 3 && jpg.blocks > 1 &&
-        jpg.x_phys >= LCD_WIDTH && jpg.y_phys >= LCD_HEIGHT &&
-        jpg.y_mbl > 0 &&
-        jpg.subsample_x[0] == 1 && jpg.subsample_y[0] == 1 &&
-        jpg.subsample_x[1] == 2 && jpg.subsample_y[1] == 2 &&
-        jpg.subsample_x[2] == 2 && jpg.subsample_y[2] == 2;
-}
-
-static void jpeg_stream_mcu_row(unsigned char * const row[3],
-                                int y, int height, int stride, void *user)
-{
-    struct jpeg_stream_state *state =
-        (struct jpeg_stream_state *)user;
-
-    (void)y;
-    if (!state->ok)
-        return;
-
-    if (!jpeg_lcd_stream_write_yuv420(row, stride, height))
-    {
-        state->ok = false;
-        return;
-    }
-
-    state->strips++;
-}
+#include "jpeg_strip_memory_state.inc"
+#include "jpeg_strip_memory_decode.inc"
 #endif
 
 static int load_image(char *filename, struct image_info *info,
@@ -178,8 +136,9 @@ static int load_image(char *filename, struct image_info *info,
 #endif
 #if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR)
     jpeg_decode_set_mcu_row_callback(NULL, NULL);
+    jpeg_decode_set_mcu_row_reuse(false);
     jpeg_lcd_stream_abort();
-    rb->memset(&jpeg_stream, 0, sizeof(jpeg_stream));
+    jpeg_strip_reset();
 #endif
 
     status = jpeg_legacy_load_image(filename, info, buf, buf_size,
@@ -205,57 +164,45 @@ static int get_image(struct image_info *info, int frame, int ds)
 
 #ifdef HAVE_LCD_COLOR
     already_decoded = disp[ds].bitmap[0] != NULL;
+#endif
+
+#if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR)
+    if (ds == 1 && jpeg_strip.decoded && rgb_cache[1].valid)
+    {
+        info->width = LCD_WIDTH;
+        info->height = LCD_HEIGHT;
+        info->data = &disp[1];
+        return PLUGIN_OK;
+    }
+
+    if (jpeg_stream_eligible(info, ds, already_decoded))
+    {
+        status = jpeg_stream_get_image(info, frame, ds);
+        if (status == PLUGIN_OUTOFMEM)
+        {
+            jpeg_reset_decoded_pool();
+            status = jpeg_stream_get_image(info, frame, ds);
+        }
+
+        if (status == PLUGIN_OK)
+            return PLUGIN_OK;
+
+        jpeg_reset_decoded_pool();
+        already_decoded = false;
+    }
+#endif
+
+#ifdef HAVE_LCD_COLOR
     if (!already_decoded && buf_images_size <= img_mem(ds))
         jpeg_cache_clear();
 #endif
 
-#if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR)
-    jpeg_stream.active = false;
-    jpeg_stream.ok = false;
-    jpeg_stream.frame_pending = false;
-    jpeg_stream.strips = 0;
-
-    if (jpeg_stream_eligible(info, ds, already_decoded) &&
-        jpeg_lcd_stream_begin(0, 0, LCD_WIDTH, LCD_HEIGHT))
-    {
-        jpeg_stream.active = true;
-        jpeg_stream.ok = true;
-        jpeg_decode_set_mcu_row_callback(jpeg_stream_mcu_row, &jpeg_stream);
-    }
-#endif
-
     status = jpeg_legacy_get_image(info, frame, ds);
-
-#if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR)
-    jpeg_decode_set_mcu_row_callback(NULL, NULL);
-
-    if (jpeg_stream.active)
-    {
-        bool complete = status == PLUGIN_OK && jpeg_stream.ok &&
-                        jpeg_stream.strips == jpg.y_mbl &&
-                        jpeg_lcd_stream_end();
-
-        if (!complete)
-            jpeg_lcd_stream_abort();
-
-        jpeg_stream.active = false;
-        jpeg_stream.ok = complete;
-    }
-#endif
-
     if (status != PLUGIN_OK)
         return status;
 
 #ifdef HAVE_LCD_COLOR
     jpeg_allocate_cache(info, ds);
-#endif
-
-#if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR)
-    if (jpeg_stream.ok)
-    {
-        jpeg_stream.frame_pending = true;
-        imgdec_handoff_rendered_frame();
-    }
 #endif
     return PLUGIN_OK;
 }
@@ -274,13 +221,37 @@ static void draw_image_rect(struct image_info *info,
         iv->settings->jpeg_dither_mode == DITHER_NONE;
 
 #if defined(IPOD_COLOR)
-    if (jpeg_stream.frame_pending &&
-        info->width == LCD_WIDTH && info->height == LCD_HEIGHT &&
-        info->x == 0 && info->y == 0 &&
-        x == 0 && y == 0 && width == LCD_WIDTH && height == LCD_HEIGHT)
+    if (jpeg_strip.frame_pending)
     {
-        jpeg_stream.frame_pending = false;
-        return;
+        bool exact_frame =
+            info->width == LCD_WIDTH && info->height == LCD_HEIGHT &&
+            info->x == 0 && info->y == 0 &&
+            x == 0 && y == 0 && width == LCD_WIDTH && height == LCD_HEIGHT;
+
+        jpeg_strip.frame_pending = false;
+        if (exact_frame)
+            return;
+
+        iv->skip_next_update = false;
+        rb->lcd_clear_display();
+    }
+
+    if (jpeg_strip.decoded && jpeg_strip.strip_only && ds == 1)
+    {
+        if (colour_fast && cache != NULL && cache->valid)
+        {
+            rb->lcd_bitmap_part(cache->pixels,
+                                info->x + x, info->y + y,
+                                cache->stride,
+                                dst_x, dst_y, width, height);
+            return;
+        }
+
+        if (!jpeg_materialize_planar(info, ds))
+            return;
+
+        pdisp = (struct t_disp *)info->data;
+        cache = &rgb_cache[ds];
     }
 
     if (colour_fast &&
