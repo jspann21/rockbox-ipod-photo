@@ -189,6 +189,30 @@ static bool jpeg_lcd_write_two_lines(unsigned char const * const src[3],
     return true;
 }
 
+static bool jpeg_lcd_write_rgb565_line(const fb_data *src, int width,
+                                       fb_data *dst)
+{
+    int col;
+
+    for (col = 0; col < width; col += 2)
+    {
+        fb_data first = src[col];
+        fb_data second = src[col + 1];
+        uint32_t packed;
+
+        dst[col] = first;
+        dst[col + 1] = second;
+        packed = (uint16_t)first |
+                 ((uint32_t)(uint16_t)second << 16);
+
+        if (!jpeg_lcd_wait_block(LCD2_BLOCK_TXOK))
+            return false;
+        LCD2_BLOCK_DATA = packed;
+    }
+
+    return true;
+}
+
 static bool jpeg_lcd_stream_start_block(void)
 {
     int rows = jpeg_lcd_stream.remaining_rows;
@@ -301,6 +325,50 @@ bool jpeg_lcd_stream_write_yuv420(unsigned char * const src[3],
         jpeg_lcd_stream.remaining_rows -= 2;
         jpeg_lcd_stream.block_rows -= 2;
         rows -= 2;
+
+        if (jpeg_lcd_stream.block_rows == 0)
+        {
+            if (!jpeg_lcd_stream_finish_block())
+            {
+                jpeg_lcd_stream_abort();
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool jpeg_lcd_stream_write_rgb565(const fb_data *src, int stride, int rows)
+{
+    if (!jpeg_lcd_stream.active || src == NULL ||
+        stride < jpeg_lcd_stream.width ||
+        rows <= 0 || rows > jpeg_lcd_stream.remaining_rows)
+        return false;
+
+    while (rows > 0)
+    {
+        if (jpeg_lcd_stream.block_rows == 0)
+        {
+            if (!jpeg_lcd_stream_start_block())
+            {
+                jpeg_lcd_stream_abort();
+                return false;
+            }
+        }
+
+        if (!jpeg_lcd_write_rgb565_line(src, jpeg_lcd_stream.width,
+                                        jpeg_lcd_stream.fb_dst))
+        {
+            jpeg_lcd_stream_abort();
+            return false;
+        }
+
+        src += stride;
+        jpeg_lcd_stream.fb_dst += jpeg_lcd_stream.fb_stride;
+        jpeg_lcd_stream.remaining_rows--;
+        jpeg_lcd_stream.block_rows--;
+        rows--;
 
         if (jpeg_lcd_stream.block_rows == 0)
         {

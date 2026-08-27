@@ -84,6 +84,10 @@ typedef void (*jpeg_mcu_row_callback)(unsigned char * const row[3],
 void jpeg_decode_set_mcu_row_callback(jpeg_mcu_row_callback callback,
                                       void *user);
 
+/* Reuse the supplied output planes after every completed MCU row. The caller
+ * must consume the row synchronously from jpeg_mcu_row_callback. */
+void jpeg_decode_set_mcu_row_reuse(bool reuse);
+
 int jpeg_decode(struct jpeg* p_jpeg, unsigned char* p_pixel[3],
                 int downscale, void (*pf_progress)(int current, int total));
 #else
