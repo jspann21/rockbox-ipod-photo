@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Validate the one-build JPEG MCU-row LCD streaming hardware log."""
+from __future__ import annotations
+
+import argparse
+import csv
+from pathlib import Path
+
+REQUIRED = {
+    "screen_220x176.jpg",
+    "dc_solid_220x176.jpg",
+}
+
+
+def as_int(row: dict[str, str], field: str) -> int:
+    try:
+        return int(row[field])
+    except (KeyError, ValueError) as exc:
+        raise SystemExit(f"invalid {field!r} in row: {row}") from exc
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("csv", type=Path)
+    args = parser.parse_args()
+
+    with args.csv.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+
+    latest = {(row["mode"], row["file"]): row for row in rows}
+    missing = [
+        f"{mode}:{name}"
+        for mode in ("reference", "accelerated")
+        for name in sorted(REQUIRED)
+        if (mode, name) not in latest
+    ]
+    if missing:
+        raise SystemExit("missing rows: " + ", ".join(missing))
+
+    summaries: list[str] = []
+    for name in sorted(REQUIRED):
+        reference = latest[("reference", name)]
+        accelerated = latest[("accelerated", name)]
+
+        for row in (reference, accelerated):
+            if as_int(row, "width") != 220 or as_int(row, "height") != 176:
+                raise SystemExit(f"{name}: unexpected dimensions")
+
+        for field in ("yuv_crc", "fb_crc"):
+            ref_crc = reference[field].lower()
+            acc_crc = accelerated[field].lower()
+            if ref_crc == "00000000" or acc_crc == "00000000":
+                raise SystemExit(f"{name}: invalid zero {field}")
+            if ref_crc != acc_crc:
+                raise SystemExit(
+                    f"{name}: {field} mismatch {ref_crc} != {acc_crc}"
+                )
+
+        if as_int(reference, "streamed") != 0:
+            raise SystemExit(f"{name}: reference pass unexpectedly streamed")
+        if as_int(reference, "strips") != 0:
+            raise SystemExit(f"{name}: reference pass reported MCU strips")
+        if as_int(accelerated, "streamed") != 1:
+            raise SystemExit(f"{name}: accelerated pass did not stream")
+        if as_int(accelerated, "strips") != 11:
+            raise SystemExit(
+                f"{name}: expected 11 MCU rows, got {accelerated['strips']}"
+            )
+
+        ref_total = as_int(reference, "total_us")
+        ref_decode = as_int(reference, "decode_us")
+        ref_display = as_int(reference, "display_us")
+        total = as_int(accelerated, "total_us")
+        decode = as_int(accelerated, "decode_us")
+        display = as_int(accelerated, "display_us")
+        first = as_int(accelerated, "first_strip_us")
+
+        if ref_total <= 0 or ref_display <= 0 or \
+           ref_total != ref_decode + ref_display:
+            raise SystemExit(f"{name}: inconsistent reference timing")
+        if total <= 0 or decode != total or display <= 0 or display > total:
+            raise SystemExit(f"{name}: inconsistent streamed timing")
+
+        # The fallback timer advances only once per scheduler tick. A very
+        # cheap DC-only first row may therefore legitimately be recorded as 0.
+        if first < 0 or first >= total:
+            raise SystemExit(
+                f"{name}: invalid first-strip/total timing {first}/{total}"
+            )
+
+        change = 100.0 * (ref_total - total) / ref_total
+        first_text = "< timer resolution" if first == 0 else f"{first} us"
+        summaries.append(
+            f"{name}: total {ref_total} -> {total} us ({change:+.1f}%), "
+            f"first completed strip {first_text}, LCD writes {display} us"
+        )
+
+    print("JPEG MCU-row LCD streaming validation passed")
+    for summary in summaries:
+        print(summary)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
