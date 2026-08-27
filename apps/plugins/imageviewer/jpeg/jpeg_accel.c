@@ -138,7 +138,7 @@ static int load_image(char *filename, struct image_info *info,
     jpeg_decode_set_mcu_row_callback(NULL, NULL);
     jpeg_decode_set_mcu_row_reuse(false);
     jpeg_lcd_stream_abort();
-    jpeg_strip_reset(filename);
+    jpeg_strip_reset();
 #endif
 
     status = jpeg_legacy_load_image(filename, info, buf, buf_size,
@@ -177,13 +177,11 @@ static int get_image(struct image_info *info, int frame, int ds)
 
     if (jpeg_stream_eligible(info, ds, already_decoded))
     {
-        bool strip_only = !jpeg_strip.test_reference;
-
-        status = jpeg_stream_get_image(info, frame, ds, strip_only);
+        status = jpeg_stream_get_image(info, frame, ds);
         if (status == PLUGIN_OUTOFMEM)
         {
             jpeg_reset_decoded_pool();
-            status = jpeg_stream_get_image(info, frame, ds, strip_only);
+            status = jpeg_stream_get_image(info, frame, ds);
         }
 
         if (status == PLUGIN_OK)
