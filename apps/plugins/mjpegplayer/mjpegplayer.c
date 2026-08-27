@@ -11,8 +11,6 @@
 #include "../imageviewer/jpeg/jpeg_decoder.h"
 #include "../imageviewer/jpeg/yuv2rgb.h"
 
-PLUGIN_HEADER
-
 /* Reuse the validated JPEG parser/decoder and RGB565 converter in this plugin. */
 #include "../imageviewer/jpeg/jpeg_decoder_accel.c"
 #include "../imageviewer/jpeg/yuv2rgb_accel.c"
