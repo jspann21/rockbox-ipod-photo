@@ -133,6 +133,13 @@
                 jpeg_mcu_row_cb(p_strip, row_y, row_height, skip_line[0],
                                 jpeg_mcu_row_cb_data);
         }
+
+        if (jpeg_mcu_row_reuse)
+        {
+            p_line[0] = p_pixel[0];
+            p_line[1] = p_pixel[1];
+            p_line[2] = p_pixel[2];
+        }
 #endif
 
         if (pf_progress != NULL)
@@ -141,4 +148,3 @@
 
     return 0;
 }
-

@@ -12,12 +12,18 @@
 #ifdef HAVE_LCD_COLOR
 static jpeg_mcu_row_callback jpeg_mcu_row_cb;
 static void *jpeg_mcu_row_cb_data;
+static bool jpeg_mcu_row_reuse;
 
 void jpeg_decode_set_mcu_row_callback(jpeg_mcu_row_callback callback,
                                       void *user)
 {
     jpeg_mcu_row_cb = callback;
     jpeg_mcu_row_cb_data = user;
+}
+
+void jpeg_decode_set_mcu_row_reuse(bool reuse)
+{
+    jpeg_mcu_row_reuse = reuse;
 }
 #endif
 
