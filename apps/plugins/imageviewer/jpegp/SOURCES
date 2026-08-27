@@ -2,5 +2,5 @@ jpegp_render_accel.c
 //FILEGETC.c
 BUFFILEGETC.c
 jpeg81.c
-idct.c
+idct_accel.c
 mempool.c

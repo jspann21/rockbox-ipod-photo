@@ -9,6 +9,7 @@
 
 #include "plugin.h"
 #include "../imageviewer.h"
+#include "idct_accel.h"
 
 struct jpegp_legacy_decoder
 {
@@ -186,6 +187,7 @@ static int load_image(char *filename, struct image_info *info,
                       unsigned char *buf, ssize_t *buf_size,
                       int offset, int filesize)
 {
+    jpegp_idct_reset();
     return jpegp_legacy_load_image(filename, info, buf, buf_size,
                                    offset, filesize);
 }
