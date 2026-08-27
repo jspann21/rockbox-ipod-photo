@@ -3,12 +3,14 @@
  *
  * The original jpeg.c remains unchanged and is included with its public
  * entry points renamed. This file adds fit-to-screen RGB565 caching, direct
- * full-range LCD output, and reusable MCU-row decoding for exact-screen JPEGs.
+ * full-range LCD output, reusable MCU-row decoding, and EXIF orientation.
  ****************************************************************************/
 
 #include "plugin.h"
+#include <limits.h>
 #include "../imageviewer.h"
 #include "jpeg_decoder.h"
+#include "jpeg_exif.h"
 #ifdef HAVE_LCD_COLOR
 #include "yuv2rgb.h"
 #endif
@@ -28,18 +30,22 @@ struct jpeg_legacy_decoder
                             int x, int y, int width, int height);
 };
 
-#undef IMGDEC_HEADER
-#define IMGDEC_HEADER
+#define img_mem         jpeg_legacy_img_mem
 #define draw_image_rect jpeg_legacy_draw_image_rect
 #define load_image      jpeg_legacy_load_image
 #define get_image       jpeg_legacy_get_image
 #define image_decoder   jpeg_legacy_decoder
+#undef IMGDEC_HEADER
+#define IMGDEC_HEADER
 #include "jpeg.c"
+#undef img_mem
 #undef draw_image_rect
 #undef load_image
 #undef get_image
 #undef image_decoder
 #undef IMGDEC_HEADER
+
+static struct jpeg_exif jpeg_exif_meta;
 
 #ifdef HAVE_LCD_COLOR
 struct jpeg_rgb_cache
@@ -77,7 +83,8 @@ static void jpeg_allocate_cache(const struct image_info *info, int ds)
     size_t padding, bytes;
 
     if (ds < 1 || ds > 8 || info->width <= 0 || info->height <= 0 ||
-        info->width > LCD_WIDTH || info->height > LCD_HEIGHT)
+        (jpeg_exif_meta.orientation == 1 &&
+         (info->width > LCD_WIDTH || info->height > LCD_HEIGHT)))
         return;
 
     cache = &rgb_cache[ds];
@@ -116,6 +123,9 @@ static bool jpeg_prepare_cache(const struct image_info *info,
 
     return cache->valid;
 }
+
+#include "jpeg_exif_render.inc"
+#include "jpeg_exif_test.inc"
 #endif
 
 #if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR)
@@ -123,14 +133,52 @@ static bool jpeg_prepare_cache(const struct image_info *info,
 #include "jpeg_strip_memory_decode.inc"
 #endif
 
+static int img_mem(int ds)
+{
+    int size = jpeg_legacy_img_mem(ds);
+
+#ifdef HAVE_LCD_COLOR
+    if (jpeg_exif_meta.orientation != 1 && ds >= 1 && ds <= 8)
+    {
+        size_t width = (size_t)jpg.x_size / ds;
+        size_t height = (size_t)jpg.y_size / ds;
+        size_t pixels;
+        size_t bytes;
+
+        if (height != 0 && width > (size_t)-1 / height)
+            return INT_MAX;
+        pixels = width * height;
+        if (pixels > ((size_t)-1 - sizeof(fb_data)) / sizeof(fb_data))
+            return INT_MAX;
+        bytes = pixels * sizeof(fb_data) + sizeof(fb_data);
+
+        if (bytes > (size_t)(INT_MAX - size))
+            return INT_MAX;
+        size += (int)bytes;
+    }
+#endif
+    return size;
+}
+
 static int load_image(char *filename, struct image_info *info,
                       unsigned char *buf, ssize_t *buf_size,
                       int offset, int filesize)
 {
     int status;
 
+    jpeg_exif_reset(&jpeg_exif_meta);
+    if (buf != NULL && buf_size != NULL && *buf_size > 16)
+    {
+        size_t scratch_size = (size_t)*buf_size;
+        if (scratch_size > 64 * 1024)
+            scratch_size = 64 * 1024;
+        jpeg_exif_read(filename, offset, filesize,
+                       buf, scratch_size, &jpeg_exif_meta);
+    }
+
 #ifdef HAVE_LCD_COLOR
     jpeg_cache_clear();
+    jpeg_exif_test_reset(filename);
     iv->skip_next_clear = false;
     iv->skip_next_update = false;
 #endif
@@ -148,6 +196,15 @@ static int load_image(char *filename, struct image_info *info,
         rb->splashf(HZ, "JPEG table error %d", jpg.table_error);
         return PLUGIN_ERROR;
     }
+
+#ifdef HAVE_LCD_COLOR
+    if (status == PLUGIN_OK && jpeg_exif_rotates())
+    {
+        int tmp = info->x_size;
+        info->x_size = info->y_size;
+        info->y_size = tmp;
+    }
+#endif
 
     return status;
 }
@@ -167,7 +224,8 @@ static int get_image(struct image_info *info, int frame, int ds)
 #endif
 
 #if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR)
-    if (ds == 1 && jpeg_strip.decoded && rgb_cache[1].valid)
+    if (jpeg_exif_meta.orientation == 1 &&
+        ds == 1 && jpeg_strip.decoded && rgb_cache[1].valid)
     {
         info->width = LCD_WIDTH;
         info->height = LCD_HEIGHT;
@@ -175,7 +233,8 @@ static int get_image(struct image_info *info, int frame, int ds)
         return PLUGIN_OK;
     }
 
-    if (jpeg_stream_eligible(info, ds, already_decoded))
+    if (jpeg_exif_meta.orientation == 1 &&
+        jpeg_stream_eligible(info, ds, already_decoded))
     {
         status = jpeg_stream_get_image(info, frame, ds);
         if (status == PLUGIN_OUTOFMEM)
@@ -202,6 +261,13 @@ static int get_image(struct image_info *info, int frame, int ds)
         return status;
 
 #ifdef HAVE_LCD_COLOR
+    if (jpeg_exif_rotates())
+    {
+        int tmp = info->width;
+        info->width = info->height;
+        info->height = tmp;
+    }
+
     jpeg_allocate_cache(info, ds);
 #endif
     return PLUGIN_OK;
@@ -219,9 +285,23 @@ static void draw_image_rect(struct image_info *info,
     bool colour_fast =
         iv->settings->jpeg_colour_mode == COLOURMODE_COLOUR &&
         iv->settings->jpeg_dither_mode == DITHER_NONE;
+    bool orientation_fast =
+        jpeg_exif_meta.orientation != 1 &&
+        iv->settings->jpeg_dither_mode == DITHER_NONE;
+
+    if (orientation_fast &&
+        jpeg_prepare_oriented_cache(info, pdisp, cache, ds))
+    {
+        rb->lcd_bitmap_part(cache->pixels,
+                            info->x + x, info->y + y,
+                            cache->stride,
+                            dst_x, dst_y, width, height);
+        jpeg_exif_test_log(info, cache, ds);
+        return;
+    }
 
 #if defined(IPOD_COLOR)
-    if (jpeg_strip.frame_pending)
+    if (jpeg_exif_meta.orientation == 1 && jpeg_strip.frame_pending)
     {
         bool exact_frame =
             info->width == LCD_WIDTH && info->height == LCD_HEIGHT &&
@@ -236,7 +316,8 @@ static void draw_image_rect(struct image_info *info,
         rb->lcd_clear_display();
     }
 
-    if (jpeg_strip.decoded && jpeg_strip.strip_only && ds == 1)
+    if (jpeg_exif_meta.orientation == 1 &&
+        jpeg_strip.decoded && jpeg_strip.strip_only && ds == 1)
     {
         if (colour_fast && cache != NULL && cache->valid)
         {
@@ -254,7 +335,7 @@ static void draw_image_rect(struct image_info *info,
         cache = &rgb_cache[ds];
     }
 
-    if (colour_fast &&
+    if (jpeg_exif_meta.orientation == 1 && colour_fast &&
         pdisp->csub_x == 2 && pdisp->csub_y == 2 &&
         info->width == LCD_WIDTH && info->height == LCD_HEIGHT &&
         info->x == 0 && info->y == 0 &&
@@ -286,6 +367,7 @@ static void draw_image_rect(struct image_info *info,
                             info->x + x, info->y + y,
                             cache->stride,
                             dst_x, dst_y, width, height);
+        jpeg_exif_test_log(info, cache, ds);
         return;
     }
 
