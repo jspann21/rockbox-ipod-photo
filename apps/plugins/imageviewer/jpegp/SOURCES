@@ -1,4 +1,4 @@
-jpegp.c
+jpegp_render_accel.c
 //FILEGETC.c
 BUFFILEGETC.c
 jpeg81.c
