@@ -11,6 +11,12 @@
 #include "../imageviewer.h"
 #include "idct_accel.h"
 
+/* rbunicode.h uses COMP as a character-class flag, while the progressive
+ * decoder uses it as a structure tag. */
+#ifdef COMP
+#undef COMP
+#endif
+
 struct jpegp_legacy_decoder
 {
     const bool unscaled_avail;
