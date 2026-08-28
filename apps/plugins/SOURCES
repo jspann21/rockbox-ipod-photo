@@ -58,6 +58,10 @@ remote_control.c
 lamp.c
 #endif /* HAVE_BACKLIGHT */
 
+#ifdef IPOD_COLOR
+lcd14bench.c
+#endif
+
 #if defined(HAVE_RECORDING) && (defined(HAVE_LINE_IN) || defined(HAVE_MIC_IN))
 pitch_detector.c
 #endif
