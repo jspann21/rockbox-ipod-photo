@@ -13,8 +13,6 @@
 
 #include "plugin.h"
 
-PLUGIN_HEADER
-
 #if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR) && LCD_DEPTH == 16
 
 #define PHOTO_DB_REAL "/iPod_Control/Photos/Photo Database"
