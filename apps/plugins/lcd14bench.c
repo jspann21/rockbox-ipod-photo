@@ -10,8 +10,6 @@
 #include "cpu.h"
 #include "hwcompat.h"
 
-PLUGIN_HEADER
-
 #if defined(IPOD_COLOR) && defined(HAVE_LCD_COLOR) && LCD_DEPTH == 16 && \
     (CONFIG_CPU == PP5020) && !defined(SIMULATOR)
 
