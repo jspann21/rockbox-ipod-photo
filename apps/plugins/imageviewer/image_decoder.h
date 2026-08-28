@@ -33,6 +33,9 @@ enum image_type {
 #endif
     IMAGE_GIF,
     IMAGE_JPEG_PROGRESSIVE,
+#ifdef IPOD_COLOR
+    IMAGE_PHOTODB,
+#endif
 
     MAX_IMAGE_TYPES
 };

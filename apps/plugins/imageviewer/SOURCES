@@ -1,2 +1,7 @@
+#ifdef IPOD_COLOR
+imageviewer_ipodphoto.c
+image_decoder_ipodphoto.c
+#else
 imageviewer.c
 image_decoder.c
+#endif
