@@ -58,6 +58,10 @@ remote_control.c
 lamp.c
 #endif /* HAVE_BACKLIGHT */
 
+#ifdef IPOD_COLOR
+photocache.c
+#endif
+
 #if defined(HAVE_RECORDING) && (defined(HAVE_LINE_IN) || defined(HAVE_MIC_IN))
 pitch_detector.c
 #endif
@@ -124,7 +128,7 @@ picross.lua
 #ifdef HAVE_LCD_COLOR
 pixel-painter.lua
 #endif /* HAVE_LCD_COLOR */
-#endif /* PLUGIN_BUFFER_SIZE >= 0x80000 */
+#endif
 
 #if PLUGIN_BUFFER_SIZE > 0x10000 /* Doesn't fit on most 2Mb targets */
 amaze.c
