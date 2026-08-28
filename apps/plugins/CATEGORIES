@@ -85,7 +85,6 @@ pacbox,games
 pdbox,viewers
 pegbox,games
 periodic_table,apps
-photocache,apps
 picross,games
 pictureflow,demos
 pitch_detector,apps
@@ -93,6 +92,7 @@ pitch_screen,viewers
 pixel-painter,games
 plasma,demos
 playing_time,apps
+photos,apps
 png,viewers
 gif,viewers
 pong,games

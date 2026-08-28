@@ -6,3 +6,6 @@ ppm
 jpegp
 #endif
 gif
+#ifdef IPOD_COLOR
+photodb
+#endif
