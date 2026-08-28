@@ -60,6 +60,7 @@ lamp.c
 
 #ifdef IPOD_COLOR
 photos.c
+ipodnative.c
 #endif
 
 #if defined(HAVE_RECORDING) && (defined(HAVE_LINE_IN) || defined(HAVE_MIC_IN))
