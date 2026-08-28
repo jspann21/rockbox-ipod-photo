@@ -22,6 +22,8 @@
 
 /* returns the remaining mpeg2 buffer and it's size */
 void * mpeg2_get_buf(size_t *size);
+/* allocate video memory that survives mpeg2_mem_reset() */
+void *mpeg2_bufalloc(unsigned size, mpeg2_alloc_t reason);
 void *mpeg_malloc(size_t size, mpeg2_alloc_t reason);
 /* Grabs all the buffer available sans margin */
 void *mpeg_malloc_all(size_t *size_out, mpeg2_alloc_t reason);

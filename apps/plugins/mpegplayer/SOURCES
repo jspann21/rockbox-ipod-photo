@@ -23,7 +23,11 @@ libmpeg2/motion_comp_c.c
 
 
 alloc.c
+#if defined(IPOD_COLOR)
+video_out_pp_async.c
+#else
 video_out_rockbox.c
+#endif
 video_thread.c
 pcm_output.c
 audio_thread.c
