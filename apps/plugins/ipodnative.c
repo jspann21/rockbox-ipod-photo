@@ -216,6 +216,8 @@ static enum plugin_status play_file(const char *filename)
     int fd;
     bool complete = false;
     bool boosted = false;
+    bool user_stop = false;
+    bool usb_connected = false;
     int old_spindown = rb->global_settings->disk_spindown;
 
     rb->memset(&stats, 0, sizeof(stats));
@@ -352,7 +354,15 @@ static enum plugin_status play_file(const char *filename)
 
         button = rb->button_get(false);
         if ((button & ~(BUTTON_REL | BUTTON_REPEAT)) == BUTTON_MENU)
+        {
+            user_stop = true;
             break;
+        }
+        if (rb->default_event_handler(button) == SYS_USB_CONNECTED)
+        {
+            usb_connected = true;
+            break;
+        }
     }
 
     wall_us = USEC_TIMER - start_us;
@@ -367,6 +377,9 @@ static enum plugin_status play_file(const char *filename)
     backlight_use_settings();
     rb->close(fd);
 
+    if (usb_connected)
+        return PLUGIN_USB_CONNECTED;
+
     log_result(filename, &info, &stats, wall_us, crc, complete);
 
     if (complete)
@@ -376,7 +389,7 @@ static enum plugin_status play_file(const char *filename)
         rb->splashf(HZ * 2, "Stopped at %lu/%lu",
                     stats.frames, info.frame_count);
 
-    return complete ? PLUGIN_OK : PLUGIN_ERROR;
+    return complete || user_stop ? PLUGIN_OK : PLUGIN_ERROR;
 }
 
 enum plugin_status plugin_start(const void *parameter)
