@@ -759,68 +759,56 @@ bool skin_has_sbs(struct gui_wps *gwps)
     return draw;
 }
 
-/* do the button loop as often as required for the peak meters to update
- * with a good refresh rate.
- */
+/* Enter the button loop, refreshing peak meters and dynamic colors at their
+ * respective rates while keeping action handling responsive. */
 int skin_wait_for_action(enum skinnable_screens skin, int context, int timeout)
 {
-    int button = ACTION_NONE;
-    /* when the peak meter is enabled we want to have a
-        few extra updates to make it look smooth. On the
-        other hand we don't want to waste energy if it
-        isn't displayed */
-    bool pm=false;
+    bool peak_meter_enabled = false;
     FOR_NB_SCREENS(i)
-    {
-       if(skin_get_gwps(skin, i)->data->peak_meter_enabled)
-           pm = true;
-    }
+        peak_meter_enabled |= skin_get_gwps(skin, i)->data->peak_meter_enabled;
 
     bool fading = dynamic_colors_fading();
     bool pending = dynamic_colors_pending();
+    if (!peak_meter_enabled && !fading && !pending)
+        return get_action(context, timeout);
 
-    if (pm || fading || pending) {
-        long next_pm_refresh = current_tick;
-        long next_fade_refresh = current_tick;
-        long next_big_refresh = current_tick + timeout;
-        button = BUTTON_NONE;
-        while (TIME_BEFORE(current_tick, next_big_refresh)) {
-            button = get_action(context,TIMEOUT_NOBLOCK);
-            if (button != ACTION_NONE) {
-                break;
-            }
-            if (pm)
-                peak_meter_peek();
-            sleep(0);   /* Sleep until end of current tick. */
+    long next_pm_refresh = current_tick;
+    long next_fade_refresh = current_tick;
+    long timeout_tick = current_tick + timeout;
 
-            if (pm && TIME_AFTER(current_tick, next_pm_refresh)) {
-                FOR_NB_SCREENS(i)
-                {
-                    if(skin_get_gwps(skin, i)->data->peak_meter_enabled)
-                        skin_update(skin, i, SKIN_REFRESH_PEAK_METER);
-                }
-                next_pm_refresh += HZ / PEAK_METER_FPS;
-            }
-            if ((fading || pending) && TIME_AFTER(current_tick, next_fade_refresh)) {
+    while (true)
+    {
+        int action = get_action(context, TIMEOUT_NOBLOCK);
+        if (action != ACTION_NONE || !TIME_BEFORE(current_tick, timeout_tick))
+        {
+            if (dynamic_colors_needs_full_update())
+            {
                 FOR_NB_SCREENS(i)
                     skin_update(skin, i, SKIN_REFRESH_ALL);
-                next_fade_refresh += HZ / 20;
-                fading = dynamic_colors_fading();
-                pending = dynamic_colors_pending();
             }
+            return action;
         }
 
-        if (dynamic_colors_needs_full_update()) {
+        if (peak_meter_enabled)
+            peak_meter_peek();
+        sleep(0); /* Sleep until end of current tick. */
+
+        if (peak_meter_enabled && !TIME_BEFORE(current_tick, next_pm_refresh))
+        {
+            FOR_NB_SCREENS(i)
+                if (skin_get_gwps(skin, i)->data->peak_meter_enabled)
+                    skin_update(skin, i, SKIN_REFRESH_PEAK_METER);
+            next_pm_refresh += HZ / PEAK_METER_FPS;
+        }
+
+        if ((fading || pending) &&
+            !TIME_BEFORE(current_tick, next_fade_refresh))
+        {
             FOR_NB_SCREENS(i)
                 skin_update(skin, i, SKIN_REFRESH_ALL);
+            next_fade_refresh += HZ / 20;
+            fading = dynamic_colors_fading();
+            pending = dynamic_colors_pending();
         }
     }
-
-    /* No peak meter or color transition
-       -> no additional screen updates needed */
-    else
-    {
-        button = get_action(context, timeout);
-    }
-    return button;
 }
