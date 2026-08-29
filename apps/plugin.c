@@ -880,6 +880,9 @@ static const struct plugin_api rockbox_api = {
     gesture_flick_get_in_vp,
     gesture_flick_get,
 #endif
+#if defined(IPOD_COLOR) && !defined(SIMULATOR)
+    lcd_update_rect_from_buffer,
+#endif
 };
 
 static int plugin_buffer_handle;

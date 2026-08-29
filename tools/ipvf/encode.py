@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Encode a video to IPVF v1 for the iPod Photo/Color Rockbox viewer.
+"""Encode video for the iPod Photo/Color native IPVF viewer.
 
 IPVF stores exact 220x176 RGB565 big-endian pixels (the byte layout used by
 Rockbox RGB565SWAPPED) and lossless bounding-rectangle deltas. ffmpeg performs
@@ -8,6 +8,7 @@ scale/pad/fps conversion; this script chooses key, delta, or repeat records.
 from __future__ import annotations
 
 import argparse
+import os
 import struct
 import subprocess
 from pathlib import Path
@@ -15,9 +16,14 @@ from pathlib import Path
 W, H = 220, 176
 FRAME_BYTES = W * H * 2
 HEADER_SIZE = 64
+DATA_OFFSET = 512
+RECORD_SECTOR_SIZE = 512
+MAX_RECORD_SECTORS = 256
 MAGIC = b"IPVF"
 VERSION = 1
 FLAG_RGB565BE = 1
+FLAG_SECTOR_RECORDS = 2
+FLAGS = FLAG_RGB565BE | FLAG_SECTOR_RECORDS
 TYPE_KEY = 0
 TYPE_RECTS = 1
 TYPE_REPEAT = 2
@@ -37,6 +43,11 @@ def bbox_diff(prev: bytes, cur: bytes):
                 if y > maxy: maxy = y
     if maxx < 0:
         return None
+    # The LCD2 RGB data port consumes two pixels per 32-bit write. Align delta
+    # rectangles to complete pixel pairs so a staging slot can be transferred
+    # directly while the CPU reads the following frame.
+    minx &= ~1
+    maxx = min(W - 1, maxx | 1)
     return minx, miny, maxx - minx + 1, maxy - miny + 1
 
 
@@ -52,16 +63,31 @@ def rect_payload(frame: bytes, rect):
     return struct.pack("<BBBBI", x, y, w, h, len(pix)) + pix
 
 
-def frame_header(kind: int, rects: int, payload: int) -> bytes:
-    return struct.pack("<BBHI", kind, rects, 0, payload)
+def record_sectors(payload_size: int) -> int:
+    sectors = (8 + payload_size + RECORD_SECTOR_SIZE - 1) // RECORD_SECTOR_SIZE
+    if not 1 <= sectors <= MAX_RECORD_SECTORS:
+        raise RuntimeError(f"record needs invalid sector count {sectors}")
+    return sectors
 
 
-def write_header(f, fps: int, frames: int):
-    h = bytearray(HEADER_SIZE)
+def write_record(f, kind: int, rects: int, payload: bytes,
+                 next_sectors: int) -> tuple[int, int]:
+    sectors = record_sectors(len(payload))
+    record_bytes = sectors * RECORD_SECTOR_SIZE
+    f.write(struct.pack("<BBHI", kind, rects, next_sectors, len(payload)))
+    f.write(payload)
+    padding = record_bytes - 8 - len(payload)
+    f.write(bytes(padding))
+    return sectors, padding
+
+
+def write_header(f, fps: int, frames: int, first_record_sectors: int):
+    h = bytearray(DATA_OFFSET)
     h[0:4] = MAGIC
     struct.pack_into("<HHHHHHIII", h, 4,
                      VERSION, HEADER_SIZE, W, H, fps, 1,
-                     frames, FLAG_RGB565BE, HEADER_SIZE)
+                     frames, FLAGS, DATA_OFFSET)
+    struct.pack_into("<H", h, 28, first_record_sectors)
     f.seek(0)
     f.write(h)
 
@@ -69,18 +95,24 @@ def write_header(f, fps: int, frames: int):
 def ffmpeg_frames(source: Path, fps: int, ffmpeg: str):
     vf = (f"fps={fps},scale={W}:{H}:force_original_aspect_ratio=decrease:"
           f"flags=lanczos,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black")
-    cmd = [ffmpeg, "-v", "error", "-i", str(source), "-an", "-vf", vf,
+    cmd = [ffmpeg, "-nostdin", "-v", "error", "-i", str(source),
+           "-an", "-vf", vf,
            "-pix_fmt", "rgb565be", "-f", "rawvideo", "-"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     assert proc.stdout is not None
     try:
         while True:
-            frame = proc.stdout.read(FRAME_BYTES)
-            if not frame:
+            chunks = bytearray()
+            while len(chunks) < FRAME_BYTES:
+                chunk = proc.stdout.read(FRAME_BYTES - len(chunks))
+                if not chunk:
+                    break
+                chunks.extend(chunk)
+            if not chunks:
                 break
-            if len(frame) != FRAME_BYTES:
+            if len(chunks) != FRAME_BYTES:
                 raise RuntimeError("ffmpeg ended with a partial frame")
-            yield frame
+            yield bytes(chunks)
     finally:
         proc.stdout.close()
         rc = proc.wait()
@@ -90,52 +122,77 @@ def ffmpeg_frames(source: Path, fps: int, ffmpeg: str):
 
 def encode(source: Path, output: Path, fps: int, keyint: int, ffmpeg: str):
     output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(output.name + ".tmp")
     counts = {TYPE_KEY: 0, TYPE_RECTS: 0, TYPE_REPEAT: 0}
     payload_total = 0
+    record_total = 0
+    padding_total = 0
     prev = None
+    pending = None
+    first_record_sectors = 0
     n = 0
 
-    with output.open("wb+") as f:
-        f.write(bytes(HEADER_SIZE))
-        for cur in ffmpeg_frames(source, fps, ffmpeg):
-            force_key = prev is None or (keyint > 0 and n % keyint == 0)
-            if force_key:
-                payload = cur
-                kind = TYPE_KEY
-                rects = 0
-            else:
-                rect = bbox_diff(prev, cur)
-                if rect is None:
-                    payload = b""
-                    kind = TYPE_REPEAT
+    try:
+        with temporary.open("wb+") as f:
+            f.write(bytes(DATA_OFFSET))
+            for cur in ffmpeg_frames(source, fps, ffmpeg):
+                force_key = prev is None or (keyint > 0 and n % keyint == 0)
+                if force_key:
+                    payload = cur
+                    kind = TYPE_KEY
                     rects = 0
                 else:
-                    delta = rect_payload(cur, rect)
-                    if len(delta) < FRAME_BYTES:
-                        payload = delta
-                        kind = TYPE_RECTS
-                        rects = 1
-                    else:
-                        payload = cur
-                        kind = TYPE_KEY
+                    rect = bbox_diff(prev, cur)
+                    if rect is None:
+                        payload = b""
+                        kind = TYPE_REPEAT
                         rects = 0
+                    else:
+                        delta = rect_payload(cur, rect)
+                        if len(delta) < FRAME_BYTES:
+                            payload = delta
+                            kind = TYPE_RECTS
+                            rects = 1
+                        else:
+                            payload = cur
+                            kind = TYPE_KEY
+                            rects = 0
 
-            f.write(frame_header(kind, rects, len(payload)))
-            f.write(payload)
-            counts[kind] += 1
-            payload_total += len(payload)
-            prev = cur
-            n += 1
+                current = (kind, rects, payload)
+                current_sectors = record_sectors(len(payload))
+                if pending is None:
+                    first_record_sectors = current_sectors
+                else:
+                    sectors, padding = write_record(
+                        f, pending[0], pending[1], pending[2], current_sectors)
+                    record_total += sectors * RECORD_SECTOR_SIZE
+                    padding_total += padding
+                pending = current
+                counts[kind] += 1
+                payload_total += len(payload)
+                prev = cur
+                n += 1
 
-        if n == 0:
-            raise RuntimeError("ffmpeg produced no frames")
-        write_header(f, fps, n)
+            if n == 0:
+                raise RuntimeError("ffmpeg produced no frames")
+            assert pending is not None
+            sectors, padding = write_record(
+                f, pending[0], pending[1], pending[2], 0)
+            record_total += sectors * RECORD_SECTOR_SIZE
+            padding_total += padding
+            write_header(f, fps, n, first_record_sectors)
+        os.replace(temporary, output)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
     raw = n * FRAME_BYTES
     ratio = payload_total / raw if raw else 0
     print(f"{output}: {n} frames @ {fps} fps")
     print(f"  key={counts[TYPE_KEY]} delta={counts[TYPE_RECTS]} repeat={counts[TYPE_REPEAT]}")
     print(f"  payload={payload_total:,} bytes ({ratio:.1%} of raw RGB565)")
+    print(f"  records={record_total:,} bytes, padding={padding_total:,} bytes "
+          f"({padding_total / record_total:.1%} of records)")
 
 
 def main():

@@ -254,6 +254,12 @@ extern bool lcd_putsxy_scroll_func(int x, int y, const unsigned char *string,
 
 /* update a fraction of the screen */
 extern void lcd_update_rect(int x, int y, int width, int height);
+#if defined(IPOD_COLOR) && !defined(SIMULATOR)
+/* Send framebuffer-native pixels from caller-owned storage. src points to the
+ * first pixel of the first row and stride is measured in fb_data pixels. */
+extern bool lcd_update_rect_from_buffer(const fb_data *src, int stride,
+                                        int x, int y, int width, int height);
+#endif
 
 #ifdef HAVE_REMOTE_LCD
     extern void lcd_remote_update(void);

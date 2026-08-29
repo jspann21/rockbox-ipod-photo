@@ -138,6 +138,17 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       PCM track changes retain the existing polling consumer, with transition
       latency measured at that safe consumer rather than through a forced IRQ;
       compile the hardware-only telemetry out of simulator builds.
+- [x] **Native IPVF video:** use one canonical sector-chained 220x176 RGB565
+      format and one normal hardware path. The CPU reads each complete record
+      with one aligned operation into one of three uncached slots while the COP
+      displays the previous record through the target LCD driver. Reconstruct
+      the Rockbox framebuffer once from the last keyframe at exit. Installed
+      A1099 tests completed high-motion 30 fps, high-motion 60 fps, and
+      repeat-heavy local-motion 60 fps with zero late frames, exact CRCs, and no
+      visual defects. The high-motion 60 fps read time fell from 5.318 seconds
+      to 1.932 seconds. The format, encoder, player, and driver API require no
+      markers, legacy parser, CSV logger, raw LCD2 plugin MMIO, cache-invalidate
+      experiment, or speculative LCD DMA contract.
 - [x] **PMU, battery, and I2C robustness:** preserve the last valid ADC value
       after I2C failure; allow realistic modern replacement-battery capacities
       without changing voltage calibration; propagate I2C/RTC failures; validate

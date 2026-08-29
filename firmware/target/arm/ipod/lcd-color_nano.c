@@ -294,7 +294,7 @@ void lcd_blit_yuv(unsigned char * const src[3],
 }
 
 /* Helper function writes 'count' consecutive pixels from src to LCD IF */
-static bool lcd_write_line(int count, unsigned long *src)
+static bool lcd_write_line(int count, const unsigned long *src)
 {
     do {
         if (!lcd_wait_block(LCD2_BLOCK_TXOK))
@@ -387,6 +387,73 @@ void lcd_update_rect(int x, int y, int width, int height)
         height -= h;
     }
 }
+
+#if defined(IPOD_COLOR) && !defined(SIMULATOR)
+/* Display caller-owned RGB565SWAPPED pixels synchronously. src points to the
+ * first pixel of the first source row; stride is in fb_data pixels. */
+bool lcd_update_rect_from_buffer(const fb_data *src, int stride,
+                                 int x, int y, int width, int height)
+{
+    const unsigned long *addr;
+
+    /* Reject instead of clipping: clipping would silently change the source
+     * origin, and odd geometry cannot be read as aligned 32-bit pixel pairs. */
+    if (src == NULL || stride <= 0 || stride < width ||
+        width <= 0 || height <= 0 ||
+        x < 0 || y < 0 || x >= LCD_WIDTH || y >= LCD_HEIGHT ||
+        width > LCD_WIDTH - x || height > LCD_HEIGHT - y ||
+        (x & 1) != 0 || (width & 1) != 0 || (stride & 1) != 0 ||
+        ((unsigned long)src & 3) != 0)
+        return false;
+
+    if (!lcd_setup_drawing_region(x, y, width, height))
+        return false;
+
+    addr = (const unsigned long *)src;
+
+    while (height > 0) {
+        int r, h, pixels_to_write;
+
+        pixels_to_write = (width * height) * 2;
+        h = height;
+
+        if (pixels_to_write > 0x10000) {
+            h = ((0x10000/2) / width) & ~1;
+            pixels_to_write = (width * h) * 2;
+        }
+
+        LCD2_BLOCK_CTRL   = 0x10000080;
+        LCD2_BLOCK_CONFIG = 0xc0010000 | (pixels_to_write - 1);
+        LCD2_BLOCK_CTRL   = 0x34000000;
+
+        if (stride == width) {
+            if (!lcd_write_line(h * width, addr)) {
+                LCD2_BLOCK_CONFIG = 0;
+                return false;
+            }
+            addr += stride / 2 * h;
+        } else {
+            for (r = 0; r < h; r++) {
+                if (!lcd_write_line(width, addr)) {
+                    LCD2_BLOCK_CONFIG = 0;
+                    return false;
+                }
+                addr += stride / 2;
+            }
+        }
+
+        if (!lcd_wait_block(LCD2_BLOCK_READY)) {
+            LCD2_BLOCK_CONFIG = 0;
+            return false;
+        }
+        LCD2_BLOCK_CONFIG = 0;
+
+        height -= h;
+    }
+
+    return true;
+}
+#endif
 
 /* Update the display.
    This must be called after all other LCD functions that change the display. */
