@@ -543,10 +543,6 @@ static char *get_wps_item_name(int selected_item, void * data,
 }
 MENUITEM_RETURNVALUE_DYNTEXT(wps_item, GO_TO_WPS, NULL, get_wps_item_name,
                                 NULL, NULL, Icon_Playback_menu);
-#ifdef HAVE_RECORDING
-MENUITEM_RETURNVALUE(rec, ID2P(LANG_RECORDING), GO_TO_RECSCREEN,
-                        NULL, Icon_Recording);
-#endif
 #if CONFIG_TUNER
 MENUITEM_RETURNVALUE(fm, ID2P(LANG_FM_RADIO), GO_TO_FM,
                         item_callback, Icon_Radio_screen);
