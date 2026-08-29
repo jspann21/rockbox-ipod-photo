@@ -108,4 +108,3 @@ bool yuv_bitmap_part_to_buffer(unsigned char *src[3], int csub_x, int csub_y,
                               src_x, src_y, stride,
                               width, height, dst, dst_stride);
 }
-

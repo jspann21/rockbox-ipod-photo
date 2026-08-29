@@ -130,4 +130,3 @@ void build_lut(struct jpeg *p_jpeg)
         }
     }
 }
-

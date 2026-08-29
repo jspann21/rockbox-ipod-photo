@@ -87,4 +87,3 @@
             p_jpeg->p_entropy_data = seg_end;
             return ret;
         }
-

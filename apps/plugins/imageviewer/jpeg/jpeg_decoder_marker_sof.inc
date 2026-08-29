@@ -118,4 +118,3 @@ int process_markers(unsigned char *p_src, long size, struct jpeg *p_jpeg)
         case 0xc8: case 0xc9: case 0xca: case 0xcb:
         case 0xcd: case 0xce: case 0xcf:
             return -4; /* unsupported coding process */
-

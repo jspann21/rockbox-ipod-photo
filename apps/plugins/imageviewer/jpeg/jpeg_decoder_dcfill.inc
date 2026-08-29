@@ -18,4 +18,3 @@ static void idct_dc_fill(unsigned char *dst, int *block, int *quant,
         dst += stride;
     }
 }
-

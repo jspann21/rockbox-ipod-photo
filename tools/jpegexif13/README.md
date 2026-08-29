@@ -2,7 +2,9 @@
 
 This branch parses EXIF APP1 metadata before baseline JPEG marker decoding. It
 applies Orientation 2-8 through the no-dither RGB565 cache and records the
-validated embedded-JPEG thumbnail offset/length for the next preview phase.
+validated embedded-JPEG thumbnail offset/length. The production reader also
+uses a validated thumbnail as an opportunistic preview for sufficiently large
+source images on color displays.
 
 ## Device test
 
@@ -27,5 +29,5 @@ locators, correct oriented dimensions, and one identical canonical RGB565 CRC
 after inverse orientation.
 
 Ordered/error-diffusion dithering remains on the legacy un-oriented renderer in
-this bounded phase. Thumbnail bytes are parsed and validated but are not yet
-used as a display preview.
+this bounded test. The corpus validates thumbnail locators; qualifying larger
+images can display the embedded JPEG before the full image decode completes.

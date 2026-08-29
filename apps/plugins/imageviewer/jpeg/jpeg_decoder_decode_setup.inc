@@ -96,4 +96,3 @@ static int jpeg_decode_accel(struct jpeg *p_jpeg, unsigned char **p_pixel,
     store_offs[p_jpeg->store_pos[1]] = 8 / downscale;
     store_offs[p_jpeg->store_pos[2]] = width * 8 / downscale;
     store_offs[p_jpeg->store_pos[3]] = store_offs[1] + store_offs[2];
-
