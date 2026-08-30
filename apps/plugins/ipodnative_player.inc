@@ -48,8 +48,8 @@ static enum plugin_status play_file(const char *filename)
     buffer_end = (uintptr_t)buf + buf_size;
 #ifdef IPVF_NATIVE_PIPELINE
     record_buffer = (unsigned char *)
-        (((uintptr_t)buf + IPVF_RENDER_SLOT_STRIDE - 1) &
-         ~(uintptr_t)(IPVF_RENDER_SLOT_STRIDE - 1));
+        (((uintptr_t)buf + IPVF_RECORD_SECTOR_SIZE - 1) &
+         ~(uintptr_t)(IPVF_RECORD_SECTOR_SIZE - 1));
     required_end = (uintptr_t)record_buffer +
                    IPVF_RENDER_SLOTS * IPVF_RENDER_SLOT_STRIDE;
 #else
