@@ -149,6 +149,13 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       to 1.932 seconds. The format, encoder, player, and driver API require no
       markers, legacy parser, CSV logger, raw LCD2 plugin MMIO, cache-invalidate
       experiment, or speculative LCD DMA contract.
+- [x] **Synchronized IPVF audio:** interleave the exact 44.1 kHz stereo PCM
+      slice for each video frame in the same sector record, feed it through a
+      bounded Rockbox mixer ring, and use consumed samples as the presentation
+      clock. Installed A1099 tests completed 240 frames at 30 fps and 480 frames
+      at 60 fps with zero late frames and zero audio gaps. The final integration
+      also sector-aligns the three-slot workspace without wasting a 128 KiB
+      alignment window after the retained crash record moved the plugin arena.
 - [x] **PMU, battery, and I2C robustness:** preserve the last valid ADC value
       after I2C failure; allow realistic modern replacement-battery capacities
       without changing voltage calibration; propagate I2C/RTC failures; validate

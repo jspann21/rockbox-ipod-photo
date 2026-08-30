@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Host-only contract tests for encode.py; this is not a second encoder."""
+
 from __future__ import annotations
 
 import contextlib

@@ -635,11 +635,14 @@
   - one canonical version-1 sector-chained layout;
   - exact 220 × 176 RGB565 pixels;
   - key, rectangle, and repeat records;
-  - strict header, record-chain, geometry, payload, and EOF validation.
+  - one 44.1 kHz stereo signed-16-bit PCM slice after every video payload;
+  - strict header, record-chain, geometry, video/audio payload, duration, and
+    EOF validation.
 - CPU responsibilities:
   - read the current record directly into an uncached free slot;
   - validate the entire record and chain;
-  - pace presentation;
+  - copy the record's PCM slice into the Rockbox plugin-audio ring;
+  - pace presentation from consumed PCM sample frames;
   - remember the most recent keyframe location;
   - reconstruct and commit the framebuffer once at normal exit.
 - COP responsibilities:
@@ -653,6 +656,14 @@
   - preserve per-word TXOK polling;
   - wait for final BLOCK_READY;
   - clear block configuration after success or failure.
+- Audio responsibilities:
+  - use Rockbox's existing playback mixer channel rather than a private PCM
+    interrupt path;
+  - start audio only after the first frame is presented;
+  - expose consumed sample frames as the video clock;
+  - stop and restart at the same sample position after an underrun so A/V does
+    not silently drift;
+  - restore the prior mixer frequency and release the audio buffer at exit.
 - Simulator/unsupported target behavior:
   - same canonical parser;
   - sequential framebuffer rendering;
@@ -720,7 +731,9 @@
   - first record must be a keyframe;
   - dimensions and pixel format must match the target;
   - frame rate must be nonzero and within the accepted bound;
-  - each current sector count must match its payload size;
+  - audio must be 44.1 kHz, stereo, signed 16-bit little-endian PCM;
+  - the header's total PCM frame count must exactly match video duration;
+  - each current sector count must match its video and derived PCM payload;
   - every non-final record must link to a valid next sector count;
   - the final record must link to zero and end exactly at EOF;
   - rectangles must be nonempty, in bounds, correctly sized, and aligned for
@@ -740,6 +753,12 @@
     playback;
   - normal completion and MENU stop reconstruct from the most recent keyframe;
   - reconstructed state is committed once before returning to Rockbox.
+- Audio:
+  - the producer cannot overwrite unread PCM in the power-of-two ring;
+  - mixer transfers are bounded to 16 KiB;
+  - the audio clock advances only by mixer-consumed sample frames;
+  - the final successful run waits for the declared PCM frame count;
+  - teardown stops the mixer channel before releasing its buffer.
 - Lifecycle:
   - worker start and exit are bounded;
   - MENU returns success after a clean drain and reconstruction;
@@ -748,8 +767,10 @@
 
 ## 24. Interpreting the measurements
 
-- “Late frame” in the qualification builds meant the producer crossed a
-  500-microsecond scheduling threshold.
+- In the video-only qualification builds, “late frame” meant the producer
+  crossed a 500-microsecond wall-clock scheduling threshold.
+- In the integrated PCM player, it means the consumed-sample audio clock is
+  more than 500 microseconds beyond that frame's exact PCM boundary.
 - A late count did not necessarily mean a visible dropped or corrupted frame;
   several earlier 60 fps runs looked normal despite hundreds of reported late
   frames.
@@ -776,10 +797,11 @@
   - low-, medium-, and high-motion content;
   - different keyframe intervals;
   - different storage adapters and fragmentation states.
-- Audio:
-  - define a simple stream/index model;
-  - establish the clock master and drift behavior;
-  - measure disk scheduling and buffer requirements before adding complexity.
+- Audio regression and endurance:
+  - run a long drift test and repeat-heavy audio content;
+  - cover headphones and line out;
+  - force storage stalls to exercise bounded underrun recovery;
+  - repeat early/middle/late MENU and USB interruption tests with audio active.
 - Better spatial deltas:
   - the format already permits more than one rectangle;
   - compare multiple-rectangle segmentation with the current single bounding
@@ -815,7 +837,7 @@
 - A normal MENU stop is a successful lifecycle event, not a failed full-file
   completion.
 
-## 27. Current conclusion
+## 27. Video milestone conclusion
 
 - The important result is not merely that the iPod Photo can display an IPVF
   file.
@@ -844,3 +866,75 @@
   - no raw plugin LCD2 access;
   - no raw COP or per-frame cache-invalidation/cache-repair mechanism;
   - no diagnostic setup required from the user.
+
+## 28. Integrated PCM audio (PR #20)
+
+- The audio work extended the format while it was still being created; it did
+  not introduce an IPVF v2 or retain the earlier video-only prototype.
+- The canonical version-1 header now requires:
+  - flags `RGB565BE | SECTOR_RECORDS | PCM_S16LE`;
+  - 44.1 kHz, two-channel, signed 16-bit little-endian PCM;
+  - an exact total stereo-sample-frame count derived from video duration.
+- For frame `n`, the encoder computes cumulative boundary
+  `round(n * 44100 * fps_den / fps_num)`. The difference between adjacent
+  boundaries is stored immediately after that frame's video payload.
+- This layout retained the successful storage design:
+  - video and audio arrive in one sector-aligned read;
+  - record size remains independently derivable and validated;
+  - longer source audio is trimmed and shorter audio is padded with silence;
+  - the 4 fps minimum guarantees a worst-case keyframe plus its PCM slice fits
+    the 128 KiB record limit.
+- Device playback uses the existing Rockbox mixer:
+  - the plugin obtains a power-of-two audio ring from the plugin audio buffer;
+  - the CPU copies the current record's PCM while the COP can display the
+    preceding record's video;
+  - the first frame is presented before the mixer starts;
+  - consumed sample frames are the clock for later presentation;
+  - a stopped mixer can restart from buffered data without advancing the clock
+    across the interruption.
+- The implementation deliberately did not add a private PCM interrupt handler,
+  a second audio file, or a separate per-frame storage read.
+- Initial installed-A1099 results with the same 8-second source were:
+
+  | Rate | Frames | PCM sample frames | Late | Audio gaps |
+  | --- | ---: | ---: | ---: | ---: |
+  | 30 fps | 240 | 352,800 | 0 | 0 |
+  | 60 fps | 480 | 352,800 | 0 | 0 |
+
+- Before each device run, the host validator walked the complete 240- or
+  480-record chain, verified each derived PCM slice and sector count, reached a
+  zero final link, and ended exactly at EOF.
+
+## 29. Post-integration memory corrections
+
+- The retained crash record reserves the final 256 bytes of SDRAM. Runtime
+  plugin and codec buffers moved down by `0x100`, but their separate linker
+  script initially retained the old addresses.
+- The resulting plugin header did not match the runtime load address, which
+  surfaced as an “Incompatible model” loader error. Subtracting the retained
+  record from both plugin and codec DRAM calculations restored exact agreement.
+- Once the plugin could run, it reported “IPVF buffer too small.” The player
+  had aligned the render base to the 128 KiB slot stride. That alignment was
+  never part of the CPU/COP or storage contract and, after the 256-byte arena
+  shift, rounded the three-slot allocation just past the available memory.
+- The correction aligns the shared base to the actual 512-byte sector
+  requirement while retaining three 128 KiB non-overlapping slots. It changes
+  neither slot ownership nor the tested uncached transport/display path.
+- The same 30 and 60 fps PCM clips then completed on hardware with zero late
+  frames and zero audio gaps.
+
+## 30. Current conclusion
+
+- IPVF is now a complete host-preformatted video-and-audio path for the iPod
+  Photo/Color, not a container experiment around an existing device codec.
+- Its production data flow is:
+  - one sector record containing native video and its exact PCM time slice;
+  - one uncached CPU read into a three-slot workspace;
+  - CPU delivery into the Rockbox mixer ring;
+  - COP display through the target-owned LCD driver;
+  - audio-consumption pacing for subsequent video frames;
+  - one final framebuffer reconstruction before returning to Rockbox.
+- The first installed 30 and 60 fps audio runs completed every frame with no
+  measured lateness or mixer underrun. Longer-duration, interruption, forced
+  stall, and alternate-output tests remain useful breadth testing rather than
+  blockers for the merged PR #20 implementation.

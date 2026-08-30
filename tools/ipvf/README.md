@@ -14,6 +14,9 @@ Install `ffmpeg`, then run:
 python3 tools/ipvf/encode.py input.mp4 output.ipvf --fps 30
 ```
 
+Use `--fps 60` for a 60 fps file. `encode.py` is the only IPVF encoder;
+`test_encode.py` is a small host-only unit-test module for the format contract.
+
 The source must contain an audio stream. The encoder converts the first audio
 stream to 44.1 kHz stereo signed 16-bit little-endian PCM. PCM contributes
 176,400 bytes per second, or about 10.6 MB per minute. The encoder preserves
@@ -104,9 +107,16 @@ The target driver retains the per-word LCD2 readiness handshake. The player
 does not use raw plugin MMIO, cache invalidation, invented LCD DMA requests, or
 a new PCM interrupt path.
 
-## Tests
+The three render slots are each 128 KiB apart, but their shared base requires
+only 512-byte sector alignment. Treating the slot capacity as a base-alignment
+requirement wastes memory and can reject a valid plugin buffer.
 
-Run the host format tests with:
+## Host format validation
+
+`test_encode.py` does not create a second IPVF format or device path. It calls
+the production encoder with synthetic frames and PCM, then parses the result to
+catch broken headers, record chains, audio placement, duration, and size limits.
+Run it with:
 
 ```sh
 python3 -m unittest -v tools.ipvf.test_encode
@@ -116,7 +126,7 @@ They verify the canonical header, key/delta/repeat sector chaining, exact PCM
 placement, silence padding, trimming to the converted video duration, and the
 128 KiB keyframe limit at 4 fps.
 
-## Qualification status
+## Hardware qualification status
 
 The framebuffer-native video and aligned CPU/COP display pipeline have already
 been hardware-qualified on an A1099:
@@ -131,8 +141,15 @@ For the high-motion 60 fps clip, aligned record reads reduced measured read
 time from 5.318 seconds to 1.932 seconds. The local-motion test included 193
 repeat records and a 120-record final framebuffer reconstruction.
 
-The integrated PCM path still needs A1099 qualification. The hardware pass
-should cover headphones and line out, 30 and 60 fps high-motion clips, a long
-drift test, local-motion/repeat records, deliberate storage stalls, Menu stop,
-USB insertion, final audio sample count, late-frame count, audio-gap count, and
-final framebuffer CRC.
+The integrated PCM path has also passed its first A1099 qualification with an
+8-second music-video clip:
+
+| Clip | Frames | Late | Audio gaps |
+| --- | ---: | ---: | ---: |
+| PCM video, 30 fps | 240 | 0 | 0 |
+| PCM video, 60 fps | 480 | 0 | 0 |
+
+Both files contained exactly 352,800 stereo PCM sample frames, and all 240/480
+sector records passed the host validator before device testing. Broader
+qualification still includes a long drift run, line out, deliberate storage
+stalls, Menu stop, USB insertion, and repeat-heavy audio content.
