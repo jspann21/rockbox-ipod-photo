@@ -32,4 +32,8 @@
  
 /* Force a scan now */
 unsigned short adc_scan(int channel);
+#ifdef IPOD_COLOR
+/* Timestamp of the last successful hardware conversion for this channel. */
+long adc_last_scan_tick(int channel);
+#endif
 #endif

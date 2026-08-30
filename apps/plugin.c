@@ -91,6 +91,13 @@ static void* plugin_get_audio_buffer(size_t *buffer_size);
 static void plugin_release_audio_buffer(void);
 static void plugin_tsr(int (*exit_callback)(bool));
 
+/* storage_disk_is_active is a function-like macro on single-storage targets,
+ * so it cannot be placed directly in the plugin API initializer. */
+static bool plugin_storage_disk_is_active(void)
+{
+    return storage_disk_is_active();
+}
+
 extern struct battery_tables_t device_battery_tables; /* powermgmt.c */
 
 #ifdef HAVE_PLUGIN_CHECK_OPEN_CLOSE
@@ -883,6 +890,12 @@ static const struct plugin_api rockbox_api = {
 #if defined(IPOD_COLOR) && !defined(SIMULATOR)
     lcd_update_rect_from_buffer,
 #endif
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+    battery_model_get_debug,
+    battery_model_set_telemetry,
+    battery_model_copy_samples,
+#endif
+    plugin_storage_disk_is_active,
 #ifdef HAVE_IPOD_CRASH_RECORD
     crash_record_ipvf_update,
 #endif

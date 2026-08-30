@@ -41,8 +41,19 @@ struct battery_tables_t {
 
 #define BATTERY_LOG HOME_DIR "/battery_bench.txt"
 #define BUF_SIZE 16000
+#define POWEROFF_LEGACY_FLUSH_SAMPLES 4
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+#define BATTERY_MODEL_LOG HOME_DIR "/a1099_battery_model.csv"
+#define MODEL_DRAIN_TICKS (20 * HZ)
+#define MODEL_FLUSH_SAMPLES 512
+#define POWEROFF_MODEL_FLUSH_SAMPLES 128
+#else
+#define MODEL_FLUSH_SAMPLES 0
+#define POWEROFF_MODEL_FLUSH_SAMPLES 0
+#endif
 
 #define EV_EXIT 1337
+#define EV_FLUSH 1338
 
 /* seems to work with 1300, but who knows... */
 #define THREAD_STACK_SIZE 4*DEFAULT_STACK_SIZE
@@ -321,6 +332,33 @@ static struct
 static struct event_queue thread_q SHAREDBSS_ATTR;
 static bool in_usb_mode;
 static unsigned int buf_idx;
+#ifdef USING_STORAGE_CALLBACK
+static volatile bool storage_flush_pending;
+static volatile bool benchmark_worker_alive;
+static volatile bool storage_callback_registered;
+static volatile bool storage_callback_inflight;
+#endif
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+static struct battery_model_sample *model_buf;
+static size_t model_buf_count;
+static size_t model_buf_idx;
+static unsigned long last_model_tick;
+#endif
+
+#ifdef USING_STORAGE_CALLBACK
+/* ATA idle notifications run in the storage thread and must not yield. Wake
+ * our worker and perform all file I/O and buffer mutation there. */
+static void request_flush(void)
+{
+    storage_callback_inflight = true;
+    if (benchmark_worker_alive && !storage_flush_pending)
+    {
+        storage_flush_pending = true;
+        rb->queue_post(&thread_q, EV_FLUSH, 0);
+    }
+    storage_callback_inflight = false;
+}
+#endif
 
 static int exit_tsr(bool reenter)
 {
@@ -387,76 +425,241 @@ static unsigned int charge_state(void)
 #endif
 
 
-static void flush_buffer(void)
+static void flush_buffer_limited(unsigned int legacy_limit,
+                                 unsigned int model_limit)
 {
     int fd;
     unsigned int i;
+#ifndef HAVE_BATTERY_MEASURED_MODEL
+    (void)model_limit;
+#endif
 
     /* don't access the disk when in usb mode, or when no data is available */
-    if (in_usb_mode || (buf_idx == 0))
+    if (in_usb_mode || (buf_idx == 0
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+                        && model_buf_idx == 0
+#endif
+                       ))
         return;
 
-    fd = rb->open(BATTERY_LOG, O_RDWR | O_CREAT | O_APPEND, 0666);
-    if (fd < 0)
-        return;
-
-    for (i = 0; i < buf_idx; i++)
+    if (buf_idx > 0)
     {
-        rb->fdprintf(fd,
-                "%02d:%02d:%02d,  %05d,     %03d%%,     "
-                "%02d:%02d,         %04d,   "
-#if CONFIG_BATTERY_MEASURE & CURRENT_MEASURE
-                "      %04d,   "
-#endif
-#if CONFIG_CHARGING
-                "  %c"
-#if CONFIG_CHARGING >= CHARGING_MONITOR
-                ",  %c"
-#endif
-#endif
-#ifdef HAVE_USB_POWER
-                ",  %c"
-#endif
-                "\n",
+        unsigned int written = 0;
+        unsigned int to_write = MIN(buf_idx, legacy_limit);
 
-                HMS(bat[i].secs), bat[i].secs, bat[i].level,
-                bat[i].eta / 60, bat[i].eta % 60,
-                bat[i].voltage
+        fd = rb->open(BATTERY_LOG, O_RDWR | O_CREAT | O_APPEND, 0666);
+        if (fd >= 0)
+        {
+            for (i = 0; i < to_write; i++)
+            {
+                if (rb->fdprintf(fd,
+                    "%02d:%02d:%02d,  %05d,     %03d%%,     "
+                    "%02d:%02d,         %04d,   "
 #if CONFIG_BATTERY_MEASURE & CURRENT_MEASURE
-                , bat[i].current
+                    "      %04d,   "
 #endif
 #if CONFIG_CHARGING
-                , (bat[i].flags & BIT_CHARGER) ? 'A' : '-'
+                    "  %c"
 #if CONFIG_CHARGING >= CHARGING_MONITOR
-                , (bat[i].flags & BIT_CHARGING) ? 'C' : '-'
+                    ",  %c"
 #endif
 #endif
 #ifdef HAVE_USB_POWER
-                , (bat[i].flags & BIT_USB_POWER) ? 'U' : '-'
+                    ",  %c"
 #endif
-        );
+                    "\n",
+
+                    HMS(bat[i].secs), bat[i].secs, bat[i].level,
+                    bat[i].eta / 60, bat[i].eta % 60,
+                    bat[i].voltage
+#if CONFIG_BATTERY_MEASURE & CURRENT_MEASURE
+                    , bat[i].current
+#endif
+#if CONFIG_CHARGING
+                    , (bat[i].flags & BIT_CHARGER) ? 'A' : '-'
+#if CONFIG_CHARGING >= CHARGING_MONITOR
+                    , (bat[i].flags & BIT_CHARGING) ? 'C' : '-'
+#endif
+#endif
+#ifdef HAVE_USB_POWER
+                    , (bat[i].flags & BIT_USB_POWER) ? 'U' : '-'
+#endif
+                ) < 0)
+                    break;
+                written++;
+            }
+            rb->close(fd);
+            if (written > 0)
+            {
+                buf_idx -= written;
+                if (buf_idx > 0)
+                    rb->memmove(bat, &bat[written],
+                                buf_idx * sizeof(*bat));
+            }
+        }
     }
-    rb->close(fd);
 
-    buf_idx = 0;
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+    if (model_buf_idx > 0)
+    {
+        unsigned int written = 0;
+        unsigned int to_write = MIN(model_buf_idx, model_limit);
+
+        fd = rb->open(BATTERY_MODEL_LOG,
+                      O_RDWR | O_CREAT | O_APPEND, 0666);
+        if (fd >= 0)
+        {
+            for (i = 0; i < to_write; i++)
+            {
+                const struct battery_model_sample *sample = &model_buf[i];
+                unsigned long run_seconds =
+                    (sample->tick - (unsigned long)start_tick) / HZ;
+
+                if (rb->fdprintf(fd,
+                    "%lu,%lu,%lu,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%d,%u\n",
+                    (unsigned long)start_tick, run_seconds, sample->tick,
+                    sample->raw_mv, sample->median_mv, sample->filtered_mv,
+                    sample->model_mv, sample->sag_mv,
+                    sample->learned_sag_mv, sample->source_flags,
+                    sample->load_flags, sample->brightness, sample->cpu_mhz,
+                    sample->pcf_lowbat, sample->percent, sample->state) < 0)
+                    break;
+                written++;
+            }
+            rb->close(fd);
+            if (written > 0)
+            {
+                model_buf_idx -= written;
+                if (model_buf_idx > 0)
+                    rb->memmove(model_buf, &model_buf[written],
+                                model_buf_idx * sizeof(*model_buf));
+            }
+        }
+    }
+#endif
 }
+
+static void flush_buffer(void)
+{
+    flush_buffer_limited(BUF_ELEMENTS, MODEL_FLUSH_SAMPLES);
+}
+
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+static void drain_model_samples(void)
+{
+    unsigned int copied;
+
+    if (model_buf == NULL || model_buf_count == 0)
+        return;
+
+    if (model_buf_idx == model_buf_count)
+    {
+        if (rb->storage_disk_is_active())
+            flush_buffer();
+    }
+    if (model_buf_idx == model_buf_count)
+        return;
+
+    copied = rb->battery_model_copy_samples(
+                        last_model_tick, &model_buf[model_buf_idx],
+                        model_buf_count - model_buf_idx);
+    if (copied > 0)
+    {
+        model_buf_idx += copied;
+        last_model_tick = model_buf[model_buf_idx - 1].tick;
+    }
+}
+
+static bool init_model_capture(void)
+{
+    struct battery_model_debug debug;
+    size_t bytes = 0;
+    int fd;
+
+    model_buf = rb->plugin_get_buffer(&bytes);
+    if (model_buf == NULL)
+        return false;
+    model_buf_count = bytes / sizeof(*model_buf);
+    if (model_buf_count < 128)
+        return false;
+
+    bytes = model_buf_count * sizeof(*model_buf);
+    rb->plugin_reserve_buffer(bytes);
+    model_buf_idx = 0;
+    last_model_tick = (unsigned long)start_tick - 1;
+
+    fd = rb->open(BATTERY_MODEL_LOG, O_RDONLY);
+    if (fd < 0)
+    {
+        fd = rb->open(BATTERY_MODEL_LOG, O_RDWR | O_CREAT, 0666);
+        if (fd < 0)
+            return false;
+
+        rb->fdprintf(fd,
+            "# A1099 measured battery telemetry v1\n"
+            "run_start_tick,run_seconds,tick,raw_mv,median_mv,filtered_mv,"
+            "model_mv,sag_mv,learned_sag_mv,source_flags,load_flags,"
+            "brightness,cpu_mhz,pcf_lowbat,percent,state\n");
+    }
+    else
+    {
+        rb->close(fd);
+        fd = rb->open(BATTERY_MODEL_LOG, O_RDWR | O_APPEND);
+        if (fd < 0)
+            return false;
+    }
+
+    rb->battery_model_get_debug(&debug);
+    rb->fdprintf(fd,
+        "# run start=%lu model=%s rockbox=%s buffer_samples=%lu "
+        "disksafe_mv=%u shutoff_mv=%u pcf_id=0x%02x "
+        "pcf_reg=0x%02x pcf_boot=0x%02x\n",
+        (unsigned long)start_tick, MODEL_NAME, rb->rbversion,
+        (unsigned long)model_buf_count, debug.disksafe_mv, debug.shutoff_mv,
+        debug.pcf_id, debug.pcf_lowbat_reg, debug.pcf_lowbat_boot);
+    rb->close(fd);
+    rb->battery_model_set_telemetry(true);
+    return true;
+}
+#endif
 
 
 static void thread(void)
 {
     bool exit = false;
+    bool poweroff_exit = false;
+    bool can_flush;
     char *exit_reason = "unknown";
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+    long sleep_time = MODEL_DRAIN_TICKS;
+    long next_bench_tick = start_tick;
+#else
     long sleep_time = 60 * HZ;
+#endif
     struct queue_event ev;
     int fd;
 
     in_usb_mode = false;
     buf_idx = 0;
+#ifdef USING_STORAGE_CALLBACK
+    storage_flush_pending = false;
+    benchmark_worker_alive = true;
+    storage_callback_registered = false;
+    storage_callback_inflight = false;
+#endif
 
     while (!exit)
     {
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+        drain_model_samples();
+#endif
+
         /* add data to buffer */
-        if (buf_idx < BUF_ELEMENTS)
+        if (buf_idx < BUF_ELEMENTS
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+            && !TIME_BEFORE(*rb->current_tick, next_bench_tick)
+#endif
+           )
         {
             bat[buf_idx].secs = (*rb->current_tick - start_tick) / HZ;
             bat[buf_idx].level = rb->battery_level();
@@ -469,10 +672,24 @@ static void thread(void)
             bat[buf_idx].flags = charge_state();
 #endif
             buf_idx++;
-#ifdef USING_STORAGE_CALLBACK
-            rb->register_storage_idle_func(flush_buffer);
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+            do
+                next_bench_tick += 60 * HZ;
+            while (!TIME_BEFORE(*rb->current_tick, next_bench_tick));
 #endif
         }
+
+#ifdef USING_STORAGE_CALLBACK
+        if ((buf_idx > 0
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+            || model_buf_idx > 0
+#endif
+           ) && !storage_callback_registered)
+        {
+            storage_callback_registered = true;
+            rb->register_storage_idle_func(request_flush);
+        }
+#endif
 
         /* What to do when the measurement buffer is full:
            1) save our measurements to disk but waste some power doing so?
@@ -481,6 +698,9 @@ static void thread(void)
            for this to occur because it requires > 16 hours of no disk activity.
          */
         if (buf_idx == BUF_ELEMENTS) {
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+            if (rb->storage_disk_is_active())
+#endif
             flush_buffer();
         }
 
@@ -498,7 +718,21 @@ static void thread(void)
             case SYS_POWEROFF:
             case SYS_REBOOT:
                 exit_reason = "power off";
+                poweroff_exit = true;
                 exit = true;
+                break;
+            case EV_FLUSH:
+#ifdef USING_STORAGE_CALLBACK
+                /* The event is posted before send_event() clears its one-shot
+                 * entry. Let the non-yielding callback finish before rearming. */
+                while (storage_callback_inflight)
+                    rb->yield();
+                rb->yield();
+                storage_callback_registered = false;
+                storage_flush_pending = false;
+#endif
+                if (rb->storage_disk_is_active())
+                    flush_buffer();
                 break;
             case EV_EXIT:
                 rb->splash(HZ, "Exiting battery_bench...");
@@ -508,20 +742,80 @@ static void thread(void)
         }
     }
 
-#ifdef USING_STORAGE_CALLBACK
-    /* unregister flush callback and flush to disk */
-    rb->unregister_storage_idle_func(flush_buffer, true);
-#else
-    flush_buffer();
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+    /* Retain the final partial minute before the power-off event. */
+    drain_model_samples();
 #endif
 
-    /* log end of bench and exit reason */
-    fd = rb->open(BATTERY_LOG, O_RDWR | O_CREAT | O_APPEND, 0666);
-    if (fd >= 0)
+#ifdef USING_STORAGE_CALLBACK
+    benchmark_worker_alive = false;
+    rb->unregister_storage_idle_func(request_flush, false);
+    /* Cover a callback preempted just before setting its in-flight flag, then
+     * wait out any callback that was already inside request_flush(). */
+    rb->sleep(1);
+    while (storage_callback_inflight)
+        rb->yield();
+    storage_callback_registered = false;
+    storage_flush_pending = false;
+#endif
+    /* Never wake stopped storage during a critical-battery shutdown. A manual
+     * plugin exit is not power-critical and can drain the full RAM buffer. */
+    can_flush = !in_usb_mode &&
+                (!poweroff_exit || rb->storage_disk_is_active());
+    if (can_flush && poweroff_exit)
     {
-        rb->fdprintf(fd, "--Battery bench ended, reason: %s--\n", exit_reason);
-        rb->close(fd);
+        /* One bounded batch only; safety takes priority over final telemetry. */
+        flush_buffer_limited(POWEROFF_LEGACY_FLUSH_SAMPLES,
+                             POWEROFF_MODEL_FLUSH_SAMPLES);
     }
+    else if (can_flush)
+    {
+        do
+        {
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+            size_t buffered_before = model_buf_idx;
+#endif
+            flush_buffer();
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+            if (model_buf_idx == 0 || model_buf_idx == buffered_before)
+                break;
+#else
+            break;
+#endif
+        }
+        while (true);
+    }
+
+    /* log end of bench and exit reason */
+    if (can_flush)
+    {
+        fd = rb->open(BATTERY_LOG, O_RDWR | O_CREAT | O_APPEND, 0666);
+        if (fd >= 0)
+        {
+            rb->fdprintf(fd,
+                "--Battery bench ended, reason: %s, unsaved rows: %u--\n",
+                exit_reason, buf_idx);
+            rb->close(fd);
+        }
+    }
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+    if (can_flush)
+    {
+        fd = rb->open(BATTERY_MODEL_LOG,
+                      O_RDWR | O_CREAT | O_APPEND, 0666);
+        if (fd >= 0)
+        {
+            rb->fdprintf(fd,
+                "# run end start=%lu tick=%lu reason=%s unsaved_rows=%lu\n",
+                (unsigned long)start_tick,
+                (unsigned long)*rb->current_tick,
+                poweroff_exit ? "poweroff" : "plugin_exit",
+                (unsigned long)model_buf_idx);
+            rb->close(fd);
+        }
+    }
+    rb->battery_model_set_telemetry(false);
+#endif
 }
 
 
@@ -732,6 +1026,14 @@ enum plugin_status plugin_start(const void* parameter)
         rb->close(fd);
     }
 
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+    if (!init_model_capture())
+    {
+        rb->splash(HZ, "Cannot create A1099 model log!");
+        return PLUGIN_ERROR;
+    }
+#endif
+
     rb->memset(&gThread, 0, sizeof(gThread));
     rb->queue_init(&thread_q, true); /* put the thread's queue in the bcast list */
     gThread.id = rb->create_thread(thread, gThread.stack, sizeof(gThread.stack),
@@ -741,6 +1043,9 @@ enum plugin_status plugin_start(const void* parameter)
 
     if (gThread.id == 0 || gThread.id == UINT_MAX)
     {
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+        rb->battery_model_set_telemetry(false);
+#endif
         rb->splash(HZ, "Cannot create thread!");
         return PLUGIN_ERROR;
     }

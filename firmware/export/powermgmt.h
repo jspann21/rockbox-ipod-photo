@@ -117,6 +117,25 @@ struct battery_tables_t {
     bool isdefault;
 };
 
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+/* Optional target model for voltage-only devices which can characterize
+ * repeatable load steps but do not have a hardware fuel gauge. */
+#include "battery_model.h"
+
+void battery_model_init(int raw_mv);
+int battery_model_step(int raw_mv);
+void battery_model_set_reported_level(int level);
+bool battery_model_disk_safe(void);
+bool battery_model_force_shutdown(void);
+void battery_model_get_debug(struct battery_model_debug *debug);
+void battery_model_set_telemetry(bool enable);
+bool battery_model_get_sample(unsigned int age,
+                              struct battery_model_sample *sample);
+unsigned int battery_model_copy_samples(unsigned long after_tick,
+                                        struct battery_model_sample *samples,
+                                        unsigned int max_samples);
+#endif /* HAVE_BATTERY_MEASURED_MODEL */
+
 /* Returns battery status, filtered for runtime estimation */
 int battery_level(void); /* percent */
 int battery_time(void); /* minutes */

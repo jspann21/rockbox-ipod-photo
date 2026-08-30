@@ -942,6 +942,22 @@ static bool tsc2100_debug(void)
 #define BAT_TSPACE    20
 #define BAT_YSPACE    (LCD_HEIGHT - BAT_TSPACE)
 
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+#define BAT_LAST_VIEW 5
+
+static const char *battery_model_state_name(unsigned int state)
+{
+    static const char * const names[] =
+    {
+        "normal", "low wait", "low", "shutdown wait"
+    };
+
+    return state < ARRAYLEN(names) ? names[state] : "unknown";
+}
+#else
+#define BAT_LAST_VIEW 3
+#endif
+
 
 static bool view_battery(void)
 {
@@ -1253,6 +1269,62 @@ static bool view_battery(void)
                 lcd_putsf(0, 8, "%s current: %d mA", "Battery", battery_current());
 #endif
                 break;
+
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+            case 4: /* A1099 measured-model snapshot */
+            {
+                struct battery_model_debug debug;
+                unsigned long age;
+
+                battery_model_get_debug(&debug);
+                age = (current_tick - debug.sample.tick) / HZ;
+
+                lcd_puts(0, 0, "A1099 measured model");
+                lcd_putsf(0, 1, "State: %s",
+                          battery_model_state_name(debug.sample.state));
+                lcd_putsf(0, 2, "Raw/median: %u/%u mV",
+                          debug.sample.raw_mv, debug.median_mv);
+                lcd_putsf(0, 3, "Filter/model: %u/%u mV",
+                          debug.sample.filtered_mv, debug.sample.model_mv);
+                lcd_putsf(0, 4, "Sag now/learned: %d/%u mV",
+                          debug.sample.sag_mv, debug.learned_sag_mv);
+                lcd_putsf(0, 5, "Level: %d%% sample: %lus",
+                          debug.sample.percent, age);
+                lcd_putsf(0, 6, "Source/load: %02x/%02x",
+                          debug.sample.source_flags, debug.sample.load_flags);
+                lcd_putsf(0, 7, "CPU: %u MHz light: %u",
+                          debug.sample.cpu_mhz, debug.sample.brightness);
+                lcd_putsf(0, 8, "Disk/off: %u/%u mV",
+                          debug.disksafe_mv, debug.shutoff_mv);
+                lcd_putsf(0, 9, "PMU %02x r%02x: %02x>%02x",
+                           debug.pcf_id, debug.pcf_lowbat_reg,
+                           debug.pcf_lowbat_boot, debug.pcf_lowbat_now);
+                lcd_putsf(0, 10, "Trace samples: %u", debug.trace_count);
+                break;
+            }
+
+            case 5: /* recent measured-model samples */
+            {
+                struct battery_model_sample sample;
+
+                lcd_puts(0, 0, "Recent A1099 samples");
+                lcd_puts(0, 1, "age raw model sag % load");
+                for (i = 0; i < 10; i++)
+                {
+                    unsigned long age;
+
+                    if (!battery_model_get_sample(i, &sample))
+                        break;
+
+                    age = (current_tick - sample.tick) / HZ;
+                    lcd_putsf(0, i + 2, "%2lus %4u %4u %+3d %3d %02x",
+                              age, sample.raw_mv, sample.model_mv,
+                              sample.sag_mv, sample.percent,
+                              sample.load_flags);
+                }
+                break;
+            }
+#endif /* HAVE_BATTERY_MEASURED_MODEL */
         }
 
         lcd_update();
@@ -1265,7 +1337,7 @@ static bool view_battery(void)
                 break;
 
             case ACTION_STD_NEXT:
-                if (view < 3)
+                if (view < BAT_LAST_VIEW)
                     view++;
                 break;
 

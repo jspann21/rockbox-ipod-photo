@@ -32,6 +32,7 @@ struct adc_struct {
     void (*conversion)(unsigned short *data);
     short channelnum;
     unsigned short data;
+    long sample_tick;
 };
 
 static struct adc_struct adcdata[NUM_ADC_CHANNELS] IDATA_ATTR;
@@ -39,10 +40,13 @@ static struct adc_struct adcdata[NUM_ADC_CHANNELS] IDATA_ATTR;
 static long adc_cache_interval(const struct adc_struct *adc)
 {
 #ifdef IPOD_COLOR
-    /* Battery state changes slowly; accessory detection still needs the
-     * original 400 ms cadence for responsive attach/detach handling. */
+    /* With the power thread polling at HZ/2 and a strict cache deadline,
+     * HZ/2 produces one real conversion per second. Accessory detection keeps
+     * the original 400 ms cadence for responsive attach/detach handling. */
     if (adc == &adcdata[ADC_BATTERY])
-        return HZ;
+        return HZ / 2;
+#else
+    (void)adc;
 #endif
     return HZ * 2 / 5;
 }
@@ -76,6 +80,7 @@ static unsigned short _adc_read(struct adc_struct *adc)
             adc->conversion(&value);
         }
         adc->data = value;
+        adc->sample_tick = current_tick;
 
         i2c_unlock();
         return value;
@@ -96,6 +101,13 @@ unsigned short adc_scan(int channel) {
 unsigned short adc_read(int channel) {
     return _adc_read(&adcdata[channel]);
 }
+
+#ifdef IPOD_COLOR
+long adc_last_scan_tick(int channel)
+{
+    return adcdata[channel].sample_tick;
+}
+#endif
 
 void adc_init(void)
 {

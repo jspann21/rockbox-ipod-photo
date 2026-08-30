@@ -131,6 +131,14 @@
 
 #define CONFIG_BATTERY_MEASURE VOLTAGE_MEASURE
 
+/* The Photo has no coulomb counter, but it can build a better voltage-only
+ * estimate by rejecting ADC outliers, observing repeatable load sag and
+ * debouncing the low-battery policy. Keep this native-only: the simulator and
+ * bootloader use the generic battery path. */
+#if !defined(BOOTLOADER) && !defined(SIMULATOR)
+#define HAVE_BATTERY_MEASURED_MODEL
+#endif
+
 /* Hardware controlled charging? */
 #define CONFIG_CHARGING CHARGING_MONITOR
 

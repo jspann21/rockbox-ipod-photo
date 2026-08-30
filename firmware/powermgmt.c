@@ -262,7 +262,12 @@ int battery_current(void)
 static void average_init(void)
 {
 #if CONFIG_BATTERY_MEASURE & VOLTAGE_MEASURE
-    voltage_now = _battery_voltage() + 15;
+    voltage_now = _battery_voltage();
+
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+    battery_model_init(voltage_now);
+#else
+    voltage_now += 15;
 
     /* The battery voltage is usually a little lower directly after
        turning on, because the disk was used heavily. Raise it by 5% */
@@ -275,6 +280,7 @@ static void average_init(void)
                         percent_to_volt_discharge[5]) / 2;
     }
 #endif /* HAVE_DISK_STORAGE */
+#endif /* HAVE_BATTERY_MEASURED_MODEL */
 
     voltage_avg = voltage_now * BATT_AVE_SAMPLES;
 #endif /* CONFIG_BATTERY_MEASURE & VOLTAGE_MEASURE */
@@ -291,6 +297,11 @@ static void average_step(bool low_battery)
 {
 #if CONFIG_BATTERY_MEASURE & VOLTAGE_MEASURE
     int millivolts = _battery_voltage();
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+    (void)low_battery;
+    voltage_now = battery_model_step(millivolts);
+    voltage_avg = voltage_now * BATT_AVE_SAMPLES;
+#else
     if(low_battery) {
         voltage_now = (millivolts + voltage_now + 1) / 2;
         voltage_avg += voltage_now - voltage_avg / BATT_AVE_SAMPLES;
@@ -298,6 +309,7 @@ static void average_step(bool low_battery)
         voltage_avg += millivolts - voltage_avg / BATT_AVE_SAMPLES;
         voltage_now = voltage_avg / BATT_AVE_SAMPLES;
     }
+#endif /* HAVE_BATTERY_MEASURED_MODEL */
 #else
     (void)low_battery;
 #endif
@@ -452,6 +464,9 @@ static void battery_status_update(void)
 #endif
 
     percent_now = level;
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+    battery_model_set_reported_level(level);
+#endif
     send_battery_level_event(level);
 }
 
@@ -503,6 +518,8 @@ bool battery_level_safe(void)
 {
 #if defined(NO_LOW_BATTERY_SHUTDOWN)
     return true;
+#elif defined(HAVE_BATTERY_MEASURED_MODEL)
+    return battery_model_disk_safe();
 #elif ((CONFIG_BATTERY_MEASURE & PERCENTAGE_MEASURE) && (CONFIG_BATTERY_MEASURE & VOLTAGE_MEASURE))
     return voltage_now > battery_level_disksafe;
 #elif CONFIG_BATTERY_MEASURE & PERCENTAGE_MEASURE
@@ -536,6 +553,8 @@ bool query_force_shutdown(void)
 
 #if defined(NO_LOW_BATTERY_SHUTDOWN)
     return false;
+#elif defined(HAVE_BATTERY_MEASURED_MODEL)
+    return battery_model_force_shutdown();
 #elif ((CONFIG_BATTERY_MEASURE & PERCENTAGE_MEASURE) && (CONFIG_BATTERY_MEASURE & VOLTAGE_MEASURE))
     /* If we have both, prefer voltage */
     return voltage_now < battery_level_shutoff;
@@ -737,6 +756,16 @@ static inline void power_thread_step(void)
     power_thread_rtc_process();
 #endif
 
+#ifdef HAVE_BATTERY_MEASURED_MODEL
+    /* The A1099 model needs loaded samples to distinguish ATA/CPU sag from
+     * the rested battery baseline. Its target ADC cache prevents duplicate
+     * I2C conversions from being forced here. */
+    average_step(false);
+    battery_status_update();
+
+    if (!shutdown_timeout && query_force_shutdown())
+        sys_poweroff();
+#else
     /*
      * Do a digital exponential filter.  We don't sample the battery if
      * the disk is spinning unless we are in USB mode (the disk will most
@@ -763,6 +792,7 @@ static inline void power_thread_step(void)
             sys_poweroff();
         }
     }
+#endif /* HAVE_BATTERY_MEASURED_MODEL */
 } /* power_thread_step */
 
 static void power_thread(void)

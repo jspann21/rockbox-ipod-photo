@@ -216,6 +216,32 @@ int battery_voltage(void)
     \return
     \description
 
+void battery_model_get_debug(struct battery_model_debug *debug)
+    \group power
+    \conditions defined(HAVE_BATTERY_MEASURED_MODEL)
+    \param debug destination for the current model and target diagnostics
+    \description Copy a coherent snapshot of the measured battery model.
+
+void battery_model_set_telemetry(bool enable)
+    \group power
+    \conditions defined(HAVE_BATTERY_MEASURED_MODEL)
+    \param enable true while a diagnostic capture is active
+    \description Enable target diagnostics that are too costly for permanent polling.
+
+unsigned int battery_model_copy_samples(unsigned long after_tick, struct battery_model_sample *samples, unsigned int max_samples)
+    \group power
+    \conditions defined(HAVE_BATTERY_MEASURED_MODEL)
+    \param after_tick only samples newer than this tick are copied
+    \param samples destination array
+    \param max_samples capacity of the destination array
+    \return number of chronological samples copied
+    \description Copy recent measured-model telemetry without racing the model update.
+
+bool storage_disk_is_active(void)
+    \group storage
+    \return true while the storage device is active
+    \description Query storage activity without changing its power state.
+
 void crash_record_ipvf_update(uint32_t active, uint32_t phase, uint32_t frame, uint32_t slot)
     \group system
     \conditions defined(HAVE_IPOD_CRASH_RECORD)
