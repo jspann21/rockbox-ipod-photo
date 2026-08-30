@@ -370,6 +370,9 @@ static void render_worker(void)
     volatile struct ipvf_render_control *control = UNCACHED_ADDR(&render);
 
     control->heartbeat = true;
+#ifdef HAVE_IPOD_CRASH_RECORD
+    rb->crash_record_ipvf_update(1, CRASH_RECORD_IPVF_RENDERING, 0, 0);
+#endif
     membarrier();
 
     while (true)
@@ -395,6 +398,11 @@ static void render_worker(void)
             control->failed = true;
 
         control->consume = consume + 1;
+#ifdef HAVE_IPOD_CRASH_RECORD
+        rb->crash_record_ipvf_update(1, CRASH_RECORD_IPVF_RENDERING,
+                                     control->consume,
+                                     render_slot_index(consume));
+#endif
         membarrier();
         rb->semaphore_release(&render.free_slots);
     }
@@ -413,6 +421,10 @@ static bool render_start(unsigned char *slot_base)
     if (((uintptr_t)slot_base & (IPVF_RECORD_SECTOR_SIZE - 1)) != 0)
         return false;
 
+#ifdef HAVE_IPOD_CRASH_RECORD
+    rb->crash_record_ipvf_update(1, CRASH_RECORD_IPVF_STARTING, 0, 0);
+#endif
+
     rb->memset(&render, 0, sizeof(render));
     rb->semaphore_init(&render.free_slots,
                        IPVF_RENDER_SLOTS, IPVF_RENDER_SLOTS);
@@ -426,7 +438,12 @@ static bool render_start(unsigned char *slot_base)
         CREATE_THREAD_FROZEN, "ipvfrender"
         IF_PRIO(, PRIORITY_PLAYBACK) IF_COP(, COP));
     if (render_thread_id == 0)
+    {
+#ifdef HAVE_IPOD_CRASH_RECORD
+        rb->crash_record_ipvf_update(0, CRASH_RECORD_IPVF_IDLE, 0, 0);
+#endif
         return false;
+    }
 
     rb->commit_discard_dcache();
     control = UNCACHED_ADDR(&render);
@@ -448,6 +465,9 @@ static bool render_start(unsigned char *slot_base)
             rb->panicf("IPVF render start timeout");
         rb->thread_wait(render_thread_id);
         render_thread_id = 0;
+#ifdef HAVE_IPOD_CRASH_RECORD
+        rb->crash_record_ipvf_update(0, CRASH_RECORD_IPVF_IDLE, 0, 0);
+#endif
         return false;
     }
 
@@ -459,6 +479,12 @@ static unsigned char *render_acquire(void)
 {
     volatile struct ipvf_render_control *control = UNCACHED_ADDR(&render);
     unsigned int produce;
+
+#ifdef HAVE_IPOD_CRASH_RECORD
+    rb->crash_record_ipvf_update(1, CRASH_RECORD_IPVF_WAITING_SLOT,
+                                 control->produce,
+                                 render_slot_index(control->produce));
+#endif
 
     if (rb->semaphore_wait(&render.free_slots, HZ * 3) !=
         OBJ_WAIT_SUCCEEDED)
@@ -481,6 +507,10 @@ static unsigned char *render_acquire(void)
         return NULL;
     }
 
+#ifdef HAVE_IPOD_CRASH_RECORD
+    rb->crash_record_ipvf_update(1, CRASH_RECORD_IPVF_READING, produce,
+                                 render_slot_index(produce));
+#endif
     return UNCACHED_ADDR(
         control->slots[render_slot_index(produce)].record);
 }
@@ -507,6 +537,10 @@ static bool render_queue(unsigned int type, unsigned int rect_count,
     slot->type = type;
     slot->rect_count = rect_count;
     slot->payload_size = payload_size;
+#ifdef HAVE_IPOD_CRASH_RECORD
+    rb->crash_record_ipvf_update(1, CRASH_RECORD_IPVF_QUEUED, produce,
+                                 render_slot_index(produce));
+#endif
     membarrier();
     control->produce = produce + 1;
     membarrier();
@@ -523,6 +557,12 @@ static bool render_finish(void)
 
     if (!render_active)
         return false;
+
+#ifdef HAVE_IPOD_CRASH_RECORD
+    rb->crash_record_ipvf_update(1, CRASH_RECORD_IPVF_DRAINING,
+                                 control->consume,
+                                 render_slot_index(control->consume));
+#endif
 
     for (i = 0; i < IPVF_RENDER_SLOTS; i++)
     {
@@ -547,6 +587,9 @@ static bool render_finish(void)
     passed = !control->failed;
     render_thread_id = 0;
     render_active = false;
+#ifdef HAVE_IPOD_CRASH_RECORD
+    rb->crash_record_ipvf_update(0, CRASH_RECORD_IPVF_IDLE, 0, 0);
+#endif
     rb->commit_discard_dcache();
     return passed;
 }
@@ -858,12 +901,21 @@ static enum plugin_status play_file(const char *filename)
     if (!render_finish())
         failed = true;
     if (!usb_connected && !failed && stats.frames != 0 &&
-        (stopped || stats.frames == info.frame_count) &&
-        !reconcile_framebuffer(fd, &info, last_key_offset,
-                               last_key_sectors, last_key_frame,
-                               stats.frames, fb,
-                               stats.frames == info.frame_count))
-        failed = true;
+        (stopped || stats.frames == info.frame_count))
+    {
+#ifdef HAVE_IPOD_CRASH_RECORD
+        rb->crash_record_ipvf_update(1, CRASH_RECORD_IPVF_RECONCILING,
+                                     stats.frames, 0);
+#endif
+        if (!reconcile_framebuffer(fd, &info, last_key_offset,
+                                   last_key_sectors, last_key_frame,
+                                   stats.frames, fb,
+                                   stats.frames == info.frame_count))
+            failed = true;
+#ifdef HAVE_IPOD_CRASH_RECORD
+        rb->crash_record_ipvf_update(0, CRASH_RECORD_IPVF_IDLE, 0, 0);
+#endif
+    }
 #endif
 
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ

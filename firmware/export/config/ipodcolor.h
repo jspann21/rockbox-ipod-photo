@@ -220,6 +220,10 @@
 #define HAVE_ATA_DMA_RECOVERY
 #define HAVE_ATA_DMA_IRQ
 #ifndef SIMULATOR
+/* One retained, CRC-protected crash record in DRAM; no disk logging. */
+#define HAVE_IPOD_CRASH_RECORD
+#endif
+#ifndef SIMULATOR
 /* PP5020 telemetry reads hardware timers and masks ARM interrupts. */
 #define HAVE_PP5020_PERF
 #endif

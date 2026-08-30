@@ -10,8 +10,13 @@ STARTUP(target/arm/pp/crt0-pp.o)
 
 #define PLUGINSIZE PLUGIN_BUFFER_SIZE
 #define CODECSIZE CODEC_SIZE
+#ifdef HAVE_IPOD_CRASH_RECORD
+#define CRASH_RECORD_SIZE 0x100
+#else
+#define CRASH_RECORD_SIZE 0
+#endif
 
-#define DRAMSIZE (MEMORYSIZE * 0x100000) - PLUGINSIZE - CODECSIZE
+#define DRAMSIZE (MEMORYSIZE * 0x100000) - PLUGINSIZE - CODECSIZE - CRASH_RECORD_SIZE
 
 #define DRAMORIG 0x00000000
 #define IRAMORIG 0x40000000
@@ -27,6 +32,10 @@ MEMORY
 {
     DRAM : ORIGIN = DRAMORIG,     LENGTH = DRAMSIZE
     IRAM : ORIGIN = IRAMORIG,     LENGTH = IRAMSIZE
+#ifdef HAVE_IPOD_CRASH_RECORD
+    RETAINED : ORIGIN = DRAMORIG + MEMORYSIZE * 0x100000 - CRASH_RECORD_SIZE,
+               LENGTH = CRASH_RECORD_SIZE
+#endif
 }
 
 SECTIONS
@@ -192,4 +201,17 @@ SECTIONS
         _pluginbuf = .;
         pluginbuf = .;
     }
+
+#ifdef HAVE_IPOD_CRASH_RECORD
+    /* Reserve the final 256 bytes of physical SDRAM. It is outside the
+     * advertised plugin buffer, is not loadable, and is not cleared by crt0. */
+    .crash_record_noinit (NOLOAD) :
+    {
+        . = ALIGN(CACHEALIGN_SIZE);
+        KEEP(*(.crash_record_noinit))
+        . = ALIGN(CACHEALIGN_SIZE);
+    } > RETAINED
+    ASSERT(SIZEOF(.crash_record_noinit) <= CRASH_RECORD_SIZE,
+           "retained crash record exceeds reservation")
+#endif
 }

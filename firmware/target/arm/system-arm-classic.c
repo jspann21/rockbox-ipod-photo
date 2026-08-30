@@ -27,6 +27,10 @@
 #include <get_sp.h>
 #include <backtrace.h>
 
+#ifdef HAVE_IPOD_CRASH_RECORD
+#include "crash-record.h"
+#endif
+
 static const char* const uiename[] = {
     "Undefined instruction",
     "Prefetch abort",
@@ -40,6 +44,9 @@ void __attribute__((weak,naked)) data_abort_handler(void)
     asm volatile(
         "sub    r0, lr, #8  \n"
         "mov    r1, #2      \n"
+#ifdef HAVE_IPOD_CRASH_RECORD
+        "mov    r2, lr      \n"
+#endif
         "b      UIE         \n"
         );
 }
@@ -49,6 +56,9 @@ void __attribute__((weak,naked)) software_int_handler(void)
     asm volatile(
         "sub    r0, lr, #4  \n"
         "mov    r1, #4      \n"
+#ifdef HAVE_IPOD_CRASH_RECORD
+        "mov    r2, lr      \n"
+#endif
         "b      UIE         \n"
         );
 }
@@ -58,6 +68,9 @@ void __attribute__((weak,naked)) reserved_handler(void)
     asm volatile(
         "sub    r0, lr, #4  \n"
         "mov    r1, #4      \n"
+#ifdef HAVE_IPOD_CRASH_RECORD
+        "mov    r2, lr      \n"
+#endif
         "b      UIE         \n"
         );
 }
@@ -67,6 +80,9 @@ void __attribute__((weak,naked)) prefetch_abort_handler(void)
     asm volatile(
         "sub    r0, lr, #4  \n"
         "mov    r1, #1      \n"
+#ifdef HAVE_IPOD_CRASH_RECORD
+        "mov    r2, lr      \n"
+#endif
         "b      UIE         \n"
         );
 }
@@ -81,6 +97,9 @@ void __attribute__((weak,naked)) undef_instr_handler(void)
         "subne  r0, lr, #2    \n" // if yes, offset to THUMB instruction
 #endif
         "mov    r1, #0        \n"
+#ifdef HAVE_IPOD_CRASH_RECORD
+        "mov    r2, lr        \n"
+#endif
         "b      UIE           \n"
         );
 }
@@ -88,13 +107,28 @@ void __attribute__((weak,naked)) undef_instr_handler(void)
 /* Unexpected Interrupt or Exception handler. Currently only deals with
    exceptions, but will deal with interrupts later.
  */
-void NORETURN_ATTR UIE(unsigned int pc, unsigned int num)
+void NORETURN_ATTR UIE(unsigned int pc, unsigned int num
+#ifdef HAVE_IPOD_CRASH_RECORD
+                       , unsigned int lr
+#endif
+                       )
 {
     /* safe guard variable - we call backtrace() only on first
      * UIE call. This prevent endless loop if backtrace() touches
      * memory regions which cause abort
      */
     static bool triggered = false;
+
+#ifdef HAVE_IPOD_CRASH_RECORD
+    {
+        unsigned int kind = num == 0 ? CRASH_RECORD_UNDEFINED :
+                            num == 1 ? CRASH_RECORD_PREFETCH_ABORT :
+                            num == 2 ? CRASH_RECORD_DATA_ABORT :
+                            num == 3 ? CRASH_RECORD_DIVIDE_BY_ZERO :
+                            CRASH_RECORD_SOFTWARE;
+        crash_record_exception(pc, kind, __get_sp(), lr, num != 3);
+    }
+#endif
 
 #if LCD_DEPTH > 1
     lcd_set_backdrop(NULL);
@@ -168,6 +202,9 @@ void __attribute__((naked)) __div0(void)
         "ldr    r0, [sp]    \r\n"
         "sub    r0, r0, #4  \r\n"
         "mov    r1, #3      \r\n"
+#ifdef HAVE_IPOD_CRASH_RECORD
+        "mov    r2, lr      \r\n"
+#endif
         "b      UIE         \r\n"
     );
 }

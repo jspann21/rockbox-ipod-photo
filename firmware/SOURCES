@@ -702,6 +702,9 @@ target/arm/ata-as-arm.S
 
 #if defined(CPU_PP) && defined(IPOD_ARCH)
 target/arm/ipod/power-ipod.c
+# if defined(HAVE_IPOD_CRASH_RECORD)
+target/arm/ipod/crash-record.c
+# endif
 # if LCD_DEPTH == 2
 target/arm/ipod/lcd-as-gray.S
 # endif

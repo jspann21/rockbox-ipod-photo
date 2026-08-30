@@ -67,6 +67,9 @@ int plugin_open(const char *plugin, const char *parameter);
 
 #ifndef __PCTOOL__
 #include "config.h"
+#ifdef HAVE_IPOD_CRASH_RECORD
+#include "crash-record.h"
+#endif
 #include "system.h"
 #include "dir.h"
 #include "general.h"
@@ -179,7 +182,7 @@ int plugin_open(const char *plugin, const char *parameter);
  * when this happens please take the opportunity to sort in
  * any new functions "waiting" at the end of the list.
  */
-#define PLUGIN_API_VERSION 285
+#define PLUGIN_API_VERSION 286
 
 /* 239 Marks the removal of ARCHOS HWCODEC and CHARCELL */
 
@@ -1049,6 +1052,10 @@ struct plugin_api {
 #if defined(IPOD_COLOR) && !defined(SIMULATOR)
     bool (*lcd_update_rect_from_buffer)(const fb_data *src, int stride,
                                         int x, int y, int width, int height);
+#endif
+#ifdef HAVE_IPOD_CRASH_RECORD
+    void (*crash_record_ipvf_update)(uint32_t active, uint32_t phase,
+                                     uint32_t frame, uint32_t slot);
 #endif
 };
 

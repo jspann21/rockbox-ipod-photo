@@ -216,6 +216,15 @@ int battery_voltage(void)
     \return
     \description
 
+void crash_record_ipvf_update(uint32_t active, uint32_t phase, uint32_t frame, uint32_t slot)
+    \group system
+    \conditions defined(HAVE_IPOD_CRASH_RECORD)
+    \param active nonzero while the IPVF native pipeline owns COP work
+    \param phase one of enum crash_record_ipvf_phase
+    \param frame current producer or consumer sequence
+    \param slot current native render slot
+    \description Update volatile IPVF liveness context copied into a retained crash record only if a fatal exception or panic occurs.
+
 void beep_play(unsigned int frequency, unsigned int duration, unsigned int amplitude)
     \group sound
     \param frequency

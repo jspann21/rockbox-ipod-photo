@@ -32,6 +32,10 @@
 #include "logf.h"
 #include "rbversion.h"
 
+#ifdef HAVE_IPOD_CRASH_RECORD
+#include "crash-record.h"
+#endif
+
 #ifdef HAVE_RB_BACKTRACE
 #include "gcc_extensions.h"
 #include "backtrace.h"
@@ -95,6 +99,14 @@ void panicf( const char *fmt, ...)
     va_start( ap, fmt );
     vsnprintf( panic_buf, sizeof(panic_buf), fmt, ap );
     va_end( ap );
+
+#ifdef HAVE_IPOD_CRASH_RECORD
+#ifdef HAVE_RB_BACKTRACE
+    crash_record_panic((uint32_t)pc, (uint32_t)sp, panic_buf);
+#else
+    crash_record_panic(0, 0, panic_buf);
+#endif
+#endif
 
     lcd_set_viewport(NULL);
 

@@ -169,10 +169,13 @@ Target: fourth-generation iPod Photo/Color (`ipodcolor`), initially the A1099.
       paths where current Rockbox still trusts external lengths or indices.
 - [ ] Keep Photo-specific behavior isolated from generic Rockbox code while
       removing avoidable allocations and large stack buffers on the 32 MB target.
-- [ ] Extend useful crash information without continuous disk logging; the disk
-      debug screen provides ATA recovery state and the separate PP5020
-      performance page provides volatile cache, DMA, IRQ, and storage-wakeup
-      counters.
+- [ ] Extend useful crash information without continuous disk logging. Native
+      A1099 builds now retain one versioned, CRC-protected panic/exception and
+      IPVF-liveness record outside the cleared/loadable image and expose it in
+      the Debug menu; hardware must still prove that the installed bootloader's
+      warm-reset path preserves the reserved SDRAM block. The disk debug screen
+      provides ATA recovery state and the separate PP5020 performance page
+      provides volatile cache, DMA, IRQ, and storage-wakeup counters.
 
 ## Storage and iFlash compatibility
 

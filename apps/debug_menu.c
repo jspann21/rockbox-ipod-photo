@@ -41,6 +41,7 @@
 #include "dir.h"
 #include "panic.h"
 #include "screens.h"
+#include "yesno.h"
 #include "misc.h"
 #include "splash.h"
 #include "shortcuts.h"
@@ -104,6 +105,10 @@
 #include "pcf50605.h"
 #endif
 #include "appevents.h"
+
+#ifdef HAVE_IPOD_CRASH_RECORD
+#include "crash-record.h"
+#endif
 
 #if defined(HAVE_AS3514) && CONFIG_CHARGING
 #include "ascodec.h"
@@ -2133,6 +2138,90 @@ static bool dbg_pp5020_perf(void)
 #endif /* HAVE_PP5020_PERF */
 #endif /* PLATFORM_NATIVE */
 
+#ifdef HAVE_IPOD_CRASH_RECORD
+static const char *crash_record_kind_name(uint32_t kind)
+{
+    static const char * const names[] =
+    {
+        "none", "panic", "undefined", "prefetch abort", "data abort",
+        "divide by zero", "software"
+    };
+
+    return kind < ARRAYLEN(names) ? names[kind] : "unknown";
+}
+
+static const char *crash_record_ipvf_phase_name(uint32_t phase)
+{
+    static const char * const names[] =
+    {
+        "idle", "starting", "waiting slot", "reading", "queued",
+        "rendering", "draining", "reconciling"
+    };
+
+    return phase < ARRAYLEN(names) ? names[phase] : "unknown";
+}
+
+static int crash_record_callback(int btn, struct gui_synclist *lists)
+{
+    struct crash_record record;
+
+    (void)lists;
+    if (btn == ACTION_STD_CONTEXT)
+    {
+        if (yesno_pop("Clear retained crash record?"))
+        {
+            crash_record_clear();
+            splash(HZ / 2, "Crash record cleared");
+        }
+        return ACTION_REDRAW;
+    }
+
+    simplelist_reset_lines();
+    if (!crash_record_get(&record))
+    {
+        simplelist_addline("No valid crash record");
+        simplelist_addline("CONTEXT: clear");
+        return btn;
+    }
+
+    simplelist_addline("Kind: %s (%lu)",
+                       crash_record_kind_name(record.kind),
+                       (unsigned long)record.kind);
+    simplelist_addline("Core: %lu (id %02lx)",
+                       (unsigned long)record.core,
+                       (unsigned long)record.processor_id);
+    simplelist_addline("Valid fields: %02lx", (unsigned long)record.valid);
+    simplelist_addline("PC %08lx LR %08lx", (unsigned long)record.pc,
+                       (unsigned long)record.lr);
+    simplelist_addline("SP %08lx", (unsigned long)record.sp);
+    simplelist_addline("CPSR %08lx SPSR %08lx", (unsigned long)record.cpsr,
+                       (unsigned long)record.spsr);
+    simplelist_addline("Tick: %lu", (unsigned long)record.timestamp);
+    simplelist_addline("IPVF: %s; %s (%lu)",
+                       record.ipvf_active ? "active" : "inactive",
+                       crash_record_ipvf_phase_name(record.ipvf_phase),
+                       (unsigned long)record.ipvf_phase);
+    simplelist_addline("frame %lu slot %lu heartbeat %lu ticks",
+                       (unsigned long)record.ipvf_frame,
+                       (unsigned long)record.ipvf_slot,
+                       (unsigned long)record.ipvf_heartbeat_age);
+    if (record.panic[0] != '\0')
+        simplelist_addline("Panic: %s", record.panic);
+    simplelist_addline("CONTEXT: clear");
+    return btn;
+}
+
+static bool dbg_crash_record(void)
+{
+    struct simplelist_info info;
+
+    simplelist_info_init(&info, "Crash record [CONTEXT clear]", 1, NULL);
+    info.action_callback = crash_record_callback;
+    info.scroll_all = true;
+    return simplelist_show_list(&info);
+}
+#endif /* HAVE_IPOD_CRASH_RECORD */
+
 #ifdef HAVE_DIRCACHE
 static int dircache_callback(int btn, struct gui_synclist *lists)
 {
@@ -3151,6 +3240,9 @@ static const struct {
         { "Dump ATA identify info", dbg_identify_info},
 #ifdef HAVE_PP5020_PERF
         { "View PP5020 performance", dbg_pp5020_perf },
+#endif
+#ifdef HAVE_IPOD_CRASH_RECORD
+        { "View crash record", dbg_crash_record },
 #endif
 #ifdef HAVE_ATA_SMART
         { "View/Dump S.M.A.R.T. data", dbg_ata_smart},

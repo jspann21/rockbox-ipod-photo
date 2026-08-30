@@ -389,6 +389,9 @@ vectors:
 undef_instr_handler:
     sub    r0, lr, #4
     mov    r1, #0
+#ifdef HAVE_IPOD_CRASH_RECORD
+    mov    r2, lr
+#endif
     b      UIE
 
 /* We run sys mode most of the time, and should never see a software
@@ -398,11 +401,17 @@ software_int_handler:
 reserved_handler:
     sub    r0, lr, #4
     mov    r1, #4
+#ifdef HAVE_IPOD_CRASH_RECORD
+    mov    r2, lr
+#endif
     b      UIE
 
 prefetch_abort_handler:
     sub    r0, lr, #4
     mov    r1, #1
+#ifdef HAVE_IPOD_CRASH_RECORD
+    mov    r2, lr
+#endif
     b      UIE
 
 #if defined(HAVE_BOOTDATA) && !defined(BOOTLOADER)

@@ -883,6 +883,9 @@ static const struct plugin_api rockbox_api = {
 #if defined(IPOD_COLOR) && !defined(SIMULATOR)
     lcd_update_rect_from_buffer,
 #endif
+#ifdef HAVE_IPOD_CRASH_RECORD
+    crash_record_ipvf_update,
+#endif
 };
 
 static int plugin_buffer_handle;
