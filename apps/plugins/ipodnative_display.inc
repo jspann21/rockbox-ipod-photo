@@ -394,9 +394,12 @@ static bool reconcile_framebuffer(int fd, const struct ipvf_info *info,
                                   uint32_t key_record_sectors,
                                   unsigned long key_frame,
                                   unsigned long displayed_frames,
+                                  unsigned char *read_buffer,
+                                  unsigned char *scratch,
                                   fb_data *fb, bool expect_eof)
 {
-    unsigned char *record = render_reconcile_buffer();
+    unsigned char *decoded_record = render_reconcile_buffer();
+    unsigned char *record = UNCACHED_ADDR(read_buffer);
     uint32_t current_sectors = key_record_sectors;
     off_t position = key_offset;
     unsigned long frame;
@@ -406,8 +409,7 @@ static bool reconcile_framebuffer(int fd, const struct ipvf_info *info,
 
     for (frame = key_frame; passed && frame < displayed_frames; frame++)
     {
-        unsigned int type, rect_count;
-        uint32_t payload_size, audio_frames, next_sectors;
+        struct ipvf_record_info record_info;
         uint32_t record_bytes;
 
         if (current_sectors == 0 ||
@@ -419,29 +421,31 @@ static bool reconcile_framebuffer(int fd, const struct ipvf_info *info,
         record_bytes = current_sectors * IPVF_RECORD_SECTOR_SIZE;
         if (position > info->file_size ||
             (off_t)record_bytes > info->file_size - position ||
-            rb->read(fd, record, record_bytes) != (ssize_t)record_bytes ||
+            !read_exact(fd, record, record_bytes) ||
             !parse_record(record, current_sectors, frame, info,
-                          &type, &rect_count, &payload_size,
-                          &audio_frames, &next_sectors, true) ||
-            (frame == key_frame && type != IPVF_TYPE_KEY))
+                          &record_info) ||
+            !decode_record_video(record, &record_info, decoded_record,
+                                 scratch, true) ||
+            (frame == key_frame && record_info.type != IPVF_TYPE_KEY))
         {
             passed = false;
             break;
         }
 
-        if (type == IPVF_TYPE_KEY)
-            rb->memcpy(fb, record + IPVF_FRAME_HEADER_SIZE,
+        if (record_info.type == IPVF_TYPE_KEY)
+            rb->memcpy(fb, decoded_record + IPVF_FRAME_HEADER_SIZE,
                        IPVF_FRAME_BYTES);
-        else if (type == IPVF_TYPE_RECTS &&
-                 !apply_rects(record + IPVF_FRAME_HEADER_SIZE,
-                              payload_size, rect_count, fb, false))
+        else if (record_info.type == IPVF_TYPE_RECTS &&
+                 !apply_rects(decoded_record + IPVF_FRAME_HEADER_SIZE,
+                              record_info.decoded_video_bytes,
+                              record_info.rect_count, fb, false))
         {
             passed = false;
             break;
         }
 
         position += record_bytes;
-        current_sectors = next_sectors;
+        current_sectors = record_info.next_sectors;
     }
 
     if (passed && expect_eof &&

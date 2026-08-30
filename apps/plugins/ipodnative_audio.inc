@@ -69,15 +69,22 @@ static bool audio_restart(void)
     rb->mixer_channel_set_amplitude(IPVF_AUDIO_CHANNEL, MIX_AMP_UNITY);
     rb->mixer_channel_play_data(IPVF_AUDIO_CHANNEL, &audio_mixer_cbs,
                                 NULL, 0);
-    return true;
+    return rb->mixer_channel_status(IPVF_AUDIO_CHANNEL) != CHANNEL_STOPPED;
 }
 
-static bool audio_write_frames(const unsigned char *source, uint32_t frames)
+static bool audio_write_ima_block(const unsigned char *source,
+                                  uint32_t source_bytes,
+                                  uint32_t frames)
 {
+    struct ipvf_ima_state state;
     long deadline = *rb->current_tick + HZ * 3;
     uint32_t last_completed = audio.completed_frames;
+    uint32_t decoded = 0;
 
-    while (frames != 0)
+    if (!ipvf_ima_parse_header(source, source_bytes, frames, &state))
+        return false;
+
+    while (decoded < frames)
     {
         uint32_t written = audio.written_frames;
         uint32_t completed = audio.completed_frames;
@@ -85,6 +92,8 @@ static bool audio_write_frames(const unsigned char *source, uint32_t frames)
         uint32_t free_frames;
         uint32_t offset;
         uint32_t count;
+        uint32_t i;
+        int16_t *destination;
 
         if (used > audio.capacity_frames)
             return false;
@@ -112,16 +121,38 @@ static bool audio_write_frames(const unsigned char *source, uint32_t frames)
         count = audio.capacity_frames - offset;
         if (count > free_frames)
             count = free_frames;
-        if (count > frames)
-            count = frames;
+        if (count > frames - decoded)
+            count = frames - decoded;
 
-        rb->memcpy(audio.buffer +
-                   (size_t)offset * IPVF_AUDIO_FRAME_BYTES,
-                   source, (size_t)count * IPVF_AUDIO_FRAME_BYTES);
+        destination = (int16_t *)(audio.buffer +
+                      (size_t)offset * IPVF_AUDIO_FRAME_BYTES);
+        for (i = 0; i < count; i++, decoded++)
+        {
+            int16_t left;
+            int16_t right;
+
+            if (decoded == 0)
+            {
+                left = (int16_t)state.left_predictor;
+                right = (int16_t)state.right_predictor;
+            }
+            else
+            {
+                unsigned int codes = source[IPVF_IMA_HEADER_BYTES +
+                                            decoded - 1u];
+
+                left = ipvf_ima_decode_nibble(
+                    codes & 0x0fu, &state.left_predictor,
+                    &state.left_index);
+                right = ipvf_ima_decode_nibble(
+                    codes >> 4, &state.right_predictor,
+                    &state.right_index);
+            }
+            destination[2u * i] = left;
+            destination[2u * i + 1u] = right;
+        }
         membarrier();
         audio.written_frames = written + count;
-        source += (size_t)count * IPVF_AUDIO_FRAME_BYTES;
-        frames -= count;
     }
 
     return true;
@@ -132,6 +163,7 @@ static uint32_t audio_clock(void)
     uint32_t completed;
     uint32_t current;
     uint32_t waiting;
+    unsigned int attempts = 0;
 
     do
     {
@@ -141,11 +173,12 @@ static uint32_t audio_clock(void)
             (rb->mixer_channel_get_bytes_waiting(IPVF_AUDIO_CHANNEL) /
              IPVF_AUDIO_FRAME_BYTES);
     }
-    while (completed != audio.completed_frames ||
-           current != audio.current_frames ||
-           (waiting == 0 && current != 0 &&
-            rb->mixer_channel_status(IPVF_AUDIO_CHANNEL) ==
-                CHANNEL_PLAYING));
+    while (++attempts < 8u &&
+           (completed != audio.completed_frames ||
+            current != audio.current_frames ||
+            (waiting == 0 && current != 0 &&
+             rb->mixer_channel_status(IPVF_AUDIO_CHANNEL) ==
+                 CHANNEL_PLAYING)));
 
     if (waiting > current)
         waiting = current;
@@ -176,10 +209,21 @@ static bool audio_wait_until(uint32_t target)
         uint32_t remaining_us = (uint32_t)
             ((uint64_t)remaining * 1000000u / IPVF_AUDIO_SAMPLE_RATE);
 
-        if (rb->mixer_channel_status(IPVF_AUDIO_CHANNEL) == CHANNEL_STOPPED &&
-            !audio_restart())
-            return false;
-        if (remaining_us > 2500u)
+        bool stopped =
+            rb->mixer_channel_status(IPVF_AUDIO_CHANNEL) == CHANNEL_STOPPED;
+
+        if (stopped)
+        {
+            uint32_t used = audio_used_frames();
+
+            if (audio.source_eof && audio.written_frames == target &&
+                audio.completed_frames >= target &&
+                audio.current_frames == 0)
+                return true;
+            if (used != 0)
+                audio_restart();
+        }
+        if (!stopped && remaining_us > 2500u)
             wait_until(USEC_TIMER + remaining_us - 1500u);
         else
             rb->yield();
@@ -196,6 +240,22 @@ static bool audio_wait_until(uint32_t target)
     }
 
     return true;
+}
+
+/* Mixer bookkeeping leads physical output by one frame; cover both buffers. */
+static void audio_drain_output(void)
+{
+    long ticks;
+
+    if (!audio.configured || !audio.started || !audio.source_eof)
+        return;
+
+    ticks = (long)((2u * MIX_FRAME_SAMPLES * HZ +
+                    IPVF_AUDIO_SAMPLE_RATE - 1u) /
+                   IPVF_AUDIO_SAMPLE_RATE);
+    if (ticks < 1)
+        ticks = 1;
+    rb->sleep(ticks);
 }
 
 static void audio_mark_eof(void)
@@ -251,6 +311,14 @@ static bool ipodnative_audio_init(void)
     if (skipped > size)
         goto fail;
     size -= skipped;
+#ifdef IPVF_NATIVE_PIPELINE
+    if (size < IPVF_MAX_PAYLOAD + IPVF_AUDIO_RING_MIN_BYTES ||
+        aligned > (uintptr_t)-1 - IPVF_MAX_PAYLOAD)
+        goto fail;
+    audio.video_scratch = (unsigned char *)aligned;
+    aligned += IPVF_MAX_PAYLOAD;
+    size -= IPVF_MAX_PAYLOAD;
+#endif
     ring_bytes = floor_power_of_two(size);
     if (ring_bytes < IPVF_AUDIO_RING_MIN_BYTES)
         goto fail;

@@ -37,29 +37,38 @@ class IPVFEncodeTests(unittest.TestCase):
 
     def parse_records(self, data: bytes):
         self.assertEqual(struct.unpack_from("<H", data, 4)[0], ipvf.VERSION)
+        self.assertEqual(struct.unpack_from("<I", data, 20)[0], 0x0B)
         fps = struct.unpack_from("<H", data, 12)[0]
         frame_count = struct.unpack_from("<I", data, 16)[0]
         current = struct.unpack_from("<H", data, 28)[0]
         position = ipvf.DATA_OFFSET
         records = []
         for frame in range(frame_count):
-            kind, rects, next_sectors, video_size = struct.unpack_from(
-                "<BBHI", data, position
+            kind, rects, next_sectors, video_size, decoded_video_size = struct.unpack_from(
+                "<BBHII", data, position
             )
             audio_frames = (
                 ipvf.audio_boundary(frame + 1, fps)
                 - ipvf.audio_boundary(frame, fps)
             )
-            audio_size = audio_frames * ipvf.AUDIO_FRAME_BYTES
+            audio_size = 8 + max(audio_frames - 1, 0)
             expected = ipvf.record_sectors(video_size, audio_size)
             self.assertEqual(current, expected)
-            video_start = position + 8
+            video_start = position + 12
             audio_start = video_start + video_size
+            video = data[video_start:audio_start]
+            if kind in (ipvf.TYPE_KEY_LZ4, ipvf.TYPE_RECTS_LZ4):
+                video = ipvf.lz4_decompress(video, decoded_video_size)
+            else:
+                self.assertEqual(len(video), decoded_video_size)
+            self.assertEqual(
+                len(data[audio_start:audio_start + audio_size]), audio_size
+            )
             records.append(
                 (
                     kind,
                     rects,
-                    data[video_start:audio_start],
+                    video,
                     data[audio_start:audio_start + audio_size],
                 )
             )
@@ -84,12 +93,11 @@ class IPVFEncodeTests(unittest.TestCase):
 
     def test_interleaves_exact_pcm_slices(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            data = self.encode_with_audio(
-                Path(td), bytes(i % 251 for i in range(17_000))
-            )
+            source_audio = bytes(i % 251 for i in range(17_000))
+            data = self.encode_with_audio(Path(td), source_audio)
             self.assertEqual(struct.unpack_from("<H", data, 4)[0], 1)
-            self.assertEqual(struct.unpack_from("<I", data, 20)[0], 7)
-            self.assertEqual(struct.unpack_from("<H", data, 30)[0], 1)
+            self.assertEqual(struct.unpack_from("<I", data, 20)[0], 0x0B)
+            self.assertEqual(struct.unpack_from("<H", data, 30)[0], 2)
             self.assertEqual(struct.unpack_from("<H", data, 32)[0], 2)
             self.assertEqual(struct.unpack_from("<H", data, 34)[0], 16)
             self.assertEqual(struct.unpack_from("<I", data, 36)[0], 44_100)
@@ -98,11 +106,16 @@ class IPVFEncodeTests(unittest.TestCase):
                 data[44:ipvf.DATA_OFFSET], bytes(ipvf.DATA_OFFSET - 44)
             )
             records = self.parse_records(data)
-            self.assertEqual([record[0] for record in records], [0, 1, 2])
-            pcm = b"".join(record[3] for record in records)
-            self.assertEqual(len(pcm), 17_640)
-            self.assertEqual(pcm[:17_000], bytes(i % 251 for i in range(17_000)))
-            self.assertEqual(pcm[17_000:], bytes(640))
+            self.assertEqual([record[0] for record in records], [3, 1, 2])
+            self.assertEqual(len(b"".join(record[3] for record in records)), 4_431)
+            decoded = b"".join(ipvf.decode_ima_adpcm(
+                record[3], ipvf.audio_boundary(i + 1, 30)
+                - ipvf.audio_boundary(i, 30)
+            ) for i, record in enumerate(records))
+            self.assertEqual(len(decoded), 17_640)
+            for i, record in enumerate(records):
+                offset = ipvf.audio_boundary(i, 30) * ipvf.AUDIO_FRAME_BYTES
+                self.assertEqual(record[3][0:2], source_audio[offset:offset + 2])
 
     def test_audio_beyond_video_is_trimmed(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -110,19 +123,49 @@ class IPVFEncodeTests(unittest.TestCase):
             records = self.parse_records(
                 self.encode_with_audio(Path(td), source_audio)
             )
-            pcm = b"".join(record[3] for record in records)
-            self.assertEqual(len(pcm), 17_640)
-            self.assertEqual(pcm, source_audio[:17_640])
+            decoded = b"".join(ipvf.decode_ima_adpcm(
+                record[3], ipvf.audio_boundary(i + 1, 30)
+                - ipvf.audio_boundary(i, 30)
+            ) for i, record in enumerate(records))
+            self.assertEqual(len(decoded), 17_640)
+            self.assertEqual(decoded[:4], source_audio[:4])
 
-    def test_keyframe_fits_at_four_fps_only(self) -> None:
-        audio_at_four = ipvf.audio_boundary(1, 4) * ipvf.AUDIO_FRAME_BYTES
+    def test_keyframe_sector_limit(self) -> None:
+        audio_at_three = 8 + ipvf.audio_boundary(1, 3) - 1
         self.assertLessEqual(
-            ipvf.record_sectors(ipvf.FRAME_BYTES, audio_at_four),
+            ipvf.record_sectors(ipvf.FRAME_BYTES, audio_at_three),
             ipvf.MAX_RECORD_SECTORS,
         )
-        audio_at_three = ipvf.audio_boundary(1, 3) * ipvf.AUDIO_FRAME_BYTES
+        audio_at_two = 8 + ipvf.audio_boundary(1, 2) - 1
         with self.assertRaises(RuntimeError):
-            ipvf.record_sectors(ipvf.FRAME_BYTES, audio_at_three)
+            ipvf.record_sectors(ipvf.FRAME_BYTES, audio_at_two)
+
+    def test_lz4_roundtrip_and_malformed_rejection(self) -> None:
+        source = (b"abcd" * 20_000) + bytes(range(251))
+        packed = ipvf.lz4_compress(source)
+        self.assertLess(len(packed), len(source))
+        self.assertTrue(packed.endswith(source[-5:]))
+        self.assertEqual(ipvf.lz4_decompress(packed, len(source)), source)
+        for malformed in (b"\x00", b"\x10", b"\x00\x00\x00", b"\x10a\x02\x00"):
+            with self.assertRaises(ValueError):
+                ipvf.lz4_decompress(malformed)
+
+    def test_ima_length_and_decode_contract(self) -> None:
+        pcm = struct.pack("<hhhhhh", 1000, -1000, 1200, -1200, 900, -900)
+        block = ipvf.encode_ima_adpcm(pcm, 3)
+        self.assertEqual(len(block), 10)
+        self.assertEqual(ipvf.decode_ima_adpcm(block, 3)[:4], pcm[:4])
+        carried, left_index, right_index = ipvf.encode_ima_adpcm_stateful(
+            pcm, 3, 12, 34
+        )
+        self.assertEqual((carried[2], carried[6]), (12, 34))
+        self.assertTrue(0 <= left_index <= 88 and 0 <= right_index <= 88)
+        with self.assertRaises(ValueError):
+            ipvf.encode_ima_adpcm(b"", 0)
+        with self.assertRaises(ValueError):
+            ipvf.decode_ima_adpcm(bytes(8), 0)
+        with self.assertRaises(ValueError):
+            ipvf.decode_ima_adpcm(block[:-1], 3)
 
 
 if __name__ == "__main__":

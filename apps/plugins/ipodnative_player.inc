@@ -1,12 +1,81 @@
+#define IPVF_AUDIO_PREBUFFER_FRAMES 44100u
+
+/* Fill the ring with future audio while frame zero is being held on screen. */
+static bool audio_prebuffer_records(int fd, const struct ipvf_info *info,
+                                    unsigned char *read_buffer,
+                                    unsigned long first_frame,
+                                    off_t first_position,
+                                    uint32_t first_sectors,
+                                    unsigned long *end_frame)
+{
+    unsigned long scan_frame = first_frame;
+    off_t scan_position = first_position;
+    uint32_t scan_sectors = first_sectors;
+    uint32_t target_frames = IPVF_AUDIO_PREBUFFER_FRAMES;
+
+    if (info == NULL || read_buffer == NULL || end_frame == NULL ||
+        audio.started)
+        return false;
+    if (audio.capacity_frames <= IPVF_AUDIO_DMA_MAX_FRAMES)
+        return false;
+    if (target_frames >
+        audio.capacity_frames - IPVF_AUDIO_DMA_MAX_FRAMES)
+        target_frames =
+            audio.capacity_frames - IPVF_AUDIO_DMA_MAX_FRAMES;
+
+    while (scan_frame < info->frame_count &&
+           audio_used_frames() < target_frames)
+    {
+        struct ipvf_record_info record_info;
+        const unsigned char *audio_payload;
+        uint32_t record_bytes;
+        uint32_t used;
+
+        if (scan_sectors == 0 ||
+            scan_sectors > IPVF_RECORD_MAX_SECTORS)
+            return false;
+        record_bytes = scan_sectors * IPVF_RECORD_SECTOR_SIZE;
+        if (scan_position > info->file_size ||
+            (off_t)record_bytes > info->file_size - scan_position ||
+            !read_exact(fd, read_buffer, record_bytes) ||
+            !parse_record(read_buffer, scan_sectors, scan_frame, info,
+                          &record_info))
+            return false;
+
+        used = audio_used_frames();
+        if (used > audio.capacity_frames)
+            return false;
+        /* audio is stopped, so audio_write_ima_block cannot wait for space. */
+        if (record_info.audio_frames > audio.capacity_frames - used)
+            break;
+
+        audio_payload = read_buffer + IPVF_FRAME_HEADER_SIZE +
+                        record_info.stored_video_bytes;
+        if (!audio_write_ima_block(audio_payload, record_info.audio_bytes,
+                                   record_info.audio_frames))
+            return false;
+
+        scan_position += record_bytes;
+        scan_sectors = record_info.next_sectors;
+        scan_frame++;
+    }
+
+    *end_frame = scan_frame;
+    return true;
+}
+
 static enum plugin_status play_file(const char *filename)
 {
     struct ipvf_info info;
     struct ipvf_stats stats;
     size_t buf_size;
     uintptr_t buffer_end;
+    uintptr_t decoded_address;
+    uintptr_t read_address;
     uintptr_t required_end;
     unsigned char *buf;
-    unsigned char *record_buffer;
+    unsigned char *decoded_buffer;
+    unsigned char *read_buffer;
     struct viewport *vp;
     fb_data *fb;
     uint32_t current_sectors;
@@ -17,6 +86,7 @@ static enum plugin_status play_file(const char *filename)
     unsigned long last_key_frame = 0;
 #endif
     unsigned long frame;
+    unsigned long prebuffer_end_frame = 1;
     int fd;
     bool failed = false;
     bool stopped = false;
@@ -46,27 +116,26 @@ static enum plugin_status play_file(const char *filename)
         return PLUGIN_ERROR;
     }
     buffer_end = (uintptr_t)buf + buf_size;
+    decoded_address = ((uintptr_t)buf + IPVF_RECORD_SECTOR_SIZE - 1) &
+                      ~(uintptr_t)(IPVF_RECORD_SECTOR_SIZE - 1);
 #ifdef IPVF_NATIVE_PIPELINE
-    record_buffer = (unsigned char *)
-        (((uintptr_t)buf + IPVF_RECORD_SECTOR_SIZE - 1) &
-         ~(uintptr_t)(IPVF_RECORD_SECTOR_SIZE - 1));
-    required_end = (uintptr_t)record_buffer +
+    read_address = decoded_address +
                    IPVF_RENDER_SLOTS * IPVF_RENDER_SLOT_STRIDE;
 #else
-    record_buffer = (unsigned char *)
-        (((uintptr_t)buf + IPVF_RECORD_SECTOR_SIZE - 1) &
-         ~(uintptr_t)(IPVF_RECORD_SECTOR_SIZE - 1));
-    required_end = (uintptr_t)record_buffer + IPVF_RECORD_MAX_BYTES;
+    read_address = decoded_address + IPVF_DECODED_SLOT_STRIDE;
 #endif
+    required_end = read_address + IPVF_RECORD_MAX_BYTES;
     if (buffer_end < (uintptr_t)buf ||
-        (uintptr_t)record_buffer < (uintptr_t)buf ||
-        required_end < (uintptr_t)record_buffer ||
+        decoded_address < (uintptr_t)buf ||
+        read_address < decoded_address || required_end < read_address ||
         required_end > buffer_end)
     {
         rb->close(fd);
         rb->splash(HZ * 2, "IPVF buffer too small");
         return PLUGIN_ERROR;
     }
+    decoded_buffer = (unsigned char *)decoded_address;
+    read_buffer = (unsigned char *)read_address;
 
     rb->lcd_set_viewport(NULL);
     if (rb->screens[SCREEN_MAIN] == NULL ||
@@ -97,7 +166,7 @@ static enum plugin_status play_file(const char *filename)
     rb->lcd_clear_display();
     rb->lcd_update();
 #ifdef IPVF_NATIVE_PIPELINE
-    if (!render_start(record_buffer))
+    if (!render_start(decoded_buffer))
     {
         audio_shutdown();
         rb->close(fd);
@@ -116,10 +185,10 @@ static enum plugin_status play_file(const char *filename)
     current_sectors = info.first_record_sectors;
     for (frame = 0; frame < info.frame_count; frame++)
     {
+        unsigned char *decoded_record;
         unsigned char *record;
         const unsigned char *audio_payload;
-        unsigned int type, rect_count;
-        uint32_t payload_size, audio_frames, next_sectors;
+        struct ipvf_record_info record_info;
         uint32_t record_bytes;
         uint32_t target, now, late;
 #ifdef IPVF_NATIVE_PIPELINE
@@ -128,14 +197,16 @@ static enum plugin_status play_file(const char *filename)
         int button;
 
 #ifdef IPVF_NATIVE_PIPELINE
-        record = render_acquire();
-        if (record == NULL)
+        decoded_record = render_acquire();
+        record = UNCACHED_ADDR(read_buffer);
+        if (decoded_record == NULL)
         {
             failed = true;
             break;
         }
 #else
-        record = record_buffer;
+        decoded_record = decoded_buffer;
+        record = read_buffer;
 #endif
 
         if (current_sectors == 0 ||
@@ -150,16 +221,9 @@ static enum plugin_status play_file(const char *filename)
         record_bytes = current_sectors * IPVF_RECORD_SECTOR_SIZE;
         if (file_position > info.file_size ||
             (off_t)record_bytes > info.file_size - file_position ||
-            rb->read(fd, record, record_bytes) != (ssize_t)record_bytes ||
+            !read_exact(fd, record, record_bytes) ||
             !parse_record(record, current_sectors, frame, &info,
-                          &type, &rect_count, &payload_size,
-                          &audio_frames, &next_sectors,
-#ifdef IPVF_NATIVE_PIPELINE
-                          true
-#else
-                          false
-#endif
-                          ))
+                          &record_info))
         {
 #ifdef IPVF_NATIVE_PIPELINE
             render_abandon();
@@ -169,8 +233,26 @@ static enum plugin_status play_file(const char *filename)
         }
         file_position += record_bytes;
 
-        audio_payload = record + IPVF_FRAME_HEADER_SIZE + payload_size;
-        if (!audio_write_frames(audio_payload, audio_frames))
+        audio_payload = record + IPVF_FRAME_HEADER_SIZE +
+                        record_info.stored_video_bytes;
+        if ((frame == 0 || frame >= prebuffer_end_frame) &&
+            !audio_write_ima_block(audio_payload, record_info.audio_bytes,
+                                   record_info.audio_frames))
+        {
+#ifdef IPVF_NATIVE_PIPELINE
+            render_abandon();
+#endif
+            failed = true;
+            break;
+        }
+        if (!decode_record_video(record, &record_info, decoded_record,
+                                 audio.video_scratch,
+#ifdef IPVF_NATIVE_PIPELINE
+                                 true
+#else
+                                 false
+#endif
+                                 ))
         {
 #ifdef IPVF_NATIVE_PIPELINE
             render_abandon();
@@ -207,45 +289,59 @@ static enum plugin_status play_file(const char *filename)
         }
 
 #ifdef IPVF_NATIVE_PIPELINE
-        if (!render_queue(type, rect_count, payload_size))
+        if (!render_queue(record_info.type, record_info.rect_count,
+                          record_info.decoded_video_bytes))
         {
             failed = true;
             break;
         }
-        if (type == IPVF_TYPE_KEY)
+        if (record_info.type == IPVF_TYPE_KEY)
         {
             last_key_offset = frame_offset;
             last_key_sectors = current_sectors;
             last_key_frame = frame;
         }
-        if (frame == 0 &&
-            (!render_wait_presented(1) || !audio_start()))
+        if (frame == 0 && !render_wait_presented(1))
         {
             failed = true;
             break;
         }
 #else
-        if (type == IPVF_TYPE_KEY)
+        if (record_info.type == IPVF_TYPE_KEY)
         {
-            rb->memcpy(fb, record + IPVF_FRAME_HEADER_SIZE,
+            rb->memcpy(fb, decoded_record + IPVF_FRAME_HEADER_SIZE,
                        IPVF_FRAME_BYTES);
             rb->lcd_update();
         }
-        else if (type == IPVF_TYPE_RECTS &&
-                 !apply_rects(record + IPVF_FRAME_HEADER_SIZE,
-                              payload_size, rect_count, fb, true))
-        {
-            failed = true;
-            break;
-        }
-        if (frame == 0 && !audio_start())
+        else if (record_info.type == IPVF_TYPE_RECTS &&
+                 !apply_rects(decoded_record + IPVF_FRAME_HEADER_SIZE,
+                              record_info.decoded_video_bytes,
+                              record_info.rect_count, fb, true))
         {
             failed = true;
             break;
         }
 #endif
 
-        current_sectors = next_sectors;
+        if (frame == 0)
+        {
+            off_t frame1_position = file_position;
+            uint32_t frame1_sectors = record_info.next_sectors;
+
+            if (!audio_prebuffer_records(fd, &info, record, 1,
+                                         frame1_position, frame1_sectors,
+                                         &prebuffer_end_frame) ||
+                (info.frame_count > 1 &&
+                 rb->lseek(fd, frame1_position, SEEK_SET) !=
+                 frame1_position) ||
+                !audio_start())
+            {
+                failed = true;
+                break;
+            }
+        }
+
+        current_sectors = record_info.next_sectors;
         stats.frames++;
         rb->reset_poweroff_timer();
 
@@ -264,7 +360,9 @@ static enum plugin_status play_file(const char *filename)
 
     if (!stopped && !usb_connected && stats.frames == info.frame_count &&
         (current_sectors != 0 || file_position != info.file_size))
+    {
         failed = true;
+    }
 
     if (stopped || usb_connected || failed ||
         stats.frames != info.frame_count)
@@ -272,13 +370,21 @@ static enum plugin_status play_file(const char *filename)
 
 #ifdef IPVF_NATIVE_PIPELINE
     if (!render_finish())
+    {
         failed = true;
+    }
 #endif
 
     if (!stopped && !usb_connected && !failed &&
         stats.frames == info.frame_count &&
         !audio_wait_until(info.audio_sample_frames))
+    {
         failed = true;
+    }
+
+    if (!stopped && !usb_connected && !failed &&
+        stats.frames == info.frame_count)
+        audio_drain_output();
 
     if (failed)
         audio_stop_playback();
@@ -293,9 +399,12 @@ static enum plugin_status play_file(const char *filename)
 #endif
         if (!reconcile_framebuffer(fd, &info, last_key_offset,
                                    last_key_sectors, last_key_frame,
-                                   stats.frames, fb,
+                                   stats.frames, read_buffer,
+                                   audio.video_scratch, fb,
                                    stats.frames == info.frame_count))
+        {
             failed = true;
+        }
 #ifdef HAVE_IPOD_CRASH_RECORD
         rb->crash_record_ipvf_update(0, CRASH_RECORD_IPVF_IDLE, 0, 0);
 #endif

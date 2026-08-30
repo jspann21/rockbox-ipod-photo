@@ -1,10 +1,10 @@
 /***************************************************************************
  * iPod Photo native video and audio viewer (.ipvf)
  *
- * IPVF stores 220x176 RGB565SWAPPED frames as sector-aligned key, rectangle,
- * or repeat records, followed by the matching 44.1 kHz stereo PCM slice. On
- * PP5020 the CPU performs one aligned read into an uncached staging slot while
- * the COP sends the previous record through the LCD driver.
+ * IPVF stores 220x176 RGB565SWAPPED frames as sector-aligned raw, independently
+ * LZ4-compressed, or repeat records, followed by matching 44.1 kHz stereo IMA
+ * ADPCM. On PP5020 the CPU reads and decodes the next record while the COP sends
+ * the previous decoded record through the LCD driver.
  ****************************************************************************/
 #include "plugin.h"
 #include "cpu.h"
@@ -25,25 +25,27 @@
 #define IPVF_HEADER_SIZE            64u
 #define IPVF_DATA_OFFSET            512u
 #define IPVF_RECORD_SECTOR_SIZE     512u
-#define IPVF_RECORD_MAX_SECTORS     256u
+#define IPVF_RECORD_MAX_SECTORS     192u
 #define IPVF_RECORD_MAX_BYTES \
     (IPVF_RECORD_MAX_SECTORS * IPVF_RECORD_SECTOR_SIZE)
-#define IPVF_FRAME_HEADER_SIZE      8u
+#define IPVF_FRAME_HEADER_SIZE      12u
 #define IPVF_RECT_HEADER_SIZE       8u
 #define IPVF_FLAG_RGB565BE          0x00000001u
 #define IPVF_FLAG_SECTOR_RECORDS    0x00000002u
-#define IPVF_FLAG_PCM_S16LE         0x00000004u
+#define IPVF_FLAG_IMA_ADPCM         0x00000008u
 #define IPVF_FLAGS \
     (IPVF_FLAG_RGB565BE | IPVF_FLAG_SECTOR_RECORDS | \
-     IPVF_FLAG_PCM_S16LE)
+     IPVF_FLAG_IMA_ADPCM)
 #define IPVF_TYPE_KEY               0u
 #define IPVF_TYPE_RECTS             1u
 #define IPVF_TYPE_REPEAT            2u
+#define IPVF_TYPE_KEY_LZ4           3u
+#define IPVF_TYPE_RECTS_LZ4         4u
 #define IPVF_MAX_FPS                240u
 #define IPVF_FRAME_BYTES \
     ((size_t)LCD_WIDTH * LCD_HEIGHT * sizeof(fb_data))
 #define IPVF_MAX_PAYLOAD            (IPVF_FRAME_BYTES + 4096u)
-#define IPVF_AUDIO_FORMAT_PCM_S16LE  1u
+#define IPVF_AUDIO_FORMAT_IMA_ADPCM  2u
 #define IPVF_AUDIO_CHANNELS          2u
 #define IPVF_AUDIO_BITS_PER_SAMPLE   16u
 #define IPVF_AUDIO_SAMPLE_RATE       44100u
@@ -55,12 +57,13 @@
 #define IPVF_AUDIO_DMA_MAX_FRAMES \
     (IPVF_AUDIO_DMA_MAX_BYTES / IPVF_AUDIO_FRAME_BYTES)
 #define IPVF_AUDIO_CHANNEL           PCM_MIXER_CHAN_PLAYBACK
+#define IPVF_DECODED_SLOT_STRIDE      0x20000u
 
 #if defined(IPOD_COLOR) && NUM_CORES > 1 && \
     defined(HAVE_SEMAPHORE_OBJECTS) && !defined(SIMULATOR)
 #define IPVF_NATIVE_PIPELINE
 #define IPVF_RENDER_SLOTS       3u
-#define IPVF_RENDER_SLOT_STRIDE 0x20000u
+#define IPVF_RENDER_SLOT_STRIDE IPVF_DECODED_SLOT_STRIDE
 #define IPVF_RENDER_STACK       3072u
 #endif
 
@@ -88,8 +91,21 @@ struct ipvf_stats
     unsigned long audio_underruns;
 };
 
+struct ipvf_record_info
+{
+    unsigned int type;
+    unsigned int rect_count;
+    uint32_t stored_video_bytes;
+    uint32_t decoded_video_bytes;
+    uint32_t audio_frames;
+    uint32_t audio_bytes;
+    uint32_t next_sectors;
+    bool compressed;
+};
+
 struct ipvf_audio_state
 {
+    unsigned char *video_scratch;
     unsigned char *buffer;
     uint32_t capacity_frames;
     uint32_t frame_mask;
@@ -118,6 +134,9 @@ static uint32_t get_le32(const unsigned char *p)
            ((uint32_t)p[2] << 16) |
            ((uint32_t)p[3] << 24);
 }
+
+#include "ipodnative_lz4.inc"
+#include "ipodnative_ima.inc"
 
 static bool read_exact(int fd, void *buffer, size_t bytes)
 {
@@ -153,6 +172,11 @@ static uint32_t record_audio_frames(const struct ipvf_info *info,
     return end - start;
 }
 
+static uint32_t record_audio_bytes(uint32_t frames)
+{
+    return IPVF_IMA_HEADER_BYTES + frames - 1u;
+}
+
 static bool read_header(int fd, struct ipvf_info *info)
 {
     unsigned char h[IPVF_DATA_OFFSET];
@@ -185,7 +209,7 @@ static bool read_header(int fd, struct ipvf_info *info)
         data_offset != IPVF_DATA_OFFSET ||
         info->first_record_sectors == 0 ||
         info->first_record_sectors > IPVF_RECORD_MAX_SECTORS ||
-        get_le16(h + 30) != IPVF_AUDIO_FORMAT_PCM_S16LE ||
+        get_le16(h + 30) != IPVF_AUDIO_FORMAT_IMA_ADPCM ||
         get_le16(h + 32) != IPVF_AUDIO_CHANNELS ||
         get_le16(h + 34) != IPVF_AUDIO_BITS_PER_SAMPLE ||
         info->audio_sample_rate != IPVF_AUDIO_SAMPLE_RATE ||
@@ -247,53 +271,148 @@ static bool parse_record(const unsigned char *record,
                          uint32_t current_sectors,
                          unsigned long frame,
                          const struct ipvf_info *info,
-                         unsigned int *type,
-                         unsigned int *rect_count,
-                         uint32_t *payload_size,
-                         uint32_t *audio_frames,
-                         uint32_t *next_sectors,
-                         bool native_geometry)
+                         struct ipvf_record_info *record_info)
 {
+    struct ipvf_ima_state ima_state;
+    const unsigned char *audio_payload;
     uint64_t used_bytes;
+    uint32_t record_bytes;
     uint32_t expected_sectors;
+    size_t i;
+    unsigned int source_type;
 
-    *type = record[0];
-    *rect_count = record[1];
-    *next_sectors = get_le16(record + 2);
-    *payload_size = get_le32(record + 4);
-    *audio_frames = record_audio_frames(info, frame);
-
-    if (*payload_size > IPVF_MAX_PAYLOAD)
+    if (record == NULL || record_info == NULL || current_sectors == 0 ||
+        current_sectors > IPVF_RECORD_MAX_SECTORS)
         return false;
 
-    used_bytes = IPVF_FRAME_HEADER_SIZE + *payload_size +
-                 (uint64_t)*audio_frames * IPVF_AUDIO_FRAME_BYTES;
+    source_type = record[0];
+    record_info->rect_count = record[1];
+    record_info->next_sectors = get_le16(record + 2);
+    record_info->stored_video_bytes = get_le32(record + 4);
+    record_info->decoded_video_bytes = get_le32(record + 8);
+    record_info->audio_frames = record_audio_frames(info, frame);
+    if (record_info->audio_frames == 0)
+        return false;
+    record_info->audio_bytes = record_audio_bytes(record_info->audio_frames);
+    record_info->compressed = source_type == IPVF_TYPE_KEY_LZ4 ||
+                              source_type == IPVF_TYPE_RECTS_LZ4;
+
+    if (record_info->stored_video_bytes > IPVF_RECORD_MAX_BYTES ||
+        record_info->decoded_video_bytes > IPVF_MAX_PAYLOAD)
+        return false;
+
+    used_bytes = IPVF_FRAME_HEADER_SIZE +
+                 (uint64_t)record_info->stored_video_bytes +
+                 record_info->audio_bytes;
+    if (used_bytes > IPVF_RECORD_MAX_BYTES)
+        return false;
     expected_sectors = (uint32_t)((used_bytes +
                                   IPVF_RECORD_SECTOR_SIZE - 1) /
                                  IPVF_RECORD_SECTOR_SIZE);
-    if (expected_sectors == 0 ||
-        expected_sectors > IPVF_RECORD_MAX_SECTORS ||
-        current_sectors == 0 ||
-        current_sectors > IPVF_RECORD_MAX_SECTORS ||
+    if (expected_sectors == 0 || expected_sectors > IPVF_RECORD_MAX_SECTORS ||
         current_sectors != expected_sectors ||
-        (frame == 0 && *type != IPVF_TYPE_KEY) ||
+        (frame == 0 && source_type != IPVF_TYPE_KEY &&
+         source_type != IPVF_TYPE_KEY_LZ4) ||
         (frame + 1 < info->frame_count &&
-         (*next_sectors == 0 ||
-          *next_sectors > IPVF_RECORD_MAX_SECTORS)) ||
-        (frame + 1 == info->frame_count && *next_sectors != 0))
+         (record_info->next_sectors == 0 ||
+          record_info->next_sectors > IPVF_RECORD_MAX_SECTORS)) ||
+        (frame + 1 == info->frame_count && record_info->next_sectors != 0))
         return false;
 
-    if (*type == IPVF_TYPE_KEY)
-        return *rect_count == 0 && *payload_size == IPVF_FRAME_BYTES;
-
-    if (*type == IPVF_TYPE_REPEAT)
-        return *rect_count == 0 && *payload_size == 0;
-
-    if (*type != IPVF_TYPE_RECTS || *rect_count == 0)
+    if (source_type == IPVF_TYPE_KEY || source_type == IPVF_TYPE_KEY_LZ4)
+    {
+        record_info->type = IPVF_TYPE_KEY;
+        if (record_info->rect_count != 0 ||
+            record_info->decoded_video_bytes != IPVF_FRAME_BYTES)
+            return false;
+    }
+    else if (source_type == IPVF_TYPE_RECTS ||
+             source_type == IPVF_TYPE_RECTS_LZ4)
+    {
+        record_info->type = IPVF_TYPE_RECTS;
+        if (record_info->rect_count == 0 ||
+            record_info->decoded_video_bytes == 0)
+            return false;
+    }
+    else if (source_type == IPVF_TYPE_REPEAT)
+    {
+        record_info->type = IPVF_TYPE_REPEAT;
+        if (record_info->rect_count != 0 ||
+            record_info->stored_video_bytes != 0 ||
+            record_info->decoded_video_bytes != 0 || record_info->compressed)
+            return false;
+    }
+    else
+    {
         return false;
+    }
 
-    return validate_rects(record + IPVF_FRAME_HEADER_SIZE,
-                          *payload_size, *rect_count, native_geometry);
+    if (record_info->compressed)
+    {
+        if (record_info->stored_video_bytes == 0 ||
+            record_info->stored_video_bytes >= record_info->decoded_video_bytes)
+            return false;
+    }
+    else if (record_info->stored_video_bytes !=
+             record_info->decoded_video_bytes)
+    {
+        return false;
+    }
+
+    record_bytes = current_sectors * IPVF_RECORD_SECTOR_SIZE;
+    for (i = (size_t)used_bytes; i < record_bytes; i++)
+        if (record[i] != 0)
+            return false;
+
+    audio_payload = record + IPVF_FRAME_HEADER_SIZE +
+                    record_info->stored_video_bytes;
+    return ipvf_ima_parse_header(audio_payload, record_info->audio_bytes,
+                                 record_info->audio_frames, &ima_state);
+}
+
+static bool decode_record_video(const unsigned char *record,
+                                const struct ipvf_record_info *record_info,
+                                unsigned char *decoded_record,
+                                unsigned char *scratch,
+                                bool native_geometry)
+{
+    const unsigned char *source = record + IPVF_FRAME_HEADER_SIZE;
+    unsigned char *destination = decoded_record + IPVF_FRAME_HEADER_SIZE;
+    unsigned char *payload = destination;
+    bool valid;
+
+    if (record_info->compressed)
+    {
+        payload = scratch != NULL ? scratch : destination;
+        if (!ipvf_lz4_decode(source, record_info->stored_video_bytes,
+                             payload,
+                             record_info->decoded_video_bytes))
+            return false;
+    }
+    else if (record_info->stored_video_bytes != 0)
+    {
+        rb->memcpy(destination, source, record_info->stored_video_bytes);
+    }
+
+    if (record_info->type == IPVF_TYPE_KEY)
+        valid = record_info->rect_count == 0 &&
+                record_info->decoded_video_bytes == IPVF_FRAME_BYTES;
+    else if (record_info->type == IPVF_TYPE_REPEAT)
+        valid = record_info->rect_count == 0 &&
+                record_info->decoded_video_bytes == 0;
+    else if (record_info->type == IPVF_TYPE_RECTS)
+        valid = validate_rects(payload, record_info->decoded_video_bytes,
+                               record_info->rect_count, native_geometry);
+    else
+        valid = false;
+
+    if (!valid)
+        return false;
+    if (record_info->compressed && scratch != NULL)
+        rb->memcpy(destination, scratch,
+                   record_info->decoded_video_bytes);
+
+    return true;
 }
 
 #include "ipodnative_display.inc"

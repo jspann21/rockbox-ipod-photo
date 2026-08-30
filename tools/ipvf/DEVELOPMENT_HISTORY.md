@@ -731,9 +731,11 @@
   - first record must be a keyframe;
   - dimensions and pixel format must match the target;
   - frame rate must be nonzero and within the accepted bound;
-  - audio must be 44.1 kHz, stereo, signed 16-bit little-endian PCM;
-  - the header's total PCM frame count must exactly match video duration;
-  - each current sector count must match its video and derived PCM payload;
+  - audio must decode to 44.1 kHz, stereo, signed 16-bit samples;
+  - the header's total decoded sample-frame count must exactly match video
+    duration;
+  - each current sector count must match its stored video and derived IMA
+    payload;
   - every non-final record must link to a valid next sector count;
   - the final record must link to zero and end exactly at EOF;
   - rectangles must be nonempty, in bounds, correctly sized, and aligned for
@@ -923,7 +925,7 @@
 - The same 30 and 60 fps PCM clips then completed on hardware with zero late
   frames and zero audio gaps.
 
-## 30. Current conclusion
+## 30. PCM integration milestone
 
 - IPVF is now a complete host-preformatted video-and-audio path for the iPod
   Photo/Color, not a container experiment around an existing device codec.
@@ -938,3 +940,90 @@
   measured lateness or mixer underrun. Longer-duration, interruption, forced
   stall, and alternate-output tests remain useful breadth testing rather than
   blockers for the merged PR #20 implementation.
+
+## 31. Replacing PCM and raw video in the canonical format
+
+- IPVF was still ours to define, so compression was added directly to version
+  1 rather than treated as an optional extension or a version-2 format.
+- The canonical header now identifies stereo IMA ADPCM. Each record begins its
+  audio with anchored left/right predictors, carries the step indices forward
+  for quality, and remains independently decodable.
+- The video record header now carries both stored and decoded byte counts and
+  recognizes raw key/rectangle, repeat, LZ4 key, and LZ4 rectangle records.
+- Each LZ4 block is independent. The encoder retains raw video unless the
+  entire sector-aligned compressed record is smaller, so incompressible input
+  cannot make storage traffic worse.
+- The final portable compressor uses bounded 32-candidate hash chains,
+  longest-match selection, one-byte lazy matching, and a decode-cost-aware
+  offset preference. It retains the standard LZ4 terminal restrictions.
+- Compared with the first greedy LZ4/IMA files, the improved search reduced:
+  - the 30 fps file from 5,319,680 to 4,640,768 bytes;
+  - the 60 fps file from 5,401,088 to 4,713,984 bytes;
+  - device-side match-copy calls by roughly one third.
+- Compared with the earlier canonical PCM files, the final files are about 51%
+  smaller: 4,640,768 versus 9,492,992 bytes at 30 fps, and 4,713,984 versus
+  9,590,272 bytes at 60 fps.
+
+## 32. Compression playback failures and fixes
+
+- The first IMA runs proved the format and decoder but not the scheduling:
+  - 30 fps could complete with small numbers of audio gaps;
+  - 60 fps initially ran slowly with rough audio and about 190 gaps.
+- Moving audio decode ahead of video decode and prebuffering about one second
+  of future audio made 60 fps substantially better, but some candidates still
+  failed near the end or completed with late frames and several gaps.
+- An exact end-of-stream deficit exposed a bookkeeping bug: frame zero was
+  omitted from the audio ring because look-ahead logic treated it as already
+  prebuffered. Writing frame-zero audio unconditionally before the future scan
+  restored the declared 352,800-sample total.
+- A short-copy LZ4 experiment made both video and audio stutter. The source
+  literals live in the uncached record buffer, where byte-at-a-time reads are
+  much more expensive than Rockbox's bulk copy. Restoring bulk copies for all
+  literals removed that regression.
+- Match data is different because it is copied within cached decode scratch.
+  Short matches remain a direct forward byte copy, while longer matches use a
+  safe initial copy followed by doubling bulk copies.
+- Compressed video now expands into cached scratch and is copied once into the
+  uncached render slot. This keeps the COP display contract unchanged and
+  avoids paying uncached write cost throughout LZ4 expansion.
+- The final audio start sequence is now:
+  - decode frame-zero audio;
+  - present frame zero;
+  - scan and decode roughly one second of future audio;
+  - seek back to the second record;
+  - start the Rockbox mixer and use consumed samples as the video clock.
+
+## 33. Why `apps/buffering.c` was not reused
+
+- Rockbox's buffering subsystem manages global playback handles and a shared
+  playback arena. Its `bufopen`/`bufread` machinery is not exposed through the
+  plugin API as a private general-purpose async stream.
+- IPVF already borrows the plugin audio arena for its mixer ring and cached
+  video scratch. Routing the same file through the global playback buffering
+  subsystem would add ownership and lifecycle conflicts instead of providing a
+  safe drop-in read-ahead queue.
+- A future IPVF-owned record queue could use remaining plugin-audio memory if a
+  longer or slower-storage test proves it necessary. The one-second audio
+  prebuffer and one-record sector reads met the current 30/60 fps acceptance
+  target, so no second buffering architecture was added.
+
+## 34. Final LZ4/IMA hardware result
+
+- Both final files passed complete host validation before device testing:
+  record chain, sector padding, raw/LZ4/repeat types, rectangle bounds, strict
+  LZ4 decode, IMA sizes, exact EOF, and byte-identical reconstruction of all
+  240 or 480 RGB565 frames against the ffmpeg source.
+- Installed A1099 results for the eight-second music-video source were:
+
+  | Rate | File bytes | Frames | Late | Audio gaps | Visible/audible result |
+  | --- | ---: | ---: | ---: | ---: | --- |
+  | 30 fps | 4,640,768 | 240 | 0 | 0 | correct |
+  | 60 fps | 4,713,984 | 480 | 41 | 0 | correct |
+
+- The 60 fps late counter records audio-clock boundaries missed by more than
+  500 microseconds; it is not a dropped-frame counter. The 41 events did not
+  produce visible stutter, corruption, or audio gaps.
+- The production format is therefore IPVF version 1 with independent raw/LZ4
+  native-video records and per-record stereo IMA ADPCM, played by the existing
+  three-slot CPU/COP display pipeline and Rockbox mixer. Temporary failure-stage
+  instrumentation used during bring-up was removed after this acceptance run.
