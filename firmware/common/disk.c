@@ -193,7 +193,13 @@ bool disk_init(IF_MD_NONVOID(int drive))
 #endif  /* STORAGE_ATA */
 
     memset(sector, 0, DC_CACHE_BUFSIZE);
-    storage_read_sectors(IF_MD(drive,) 0, 1, sector);
+    int rc = storage_read_sectors(IF_MD(drive,) 0, 1, sector);
+    if (rc != 0)
+    {
+        DEBUGF("Failed reading boot sector (error %d)\n", rc);
+        dc_release_buffer(sector);
+        return false;
+    }
 
     bool init = false;
 

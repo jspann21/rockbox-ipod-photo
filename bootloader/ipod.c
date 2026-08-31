@@ -354,7 +354,7 @@ void* main(void)
       for (i=39; i && buf[i]==' '; i--) {
         buf[i]=0;
       }
-      printf(buf);
+      printf("%s", buf);
     } else {
       printf("ATA: %d", i);
     }
