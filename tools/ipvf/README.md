@@ -15,7 +15,7 @@ python3 tools/ipvf/encode.py input.mp4 output.ipvf --fps 30
 ```
 
 Use `--fps 60` for a 60 fps file. `encode.py` is the only IPVF encoder;
-`test_encode.py` is a small host-only unit-test module for the format contract.
+`test_encode.py` and `test_lab.py` are small host-only contract suites.
 
 The source must contain an audio stream. The encoder converts the first audio
 stream to 44.1 kHz stereo signed 16-bit PCM, then stores each frame's time slice
@@ -29,10 +29,13 @@ chooses among full keyframes, repeats, lossless rectangular patches, bounded
 multi-rectangle patches, and temporal XOR+LZ4. A more expensive representation
 is selected only when the complete record, including audio and 512-byte
 rounding, becomes at least one sector smaller. Temporal records carry the
-Rockbox CRC32 of their compressed residual payload. Its standard-library-only compressor
+Rockbox CRC32 of their compressed residual payload. The built-in compressor
 searches bounded hash chains, prefers longer matches, uses one-byte lazy
 matching, and avoids expensive short-offset copies when an almost-equivalent
-match is available. The encoder forces a true key every 120 frames by default;
+match is available. By default, the host also tries official LZ4HC level 12
+when `liblz4` is available and keeps the smaller raw LZ4 block per record. This
+changes no device format and cannot enlarge a record; use `--lz4-mode builtin`
+for the original compressor alone. The encoder forces a true key every 120 frames by default;
 temporal `auto` mode rejects `--keyint 0` so dependency chains stay bounded.
 It also rejects rates above 30 fps because hardware lower-bound testing proved
 that dense full-frame temporal reconstruction cannot meet the 60 fps budget.
@@ -156,10 +159,10 @@ Compressed input and decoded output never overlap.
 `test_encode.py` does not create a second IPVF format or device path. It calls
 the production encoder with synthetic frames and PCM, then parses the result to
 catch broken headers, record chains, audio placement, duration, and size limits.
-Run it with:
+Run them with:
 
 ```sh
-python3 -m unittest -v tools.ipvf.test_encode
+python3 -m unittest -v tools.ipvf.test_encode tools.ipvf.test_lab
 ```
 
 They verify the canonical header, raw/LZ4/repeat sector chaining, LZ4 roundtrip
@@ -174,6 +177,62 @@ frame byte-for-byte with fresh FFmpeg output:
 ```sh
 python3 tools/ipvf/validate.py --source input.mp4 output.ipvf
 ```
+
+## Deterministic corpus and compression lab
+
+Generate the standard seeded lossless corpus in WSL, then run the complete
+sector-cost matrix:
+
+```sh
+python3 tools/ipvf/generate_corpus.py \
+  --out /tmp/ipvf-corpus --profile standard --format nut
+python3 tools/ipvf/lab.py /tmp/ipvf-corpus/manifest.json \
+  --output /tmp/ipvf-lab --jobs 8
+```
+
+The NUT/FFV1 sources are byte-identical across reruns with the same seed and
+toolchain. The manifest records source/content hashes, exact rates, durations,
+audio properties, motion class, and generator parameters. The lab compares
+current/spatial/XOR paths, official LZ4 fast and HC levels, reversible RGB565
+predictors, and 8x8/16x8/16x16 tile estimates using actual IMA sizes and
+sector-rounded records. It writes JSONL, size/timing/summary CSVs, a Pareto
+frontier, and run provenance.
+
+The first 18-clip/718-frame standard run measured 6,279,168 aggregate record
+bytes for the original current path, 6,115,840 for the existing spatial path,
+and 5,927,936 for adaptive built-in/LZ4HC-12 compression. The latter is a
+5.59% host-only saving with no decoder change. A Sub16+LZ4HC candidate reached
+5,669,376 bytes (9.71% saving) but remains lab-only pending device inverse-loop
+timing.
+
+`profile_lab.py` benchmarks MP4-style host preprocessing on real footage. It
+builds a beginning/middle/end sample, creates lossless profile sources, encodes
+and strictly validates each IPVF, and reports complete size, SSIM, MB/minute,
+and two-hour projections:
+
+```sh
+python3 tools/ipvf/profile_lab.py input.mp4 \
+  --output /tmp/ipvf-profile-lab
+```
+
+On the 15-second `suds` real-footage sample, native 20 fps saved 15.5% with
+SSIM 0.9838. RGB454 and RGB444 preprocessing at 24 fps saved 16.3% and 24.4%
+with SSIM 0.9647 and 0.9562. Combining 20 fps with RGB454/RGB444 saved 29.1%
+and 35.7%. Denoising alone saved only 1.3--2.4%. Lowering active resolution
+saved bytes but damaged the measured image much more sharply, so it remains an
+explicit compact-profile experiment rather than an everyday default. These
+lossy candidates require an actual iPod LCD A/B before creator-profile
+promotion; SSIM cannot judge motion judder or visible banding by itself.
+
+The first A1099 LCD pass compared native-24, native-20, RGB454/24, RGB444/24,
+and RGB444/20 versions of the same three scenes. Every clip was smooth with no
+audio issue or immediate visible defect. Subjective motion preference still
+favors 30 or possibly 60 fps over 20, so RGB444/20 is compact-only;
+RGB444/24 is the leading tested cadence-preserving profile at 24.4% below
+native-24. This 23.976-fps source cannot evaluate true 30/60 motion by frame
+duplication; native-rate footage and host interpolation need separate tests.
+This run also confirmed that the current player has no live volume control:
+its button loop handles MENU stop and USB only.
 
 ## Hardware qualification status
 
@@ -255,3 +314,8 @@ long-duration drift and lifecycle testing is complete.
 
 Broader qualification still includes a long drift run, line out, deliberate
 storage stalls, Menu stop, USB insertion, and repeat-heavy audio content.
+Qualification telemetry is compile-time opt-in. Normal builds contain no TSV
+logger/marker handling and perform no qualification timing or final-frame CRC
+scan; define `IPVF_ENABLE_QUALIFICATION_TELEMETRY=1` only for an instrumented
+qualification build. The production plugin is 13,924 bytes, down from 17,080
+bytes for the final telemetry-enabled v5 qualification plugin.

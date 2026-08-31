@@ -78,10 +78,12 @@ struct ipvf_render_control
     volatile bool failed;
     volatile unsigned int produce;
     volatile unsigned int consume;
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
     volatile uint64_t render_us;
     volatile uint32_t max_render_us;
     volatile uint32_t render_calls;
     volatile uint32_t render_failures;
+#endif
     struct ipvf_render_slot slots[IPVF_RENDER_SLOTS];
 };
 
@@ -179,6 +181,7 @@ static void render_worker(void)
 
         if (!control->failed)
         {
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             uint32_t started = USEC_TIMER;
             bool applied = render_apply_slot(
                 &control->slots[render_slot_index(consume)]);
@@ -188,9 +191,15 @@ static void render_worker(void)
             control->render_calls++;
             if (elapsed > control->max_render_us)
                 control->max_render_us = elapsed;
+#else
+            bool applied = render_apply_slot(
+                &control->slots[render_slot_index(consume)]);
+#endif
             if (!applied)
             {
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
                 control->render_failures++;
+#endif
                 control->failed = true;
             }
         }
@@ -363,6 +372,10 @@ static bool render_finish(struct ipvf_stats *stats)
     unsigned int i;
     bool passed;
 
+#if !IPVF_ENABLE_QUALIFICATION_TELEMETRY
+    (void)stats;
+#endif
+
     if (!render_active)
         return false;
 
@@ -393,6 +406,7 @@ static bool render_finish(struct ipvf_stats *stats)
 
     rb->thread_wait(render_thread_id);
     passed = !control->failed;
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
     if (stats != NULL)
     {
         stats->render_us = control->render_us;
@@ -400,6 +414,7 @@ static bool render_finish(struct ipvf_stats *stats)
         stats->render_calls = control->render_calls;
         stats->render_failures = control->render_failures;
     }
+#endif
     render_thread_id = 0;
     render_active = false;
 #ifdef HAVE_IPOD_CRASH_RECORD

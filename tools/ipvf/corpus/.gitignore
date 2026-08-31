@@ -1,0 +1,6 @@
+# Generated P0.3 corpus media is large and reproducible.  Keep this directory
+# available for in-repository experiments without allowing generated artifacts
+# into Git.  The checked-in README remains visible.
+*
+!/.gitignore
+!/README.md

@@ -867,7 +867,7 @@
   - no visual defects;
   - no raw plugin LCD2 access;
   - no raw COP or per-frame cache-invalidation/cache-repair mechanism;
-  - no diagnostic setup required from the user.
+  - no manual diagnostic setup required.
 
 ## 28. Integrated PCM audio (PR #20)
 
@@ -1139,7 +1139,7 @@
 
 - High-motion, music, and local-motion 30 fps files all completed with exact
   final framebuffer CRCs, zero decoder/render errors, and zero audio gaps. The
-  user reported correct video and audio.
+  video and audio were correct.
 - Payload CRC averaged 4.58 ms per temporal record for high motion, 5.96 ms for
   music, and 0.34 ms for local motion. Aligned full-frame XOR remained stable
   near 6.22 ms. Total decode stayed inside the 33.3 ms 30 fps budget.
@@ -1150,3 +1150,84 @@
   `dist/ipvf-qualification-results-v5-20260831`. All qualification media, TSVs,
   and the marker were removed from the device after collection, leaving the
   checked plugin installed with production logging disabled.
+
+## 41. Deterministic corpus, compression lab, and production cleanup
+
+- P0.3 now has a seeded corpus generator with a hash-bearing manifest. The
+  canonical container is FFV1/NUT because it is byte-identical across reruns;
+  Matroska was retained as an explicit noncanonical option after repeated
+  output exposed changing muxer identity metadata.
+- The standard corpus contains 18 clips and 718 source frames spanning static,
+  local/global motion, cuts/fades, grain/noise, odd/even boundaries,
+  alternating images, and the planned short audio edge cases.
+- The sector-accurate lab ran 60 strategies per clip and emitted 1,080 JSONL
+  result rows plus size, timing, summary, Pareto, and provenance reports. It
+  measures complete records including IMA bytes and 512-byte padding, while
+  separately reporting LZ4 input, reconstruction traffic, LCD pixels, and LCD
+  calls.
+- Aggregate record bytes were 6,279,168 for the original current path,
+  6,115,840 for spatial/built-in LZ4, and 5,927,936 when each spatial payload
+  adaptively selected the smaller built-in or official LZ4HC-12 block.
+- Official LZ4HC blocks decode through the unchanged IPVF raw-block decoder.
+  The friendly encoder now performs that adaptive host-only comparison by
+  default and falls back to the built-in compressor when host `liblz4` is not
+  available. A strict source validation on `global-shake-30` reduced the full
+  file from 585,216 to 562,176 bytes without changing reconstructed output.
+- Horizontal 16-bit Sub prediction plus LZ4HC was the smallest aggregate lab
+  candidate at 5,669,376 bytes, 9.71% below the original current path and
+  about 4.36% below adaptive spatial LZ4HC. It is not in the device format:
+  inverse-loop timing and an A1099 gate are required before promotion.
+- Qualification instrumentation is compile-time opt-in. The normal plugin
+  build no longer contains TSV/marker strings and performs no per-frame timing,
+  64-bit telemetry accumulation, record accounting, or final framebuffer CRC
+  scan. A dedicated build with
+  `IPVF_ENABLE_QUALIFICATION_TELEMETRY=1` retains the prior evidence path; both
+  configurations compile successfully in WSL.
+- The resulting production viewer is 13,924 bytes, 3,156 bytes smaller than
+  the 17,080-byte v5 qualification build.
+
+## 42. Real-footage lossy host-profile laboratory
+
+- A reproducible movie-profile runner now samples five seconds from the start,
+  middle, and end of a supplied movie, normalizes once to the native display,
+  creates lossless profile sources, encodes each with spatial/adaptive LZ4HC,
+  strictly source-validates every IPVF, and emits JSON/CSV with SSIM and
+  duration-normalized size projections.
+- The first source was the complete 224.792-second, 1920x820, 24000/1001-fps
+  H.264/AAC `suds` real-footage sample. Evidence is saved under
+  `dist/ipvf-profile-lab-suds-v2-20260831`.
+- The native 24-fps reference was 9,454,592 bytes for 15 seconds, equivalent
+  to 37.85 MB/minute or 4.54 GB for two hours. Native 20 and 15 fps reduced it
+  by 15.5% and 34.9%, with normalized SSIM 0.9838 and 0.9628.
+- Host color cleanup was much more valuable than generic denoise. RGB555,
+  RGB454, and RGB444 at 24 fps saved 7.0%, 16.3%, and 24.4%; SSIM was 0.9831,
+  0.9647, and 0.9562. Mild/strong denoise retained SSIM above 0.996 but saved
+  only 1.3%/2.4%, and denoise added only 0.7% beyond RGB444.
+- RGB454/20 and RGB444/20 saved 29.1% and 35.7%, with SSIM 0.9498 and 0.9416.
+  They are the strongest medium-size candidates for LCD A/B. An aggressive
+  15-fps/70%-resolution/RGB444 profile saved 67.6%, but SSIM 0.5165 correctly
+  keeps it out of the everyday profile.
+- Shrinking the active image to 80% saved 27.6% but scored only 0.5504 SSIM.
+  For this footage, controlled color quantization preserves substantially more
+  measured image structure for a similar storage range.
+- All results remain host evidence. LCD testing must judge frame-rate judder,
+  faces, gradients, fades, text, and RGB banding before named profiles become
+  part of the friendly encoder.
+
+## 43. Real-footage A1099 profile comparison
+
+- The logging-free 13,924-byte production viewer and five verified profiles
+  were installed for comparison.
+- The profiles were native-24, native-20, RGB454/24, RGB444/24, and RGB444/20.
+  All contained the same beginning/middle/end source scenes.
+- No immediate difference was apparent among the profiles. Every profile was
+  smooth with no audio or playback issue.
+- Follow-up preference favored the motion feel of 30 or possibly 60 fps over
+  20 fps. RGB444/20 therefore passes only as a compact profile at 35.7% smaller;
+  RGB444/24 is the leading tested cadence-preserving profile at 24.4% smaller.
+- The source is 24000/1001 fps, so duplicated output frames cannot judge true
+  30/60 motion. Native-rate 30/60 footage and separate host-interpolated
+  24-to-30/60 candidates remain future hardware gates.
+- Volume could not be changed in any file. Inspection confirmed the playback
+  loop polls buttons but recognizes only MENU stop and USB; no wheel input is
+  translated to Rockbox volume. Volume control is now an explicit viewer task.

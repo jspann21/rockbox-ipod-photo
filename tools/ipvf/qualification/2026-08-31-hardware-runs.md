@@ -218,3 +218,26 @@ It is promoted as the checked temporal implementation, while `spatial` remains
 the friendly default pending long-duration drift/lifecycle qualification.
 All qualification directories, TSVs, and the logging marker were removed from
 the iPod and archived under `dist/ipod-removed-old-ipvf-tests-20260831`.
+
+## Pass 6 - real-footage host-profile LCD A/B
+
+- Production viewer size: 13,924 bytes.
+- Logging and the qualification marker remained disabled.
+- Five 15-second profiles used identical beginning/middle/end scenes from the
+  `suds` real-footage sample: native-24, native-20, RGB454/24, RGB444/24, and
+  RGB444/20.
+- Installed contents matched the validated host outputs.
+
+### Pass-6 device result
+
+No immediate visual difference was apparent among the five profiles. All
+played smoothly, with no stuttering or other audio/video issue. Follow-up
+subjective preference favored the motion feel of 30 or possibly 60 fps over 20
+fps. RGB444/20 therefore passes as a compact profile at 35.7% smaller, not as
+the quality default. RGB444/24 preserves this 23.976-fps source's cadence while
+saving 24.4%. Native 30/60 footage is required to evaluate genuinely higher-
+rate motion; duplicated frames from this source cannot settle it.
+
+Volume could not be adjusted in any clip. This is consistent with the current
+player loop, which polls buttons but handles only MENU stop and USB events; live
+wheel volume control remains to be implemented and hardware-tested.

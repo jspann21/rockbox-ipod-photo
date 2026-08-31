@@ -1,8 +1,8 @@
 # IPVF improvement and qualification plan
 
 Last research/implementation pass: 2026-08-31
-Code baseline: `main` at `dddffd0151`, plus the working-tree IPVF temporal,
-validator, and qualification-telemetry changes described below
+Code baseline: `main` at `c5b5295cbc`, plus the working-tree deterministic
+corpus, compression-lab, adaptive LZ4HC, and production-telemetry changes below
 Target: iPod Photo/Color A1099, PP5020, Rockbox, 220x176 RGB565SWAPPED
 
 Detailed 2026-08-31 hardware evidence and pass-by-pass decisions:
@@ -92,6 +92,99 @@ first device pass confirmed the storage result but rejected the initial decode
 implementation on performance grounds. For local-motion 60 fps, the current
 rectangle+LZ4 representation beat XOR+LZ4 (1.6% versus 2.1% of raw), so all
 future modes must be selected adaptively and score device cost as well as size.
+
+### 2026-08-31 deterministic corpus and host-lab checkpoint
+
+P0.3/P1.1 now have a reproducible WSL pipeline:
+
+- `tools/ipvf/generate_corpus.py` generates lossless seeded sources and a
+  hash-bearing manifest. The default FFV1/NUT output is byte-identical across
+  reruns; Matroska remains optional but is not canonical because its muxer
+  inserts changing identity metadata.
+- The standard run contains 18 clips and 718 frames covering static/local/
+  global motion, cuts/fades, grain and full noise, odd/even boundaries,
+  alternating frames, and silence/mono/stereo/impulse/clipping/short/long
+  audio cases.
+- `tools/ipvf/lab.py` evaluated 60 complete-record strategies per clip using
+  actual IMA sizes and 512-byte rounding. It emits `encode-results.jsonl`,
+  `size.csv`, `summary.csv`, `timing.csv`, `pareto.csv`, and provenance.
+- Saved evidence is under `dist/ipvf-corpus-p0.3-nut-20260831` and
+  `dist/ipvf-lab-p0.3-20260831`.
+
+Aggregate standard-corpus results are:
+
+| Adaptive strategy | Record bytes | Saving vs original current path | Device change |
+| --- | ---: | ---: | --- |
+| Original current | 6,279,168 | - | none |
+| Existing spatial/built-in LZ4 | 6,115,840 | 2.60% | already qualified |
+| Best of built-in and official LZ4HC-12 | 5,927,936 | 5.59% | none |
+| Spatial + bounded Sub16/LZ4HC candidate | 5,669,376 | 9.71% | predictor inverse required |
+
+Official LZ4HC emits the same raw LZ4 blocks accepted by the current decoder.
+The encoder therefore now compares its built-in block with LZ4HC level 12 and
+keeps the smaller one per record. Missing host `liblz4` safely falls back to
+the built-in encoder. An exact encode/validate check on `global-shake-30`
+reduced the complete file from 585,216 to 562,176 bytes (3.94%). Sub16 remains
+lab-only until its inverse cost and playback timing pass hardware gates.
+
+### 2026-08-31 real-footage movie-profile checkpoint
+
+`tools/ipvf/profile_lab.py` tested MP4-style host preprocessing on three
+five-second scenes from the 224.792-second `suds` real-footage source. It is
+1920x820 H.264/YUV420 at 24000/1001 fps with 44.1-kHz stereo AAC. Every
+candidate was converted losslessly to a test source, encoded with adaptive
+spatial/LZ4HC, strictly source-validated, and compared with the native 24-fps
+reference after display-size conversion. Evidence is under
+`dist/ipvf-profile-lab-suds-v2-20260831`.
+
+| Host profile | 15-second IPVF | Saving | SSIM vs native 24 | 2-hour projection |
+| --- | ---: | ---: | ---: | ---: |
+| Native 24 fps | 9,454,592 B | - | 1.0000 | 4.54 GB |
+| Native 20 fps | 7,985,664 B | 15.5% | 0.9838 | 3.84 GB |
+| Native 15 fps | 6,154,752 B | 34.9% | 0.9628 | 2.96 GB |
+| RGB555, 24 fps | 8,790,016 B | 7.0% | 0.9831 | 4.22 GB |
+| RGB454, 24 fps | 7,915,008 B | 16.3% | 0.9647 | 3.80 GB |
+| RGB444, 24 fps | 7,152,128 B | 24.4% | 0.9562 | 3.44 GB |
+| RGB454, 20 fps | 6,702,080 B | 29.1% | 0.9498 | 3.22 GB |
+| RGB444, 20 fps | 6,074,880 B | 35.7% | 0.9416 | 2.92 GB |
+| Mild/strong denoise, 24 fps | 9.33/9.23 MB | 1.3/2.4% | 0.9985/0.9962 | 4.48/4.43 GB |
+| 80% active image, 24 fps | 6,842,368 B | 27.6% | 0.5504 | 3.29 GB |
+| Compact 70%/15 fps/RGB444 | 3,062,784 B | 67.6% | 0.5165 | 1.47 GB |
+
+Conclusions are bounded to this real clip but clear enough to guide hardware
+A/B tests. Native 20 fps is a compact size/quality option, not the quality
+default. Source-native 24 fps preserves this clip's original motion cadence.
+RGB454/24 and RGB444/24 are useful medium/high compression candidates. Denoise
+alone is too small a gain; adding it to RGB444 saved only another 0.7%. Reduced
+active resolution causes much greater measured damage than color quantization
+for similar storage, so it should be an explicit compact profile, not default.
+Frame-rate SSIM understates motion/judder perception; actual LCD A/B remains a
+promotion requirement.
+
+### 2026-08-31 A1099 lossy-profile LCD checkpoint
+
+The production 13,924-byte viewer and five randomized-label profiles were
+installed and their copied contents were verified. The compared profiles were
+native-24, native-20, RGB454/24, RGB444/24, and RGB444/20. No immediate visual
+defect was apparent; all were smooth with no audio or playback issue. A
+follow-up subjective preference favored the motion feel of 30 fps, or possibly
+60 fps, over 20 fps. RGB444/20 therefore passes only as a compact profile,
+reducing complete IPVF size by 35.7% versus native-24. RGB444/24 is the leading
+tested reduction that preserves this source's cadence, at 24.4%. Broader
+material must still test animation, text, dark gradients, grain, rapid camera
+motion, and duration.
+
+This source is 24000/1001 fps, so encoding it at 30 or 60 fps without motion
+interpolation would mostly duplicate frames and would not test true higher-rate
+motion. A separate gate needs native 30- and 60-fps real footage. Host motion
+interpolation from 24 to 30/60 is a separate lossy experiment whose artifacts,
+storage, and device workload must be measured.
+
+The same pass exposed a separate usability gap: volume could not be adjusted
+in any clip. The player currently consumes buttons once per frame but handles
+only MENU stop and USB; it has no wheel-to-volume mapping. This is not a codec
+or audio-decoder failure, but normal volume control is required before the
+viewer is considered complete.
 
 ### 2026-08-31 adaptive temporal checkpoint
 
@@ -276,17 +369,20 @@ full scorecard is exploratory, not promotable.
 ## Phase 0 - Freeze a reproducible baseline and automate evidence
 
 Goal: make hundreds of host cases and repeated device runs comparable while
-the user only performs the physical click/eject/reconnect actions.
+only the physical click/eject/reconnect actions remain manual.
 
 ### Reproducibility
 
 - [x] Record the exact command and compressor that produced the existing files
       named `suds-lz4hc-ima-*`; current `encode.py` has no `--lz4hc` option.
-- [ ] Create a corpus manifest with `clip_id`, source SHA-256, duration, source
-      FPS, target FPS, audio properties, motion class, encoder settings, and
+- [x] Create a corpus manifest with `clip_id`, deterministic source identity,
+      duration, source FPS, target FPS, audio properties, motion class,
+      encoder settings, and
       expected frame/audio hashes.
 - [ ] Pin and report FFmpeg, Python, compiler/toolchain, Git commit, build
-      configuration, and produced artifact hashes.
+      configuration, and produced artifact hashes. Host-lab provenance now
+      records FFmpeg, Python, liblz4, Git, manifest hash, and run settings;
+      compiler/build artifact capture remains.
 - [x] Run all builds and host analysis inside WSL. Use Windows/PowerShell only
       for safely detecting, installing to, and collecting from the mounted
       iPod.
@@ -301,7 +397,9 @@ the user only performs the physical click/eject/reconnect actions.
       reconstruct every frame, decode all audio, and compare with the corpus
       manifest.
 - [ ] Emit machine-readable `encode-results.jsonl`, `size.csv`,
-      `host-validation.jsonl`, and one Markdown summary.
+      `host-validation.jsonl`, and one Markdown summary. The lab now emits the
+      first two plus `summary.csv`, `timing.csv`, `pareto.csv`, and provenance;
+      validator JSONL and generated Markdown remain.
 - [ ] Add deterministic mutation/fuzz inputs for headers, record sizes,
       rectangles, LZ4 lengths/offsets, IMA headers, truncation, padding, and EOF.
 - [x] Keep the existing small unit suite; expand broad testing through the
@@ -309,22 +407,22 @@ the user only performs the physical click/eject/reconnect actions.
 
 ### Corpus
 
-- [ ] Static: solid, gradient, still photo, slideshow.
-- [ ] Local motion: one object, two disjoint objects, subtitles, sprites.
-- [ ] Global motion: pan, zoom, scroll, camera shake.
+- [x] Static: solid, gradient, still photo, slideshow.
+- [x] Local motion: one object, two disjoint objects, subtitles, sprites.
+- [ ] Global motion: pan, scroll, and camera shake are covered; zoom remains.
 - [ ] High motion: sports, water, foliage, crowds, film grain.
-- [ ] Worst cases: seeded noise, full-screen cuts, flashes, fades, alternating
+- [x] Worst cases: seeded noise, full-screen cuts, flashes, fades, alternating
       frames, one-pixel and odd/even boundary changes.
 - [ ] Source shapes: 4:3, widescreen, vertical, letterboxed, 23.976/24/25/30/60,
       VFR, and interlaced sources.
-- [ ] Audio: silence, mono, stereo ID, impulses, tones, clipping, audio shorter
+- [x] Audio: silence, mono, stereo ID, impulses, tones, clipping, audio shorter
       and longer than video.
 - [ ] Long: 5 minutes, 30 minutes, one hour, and two hours.
 
 ### Qualification telemetry
 
-- [x] Marker-gate qualification telemetry; normal playback performs no
-      telemetry writes unless `.rockbox/ipvf-qualification.enable` exists.
+- [x] Compile-gate qualification telemetry; enabled qualification builds still
+      require `.rockbox/ipvf-qualification.enable` before writing a TSV.
 - [x] In qualification mode, accumulate counters in RAM and append one bounded
       completed TSV row only after playback teardown.
 - [ ] Include run/build/clip IDs, record offset, last frame, stage/error code,
@@ -333,6 +431,12 @@ the user only performs the physical click/eject/reconnect actions.
 - [ ] Continue updating the retained crash record at meaningful stages so a
       reset before file logging is still diagnosable.
 - [x] Avoid per-frame `write()`/CSV logging in the hot path.
+- [x] Compile qualification telemetry out by default. The production plugin
+      contains no TSV/marker strings, timer reads, 64-bit timing accumulation,
+      record accounting, or final framebuffer CRC scan; an explicit build
+      macro restores the complete qualification path. The integrated
+      production plugin is 13,924 bytes versus 17,080 bytes for the v5
+      qualification plugin.
 
 ### Install/run/collect loop
 
@@ -357,15 +461,16 @@ changing the proven player.
       record; use byte count and predicted decode cost as tie-breakers.
 - [ ] Sweep time-based and scene-cut-aware keyframe intervals. Replace the
       frame-count-only default with a maximum seek/dependency time.
-- [ ] Compare the current 32-candidate LZ4 search with official LZ4HC levels,
+- [x] Compare the current 32-candidate LZ4 search with official LZ4HC levels,
       `--best`, optimal parsing, and decode-speed-favoring output. All use the
-      same block decoder.
-- [ ] Try RGB565 byte-plane split, 16/32-bit word ordering, XOR, horizontal
+      same block decoder. Fast and HC levels 3/9/12 were measured; HC12 is now
+      an adaptive host-only encoder candidate.
+- [x] Try RGB565 byte-plane split, 16/32-bit word ordering, XOR, horizontal
       `Sub`, vertical `Up`, and simple Paeth-like reversible predictors before
       LZ4.
 - [x] Try bounded multi-rectangle segmentation: connected changed tiles and
       runs, and greedy rectangle merging capped initially at 4/8 rectangles.
-- [ ] Score rectangle candidates on both sectors and LCD calls/pixels; extra
+- [x] Score rectangle candidates on both sectors and LCD calls/pixels; extra
       rectangles can save storage while costing display setup time.
 - [ ] Compare 8x8, 16x8, and 16x16 maps with raw, solid-color, palette, XOR, and
       LZ4 tile payloads.
@@ -374,7 +479,7 @@ changing the proven player.
       measured; padding is not the current music-video bottleneck.
 - [ ] Evaluate per-record palettes/RGB332 only for content classes where the
       selector proves a win.
-- [ ] Publish a Pareto table: total sectors versus estimated device operations.
+- [x] Publish a Pareto table: total sectors versus estimated device operations.
 - [ ] Reject standalone PackBits for natural high-motion video unless a current
       sector-accurate corpus reverses the existing loss to LZ4.
 
@@ -471,6 +576,10 @@ once, not repeatedly.
 - [ ] Test 0/10/50/90/99%, immediately before/after keyframes, rapid repeated
       seeks, and segment boundaries.
 - [ ] Add wheel/button controls for pause, seek, restart, and resume choice.
+- [ ] Add live playback volume control using Rockbox's existing sound/volume
+      state, with bounded wheel-repeat handling and an on-screen level splash.
+- [ ] Verify minimum/maximum clamping, rapid wheel input, MENU interaction,
+      USB interruption, and that changing volume causes no audio gaps.
 - [ ] Persist resume atomically under Rockbox data storage, keyed by media ID,
       with segment/frame/audio sample and a validity checksum.
 - [ ] Checkpoint resume sparingly (for example every 30 seconds and on clean
@@ -481,6 +590,29 @@ once, not repeatedly.
 
 Goal: move beyond lossless residual compression if two-hour everyday movies
 still exceed the desired storage budget.
+
+### MP4 lessons translated into bounded IPVF work
+
+- [x] Variable bitrate equivalent: choose every record adaptively by complete
+      sector cost instead of assigning a fixed byte budget.
+- [ ] Chroma reduction: compare YUV420 or host chroma smoothing only after a
+      bounded device conversion benchmark; RGB444/454 preprocessing is the
+      current zero-decoder-cost approximation.
+- [ ] Motion prediction: begin with whole-frame translations, then bounded
+      block vectors and residuals; keep one previous reference only.
+- [ ] Transform/quantization: test whether a tiny reversible or deliberately
+      quantized residual transform beats direct RGB565 Sub/XOR without adding
+      an expensive inverse transform.
+- [ ] Entropy coding: evaluate stronger host parsing and small ARM-decodable
+      coders, but retain LZ4 unless both sector size and device time improve.
+- [ ] GOP/keyframe policy: express dependency limits in time, add scene-cut
+      keys and an index, and never use unbounded prediction chains.
+- [x] Frame-rate profiles: real 24/20/15-fps footage was measured by complete
+      IPVF size; preserve source cadence up to 30 fps for the everyday profile,
+      use 20 fps for compact output, and treat 15 fps as the stronger motion
+      tradeoff.
+- [ ] Quality remains an LCD decision: SSIM/PSNR rank candidates but cannot
+      approve judder, banding, small text, faces, fades, or dark gradients.
 
 ### Low-complexity temporal prediction
 
@@ -497,17 +629,30 @@ still exceed the desired storage budget.
 
 ### Lossy movie profiles
 
-- [ ] Add rational 23.976/24/25 fps output and compare with 30/60. Frame-rate
-      reduction is often a larger movie-size/power win than a new entropy coder.
-- [ ] Compare host-side RGB565 quantization that suppresses visually irrelevant
-      low-bit changes before residual/LZ4 coding.
+- [ ] Add rational 23.976/24/25 fps output and compare with 30/60. Integer
+      24/20/15 testing is complete and showed 15.5%/34.9% savings at 20/15;
+      exact rational container timing remains.
+- [ ] Test native 30- and 60-fps real footage rather than judging those rates
+      from duplicated 23.976-fps frames; compare motion feel, CPU margin,
+      battery, late frames, and complete sector-rounded size on the A1099.
+- [ ] Separately test bounded host motion interpolation from 23.976/24 to
+      30/60 fps. Reject it if visible interpolation artifacts or resulting
+      IPVF size/device cost outweigh the perceived-motion benefit.
+- [x] Compare host-side RGB565 quantization that suppresses visually irrelevant
+      low-bit changes before residual/LZ4 coding. RGB555/454/444 at 24 fps saved
+      7.0%/16.3%/24.4% on the real-footage sample.
 - [ ] Compare palette/index modes for animation, UI captures, and cartoons.
-- [ ] Compare lower active image resolutions letterboxed in the native frame.
+- [x] Compare lower active image resolutions letterboxed in the native frame.
+      An 80% image saved 27.6% but SSIM fell to 0.5504; keep this out of the
+      everyday default pending LCD review.
 - [ ] Compare YUV420 only with a device conversion benchmark. Existing host
       results show modest high-motion residual-size improvement, while device
       YUV-to-RGB cost could consume the small 60-fps CPU budget.
 - [ ] Define quality levels by measured size and LCD A/B results, not labels
       such as “high” or “low.”
+- [x] Compare mild/strong spatial-temporal denoise before LZ4. It preserved
+      SSIM at 0.9985/0.9962 but saved only 1.3%/2.4%, so it is not a priority by
+      itself.
 
 ### Deprioritized codec families
 
@@ -623,8 +768,8 @@ Do these in order:
       compressor provenance.
 - [x] P0.2: build the strict streaming inspector and sector-accurate size
       report. Independent external-LZ4 decoding remains a hardening item.
-- [ ] P0.3: generate the deterministic corpus and bulk host matrix.
-- [ ] P1.1: run current LZ4, official LZ4HC/optimal, predictors,
+- [x] P0.3: generate the deterministic corpus and bulk host matrix.
+- [x] P1.1: run current LZ4, official LZ4HC/optimal, predictors,
       multi-rectangle, tiles, and current-format XOR+LZ4 offline.
 - [x] P1.2: choose modes by total sectors and decoder-operation budget.
 - [ ] P2.1: canary-qualify a smaller three-slot stride without changing the
@@ -632,6 +777,21 @@ Do these in order:
 - [x] P2.2: build one bounded XOR+LZ4 qualification player with sparse logging.
 - [x] P2.3: install via the standard WSL package/Windows device loop; run 30 fps
       first, then 60 fps; pull and analyze logs after each gate.
+- [ ] P1.3: add one bounded Sub16+LZ4 record candidate and measure its inverse
+      loop before deciding whether the extra 4.1% aggregate saving over
+      adaptive LZ4HC justifies an A1099 playback matrix.
+- [x] P4.1: create matched native-24, native-20, RGB454-24, RGB444-24, and
+      RGB444-20 device files from the same real scenes and perform an A1099 LCD
+      A/B. All were smooth with no immediate visible defect, but subjective
+      motion preference keeps 20 fps compact-only. RGB444/24 preserves cadence while
+      saving 24.4% on this sample.
+- [ ] P4.2: after LCD selection, expose friendly named creator profiles and
+      encode/validate the complete `suds` source, reporting true
+      whole-video size rather than only the three-scene projection.
+- [ ] P2.4: implement and device-qualify volume control; the current playback
+      loop recognizes MENU/USB but ignores wheel volume input.
+- [ ] P4.3: run matched native-30/native-60 real-motion files and a separate
+      24-to-60 host-interpolated candidate before defining high-rate profiles.
 - [ ] P3.1: settle 2-GiB behavior before designing the final index/segment rules.
 - [ ] Update this checklist after every host batch and hardware result.
 

@@ -9,6 +9,8 @@ matching audio remain together in one sector-aligned disk read.
 from __future__ import annotations
 
 import argparse
+import ctypes
+import ctypes.util
 import os
 import struct
 import subprocess
@@ -43,6 +45,66 @@ AUDIO_FRAME_BYTES = AUDIO_CHANNELS * AUDIO_BITS_PER_SAMPLE // 8
 MIN_FPS = 4
 MAX_FPS = 240
 UINT32_MAX = (1 << 32) - 1
+
+
+class OfficialLZ4:
+    """Official raw-block LZ4/LZ4HC encoder loaded from the host library."""
+
+    def __init__(self) -> None:
+        name = ctypes.util.find_library("lz4")
+        if not name:
+            raise RuntimeError("official liblz4 was not found")
+        self.lib = ctypes.CDLL(name)
+        self.lib.LZ4_compressBound.argtypes = [ctypes.c_int]
+        self.lib.LZ4_compressBound.restype = ctypes.c_int
+        self.lib.LZ4_compress_default.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
+        ]
+        self.lib.LZ4_compress_default.restype = ctypes.c_int
+        self.lib.LZ4_compress_HC.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int,
+        ]
+        self.lib.LZ4_compress_HC.restype = ctypes.c_int
+        self.lib.LZ4_versionString.argtypes = []
+        self.lib.LZ4_versionString.restype = ctypes.c_char_p
+
+    @property
+    def version(self) -> str:
+        value = self.lib.LZ4_versionString()
+        return value.decode("ascii") if value else "unknown"
+
+    def compress(self, source: bytes, level: int = 0) -> bytes:
+        if not source or len(source) > 0x7FFFFFFF:
+            raise ValueError("invalid LZ4 input size")
+        bound = self.lib.LZ4_compressBound(len(source))
+        destination = ctypes.create_string_buffer(bound)
+        source_buffer = ctypes.create_string_buffer(source, len(source))
+        if level:
+            written = self.lib.LZ4_compress_HC(
+                source_buffer, destination, len(source), bound, level
+            )
+        else:
+            written = self.lib.LZ4_compress_default(
+                source_buffer, destination, len(source), bound
+            )
+        if written <= 0:
+            raise RuntimeError("official LZ4 compression failed")
+        return destination.raw[:written]
+
+
+_official_lz4: OfficialLZ4 | None | bool = None
+
+
+def official_lz4() -> OfficialLZ4 | None:
+    """Return the optional host compressor, caching an unavailable result."""
+    global _official_lz4
+    if _official_lz4 is None:
+        try:
+            _official_lz4 = OfficialLZ4()
+        except (RuntimeError, OSError):
+            _official_lz4 = False
+    return _official_lz4 if isinstance(_official_lz4, OfficialLZ4) else None
 
 IMA_INDEX_TABLE = (
     -1, -1, -1, -1, 2, 4, 6, 8,
@@ -668,17 +730,31 @@ def read_audio_slice(audio: BinaryIO, size: int) -> tuple[bytes, int]:
     return data, missing
 
 
+def compress_lz4(data: bytes, mode: str = "best") -> bytes:
+    """Choose a raw LZ4 block without changing the device bitstream."""
+    if mode not in ("builtin", "best", "official-hc12"):
+        raise ValueError("lz4 mode must be builtin, best, or official-hc12")
+    candidates = [] if mode == "official-hc12" else [lz4_compress(data)]
+    host_lz4 = official_lz4()
+    if mode != "builtin" and host_lz4 is not None:
+        candidates.append(host_lz4.compress(data, 12))
+    if not candidates:
+        raise RuntimeError("official-hc12 requires host liblz4")
+    return min(candidates, key=len)
+
+
 def _compress_record_if_smaller(
     kind: int,
     rect_count: int,
     payload: bytes,
     audio_size: int,
+    lz4_mode: str = "best",
 ):
     """Return a raw or LZ4 record, requiring a whole-sector saving."""
     decoded_size = len(payload)
     if kind not in (TYPE_KEY, TYPE_RECTS):
         return kind, rect_count, payload, decoded_size
-    compressed = lz4_compress(payload)
+    compressed = compress_lz4(payload, lz4_mode)
     if (len(compressed) < decoded_size and
             record_sectors(len(compressed), audio_size) <
             record_sectors(decoded_size, audio_size)):
@@ -693,13 +769,14 @@ def choose_video_record(
     force_key: bool,
     video_mode: str,
     max_rects: int,
+    lz4_mode: str = "best",
 ):
     """Choose a video record by final sector count, with bounded tie costs."""
     if video_mode not in ("current", "spatial", "auto"):
         raise ValueError("video_mode must be current, spatial, or auto")
     if prev is None or force_key:
         return _compress_record_if_smaller(
-            TYPE_KEY, 0, cur, audio_size
+            TYPE_KEY, 0, cur, audio_size, lz4_mode
         )
 
     rect = bbox_diff(prev, cur)
@@ -708,11 +785,11 @@ def choose_video_record(
     delta = rect_payload(cur, rect)
     if len(delta) < FRAME_BYTES:
         selected = _compress_record_if_smaller(
-            TYPE_RECTS, 1, delta, audio_size
+            TYPE_RECTS, 1, delta, audio_size, lz4_mode
         )
     else:
         selected = _compress_record_if_smaller(
-            TYPE_KEY, 0, cur, audio_size
+            TYPE_KEY, 0, cur, audio_size, lz4_mode
         )
     selected_sectors = record_sectors(len(selected[2]), audio_size)
 
@@ -722,7 +799,8 @@ def choose_video_record(
             multi_payload = rects_payload(cur, rectangles)
             if len(multi_payload) < FRAME_BYTES:
                 candidate = _compress_record_if_smaller(
-                    TYPE_RECTS, len(rectangles), multi_payload, audio_size
+                    TYPE_RECTS, len(rectangles), multi_payload, audio_size,
+                    lz4_mode,
                 )
                 candidate_sectors = record_sectors(
                     len(candidate[2]), audio_size
@@ -732,7 +810,7 @@ def choose_video_record(
                     selected_sectors = candidate_sectors
 
     if video_mode == "auto":
-        temporal = lz4_compress(xor_frames(prev, cur))
+        temporal = compress_lz4(xor_frames(prev, cur), lz4_mode)
         temporal_payload = struct.pack(
             "<I", rockbox_crc32(temporal)
         ) + temporal
@@ -752,6 +830,7 @@ def encode(
     ffmpeg: str,
     video_mode: str = "spatial",
     max_rects: int = 8,
+    lz4_mode: str = "best",
 ) -> None:
     if video_mode == "auto" and keyint == 0:
         raise ValueError("temporal mode requires a bounded keyframe interval")
@@ -809,7 +888,7 @@ def encode(
                 kind, rects, video_payload, decoded_video_bytes = (
                     choose_video_record(
                         prev, cur, len(audio_payload), force_key,
-                        video_mode, max_rects,
+                        video_mode, max_rects, lz4_mode,
                     )
                 )
 
@@ -871,7 +950,8 @@ def encode(
         f"  key={counts[TYPE_KEY]} delta={counts[TYPE_RECTS]} "
         f"repeat={counts[TYPE_REPEAT]} key-lz4={counts[TYPE_KEY_LZ4]} "
         f"delta-lz4={counts[TYPE_RECTS_LZ4]} "
-        f"xor-lz4={counts[TYPE_XOR_LZ4]} mode={video_mode}"
+        f"xor-lz4={counts[TYPE_XOR_LZ4]} mode={video_mode} "
+        f"lz4={lz4_mode}"
     )
     print(
         f"  video={video_payload_total:,} bytes "
@@ -913,6 +993,13 @@ def main() -> None:
         default=8,
         help="maximum rectangles in a spatial record (1..255)",
     )
+    ap.add_argument(
+        "--lz4-mode",
+        choices=("builtin", "best", "official-hc12"),
+        default="best",
+        help=("best compares built-in LZ4 with official LZ4HC level 12 "
+              "when host liblz4 is available"),
+    )
     ns = ap.parse_args()
     if not MIN_FPS <= ns.fps <= MAX_FPS:
         ap.error(f"--fps must be {MIN_FPS}..{MAX_FPS}")
@@ -925,7 +1012,7 @@ def main() -> None:
     if not 1 <= ns.max_rects <= 255:
         ap.error("--max-rects must be 1..255")
     encode(ns.source, ns.output, ns.fps, ns.keyint, ns.ffmpeg,
-           ns.video_mode, ns.max_rects)
+           ns.video_mode, ns.max_rects, ns.lz4_mode)
 
 
 if __name__ == "__main__":

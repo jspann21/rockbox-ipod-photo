@@ -20,6 +20,12 @@
     ((uint32_t)((uint64_t)*rb->current_tick * 1000000u / HZ))
 #endif
 
+/* Qualification instrumentation is deliberately opt-in. Define this as 1
+ * for a dedicated measurement build; normal playback leaves it at zero. */
+#ifndef IPVF_ENABLE_QUALIFICATION_TELEMETRY
+#define IPVF_ENABLE_QUALIFICATION_TELEMETRY 0
+#endif
+
 #define IPVF_MAGIC                  "IPVF"
 #define IPVF_VERSION                1u
 #define IPVF_HEADER_SIZE            64u
@@ -61,12 +67,18 @@
     (IPVF_AUDIO_DMA_MAX_BYTES / IPVF_AUDIO_FRAME_BYTES)
 #define IPVF_AUDIO_CHANNEL           PCM_MIXER_CHAN_PLAYBACK
 #define IPVF_DECODED_SLOT_STRIDE      0x20000u
+#define IPVF_LATE_THRESHOLD_FRAMES \
+    ((IPVF_AUDIO_SAMPLE_RATE * 501u + 999999u) / 1000000u)
+
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
 #define IPVF_QUALIFICATION_LOG \
     ROCKBOX_DIR "/ipvf-qualification-v5.tsv"
 #define IPVF_QUALIFICATION_MARKER \
     ROCKBOX_DIR "/ipvf-qualification.enable"
 #define IPVF_DECODER_REV             "xor-payloadcrc-4"
+#endif
 
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
 enum ipvf_error_code
 {
     IPVF_ERROR_NONE = 0,
@@ -87,6 +99,7 @@ enum ipvf_error_code
     IPVF_ERROR_AUDIO_FINISH,
     IPVF_ERROR_RECONCILE,
 };
+#endif
 
 #if defined(IPOD_COLOR) && NUM_CORES > 1 && \
     defined(HAVE_SEMAPHORE_OBJECTS) && !defined(SIMULATOR)
@@ -117,8 +130,9 @@ struct ipvf_stats
 {
     unsigned long frames;
     unsigned long late_frames;
-    unsigned long max_late_us;
     unsigned long audio_underruns;
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
+    unsigned long max_late_us;
     unsigned long max_read_us;
     unsigned long max_video_decode_us;
     unsigned long max_lz4_decode_us;
@@ -155,8 +169,10 @@ struct ipvf_stats
     uint64_t audio_frames;
     uint64_t padding_bytes;
     uint32_t final_crc;
+#endif
 };
 
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
 static void add_qualification_timing(uint64_t *total,
                                      unsigned long *maximum,
                                      uint32_t elapsed)
@@ -165,6 +181,7 @@ static void add_qualification_timing(uint64_t *total,
     if (elapsed > *maximum)
         *maximum = elapsed;
 }
+#endif
 
 struct ipvf_record_info
 {
@@ -560,10 +577,16 @@ static bool decode_record_video(const unsigned char *record,
     unsigned char *destination = decoded_record + IPVF_FRAME_HEADER_SIZE;
     unsigned char *payload = destination;
     bool valid;
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
     uint32_t operation_started;
     uint32_t operation_us;
+#endif
     uint32_t stored_bytes = record_info->stored_video_bytes;
     uint32_t expected_crc = 0;
+
+#if !IPVF_ENABLE_QUALIFICATION_TELEMETRY
+    (void)stats;
+#endif
 
     if (record_info->compressed)
     {
@@ -572,39 +595,51 @@ static bool decode_record_video(const unsigned char *record,
             expected_crc = get_le32(source);
             source += sizeof(uint32_t);
             stored_bytes -= sizeof(uint32_t);
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             operation_started = USEC_TIMER;
+#endif
             valid = ipvf_temporal_payload_crc32(source, stored_bytes) ==
                     expected_crc;
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             operation_us = USEC_TIMER - operation_started;
             if (stats != NULL)
                 add_qualification_timing(
                     &stats->temporal_check_us,
                     &stats->max_temporal_check_us, operation_us);
+#endif
             if (!valid)
                 return false;
         }
         payload = scratch != NULL ? scratch : destination;
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
         operation_started = USEC_TIMER;
+#endif
         valid = ipvf_lz4_decode(source, stored_bytes, payload,
                                 record_info->decoded_video_bytes);
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
         operation_us = USEC_TIMER - operation_started;
         if (stats != NULL)
             add_qualification_timing(&stats->lz4_decode_us,
                                      &stats->max_lz4_decode_us,
                                      operation_us);
+#endif
         if (!valid)
             return false;
         if (record_info->temporal)
         {
             if (scratch == NULL || reference == NULL)
                 return false;
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             operation_started = USEC_TIMER;
+#endif
             ipvf_xor_frame(reference, scratch);
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             operation_us = USEC_TIMER - operation_started;
             if (stats != NULL)
                 add_qualification_timing(
                     &stats->temporal_reconstruct_us,
                     &stats->max_temporal_reconstruct_us, operation_us);
+#endif
             payload = reference;
         }
     }
@@ -627,7 +662,9 @@ static bool decode_record_video(const unsigned char *record,
 
     if (!valid)
         return false;
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
     operation_started = USEC_TIMER;
+#endif
     if (record_info->temporal)
         rb->memcpy(destination, reference, IPVF_FRAME_BYTES);
     else if (record_info->compressed && scratch != NULL)
@@ -642,10 +679,12 @@ static bool decode_record_video(const unsigned char *record,
             update_reference_rects(destination,
                                    record_info->rect_count, reference);
     }
+#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
     operation_us = USEC_TIMER - operation_started;
     if (stats != NULL)
         add_qualification_timing(&stats->video_copy_us,
                                  &stats->max_video_copy_us, operation_us);
+#endif
 
     return true;
 }
