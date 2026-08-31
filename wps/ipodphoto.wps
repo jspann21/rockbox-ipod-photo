@@ -124,4 +124,7 @@
 %Vl(WPS_Control_Pause,145,119,18,14,-)%Vb(muted)%Vf(muted)%dr(0,0,-,-)%Vf(fg)%dr(5,1,1,13)%dr(6,2,1,11)%dr(7,3,1,9)%dr(8,4,1,7)%dr(9,5,1,5)%dr(10,6,1,3)%dr(11,7,1,1)
 %Vl(WPS_Control_Seek_Forward,145,119,18,14,-)%Vb(muted)%Vf(muted)%dr(0,0,-,-)%Vf(fg)%dr(2,1,1,13)%dr(3,2,1,11)%dr(4,3,1,9)%dr(5,4,1,7)%dr(6,5,1,5)%dr(7,6,1,3)%dr(8,7,1,1)%dr(9,1,1,13)%dr(10,2,1,11)%dr(11,3,1,9)%dr(12,4,1,7)%dr(13,5,1,5)%dr(14,6,1,3)%dr(15,7,1,1)
 %Vl(WPS_Control_Seek_Back,145,119,18,14,-)%Vb(muted)%Vf(muted)%dr(0,0,-,-)%Vf(fg)%dr(15,1,1,13)%dr(14,2,1,11)%dr(13,3,1,9)%dr(12,4,1,7)%dr(11,5,1,5)%dr(10,6,1,3)%dr(9,7,1,1)%dr(8,1,1,13)%dr(7,2,1,11)%dr(6,3,1,9)%dr(5,4,1,7)%dr(4,5,1,5)%dr(3,6,1,3)%dr(2,7,1,1)
-%V(180,122,40,11,3)%Vg(muted,muted,fg)%Vs(gradient)%al%pp of %pe
+%V(0,0,1,1,-)%?if(%pe,>,999)<%Vd(WPS_Playlist_Long)|%Vd(WPS_Playlist_Short)>
+%Vl(WPS_Playlist_Short,180,122,40,11,3)%Vg(muted,muted,fg)%Vs(gradient)%al%pp of %pe
+%Vl(WPS_Playlist_Long,178,115,42,11,3)%Vg(muted,muted,fg)%Vs(gradient)%ac%pp
+%Vl(WPS_Playlist_Long,178,127,42,11,3)%Vg(muted,muted,fg)%Vs(gradient)%ac%Sx(of) %pe
