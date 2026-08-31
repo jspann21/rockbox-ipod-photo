@@ -41,11 +41,16 @@ class IPVFEncodeTests(unittest.TestCase):
         return bytes(frame)
 
     def parse_records(self, data: bytes):
-        self.assertEqual(struct.unpack_from("<H", data, 4)[0], ipvf.VERSION)
+        self.assertEqual(struct.unpack_from("<H", data, 4)[0],
+                         ipvf.HEADER_SIZE)
         self.assertEqual(struct.unpack_from("<I", data, 20)[0], 0x0B)
-        fps = struct.unpack_from("<H", data, 12)[0]
+        fps = struct.unpack_from("<H", data, 10)[0]
         frame_count = struct.unpack_from("<I", data, 16)[0]
-        current = struct.unpack_from("<H", data, 28)[0]
+        current = struct.unpack_from("<H", data, 14)[0]
+        media_end = struct.unpack_from("<Q", data, 44)[0]
+        index_offset = struct.unpack_from("<Q", data, 52)[0]
+        index_count = struct.unpack_from("<I", data, 60)[0]
+        index_entry_size = struct.unpack_from("<H", data, 64)[0]
         position = ipvf.DATA_OFFSET
         records = []
         for frame in range(frame_count):
@@ -83,7 +88,17 @@ class IPVFEncodeTests(unittest.TestCase):
             position += current * ipvf.RECORD_SECTOR_SIZE
             current = next_sectors
         self.assertEqual(current, 0)
-        self.assertEqual(position, len(data))
+        self.assertEqual(position, media_end)
+        self.assertEqual(index_offset, media_end)
+        self.assertEqual(index_entry_size, ipvf.INDEX_ENTRY_SIZE)
+        index_data = data[index_offset:index_offset +
+                          index_count * index_entry_size]
+        self.assertEqual(len(index_data), index_count * index_entry_size)
+        self.assertEqual(
+            struct.unpack_from("<I", data, 72)[0],
+            ipvf.rockbox_crc32(index_data),
+        )
+        self.assertEqual(index_offset + len(index_data), len(data))
         return records
 
     def reconstruct_records(self, records):
@@ -120,7 +135,13 @@ class IPVFEncodeTests(unittest.TestCase):
             previous = current
         return frames
 
-    def encode_with_audio(self, root: Path, source_audio: bytes) -> bytes:
+    def encode_with_audio(
+        self,
+        root: Path,
+        source_audio: bytes,
+        metadata: dict[str, str] | None = None,
+        keyint: int = 120,
+    ) -> bytes:
         output = root / "clip.ipvf"
 
         def fake_audio(_source: Path, destination: Path, _ffmpeg: str):
@@ -130,23 +151,62 @@ class IPVFEncodeTests(unittest.TestCase):
             ipvf, "ffmpeg_frames", return_value=iter(self.frames)
         ), mock.patch.object(ipvf, "decode_audio", side_effect=fake_audio), \
                 contextlib.redirect_stdout(io.StringIO()):
-            ipvf.encode(root / "source.fake", output, 30, 120, "unused")
+            ipvf.encode(
+                root / "source.fake", output, 30, keyint, "unused",
+                metadata=metadata,
+            )
         return output.read_bytes()
 
     def test_interleaves_exact_pcm_slices(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             source_audio = bytes(i % 251 for i in range(17_000))
-            data = self.encode_with_audio(Path(td), source_audio)
-            self.assertEqual(struct.unpack_from("<H", data, 4)[0], 1)
+            metadata = {
+                "title": "Container test",
+                "artist": "IPVF",
+                "album": "Host suite",
+            }
+            output = Path(td) / "clip.ipvf"
+            data = self.encode_with_audio(Path(td), source_audio, metadata)
+            self.assertEqual(struct.unpack_from("<H", data, 4)[0], 80)
+            self.assertEqual(struct.unpack_from("<H", data, 6)[0], 220)
+            self.assertEqual(struct.unpack_from("<H", data, 8)[0], 176)
             self.assertEqual(struct.unpack_from("<I", data, 20)[0], 0x0B)
+            self.assertEqual(struct.unpack_from("<H", data, 28)[0], 2)
             self.assertEqual(struct.unpack_from("<H", data, 30)[0], 2)
-            self.assertEqual(struct.unpack_from("<H", data, 32)[0], 2)
-            self.assertEqual(struct.unpack_from("<H", data, 34)[0], 16)
-            self.assertEqual(struct.unpack_from("<I", data, 36)[0], 44_100)
-            self.assertEqual(struct.unpack_from("<I", data, 40)[0], 4_410)
+            self.assertEqual(struct.unpack_from("<H", data, 32)[0], 16)
+            self.assertEqual(struct.unpack_from("<I", data, 34)[0], 44_100)
+            self.assertEqual(struct.unpack_from("<I", data, 38)[0], 4_410)
+            self.assertEqual(struct.unpack_from("<H", data, 42)[0], 0)
+            media_end = struct.unpack_from("<Q", data, 44)[0]
+            self.assertEqual(struct.unpack_from("<Q", data, 52)[0], media_end)
+            self.assertEqual(struct.unpack_from("<I", data, 60)[0], 1)
+            self.assertEqual(struct.unpack_from("<H", data, 64)[0], 16)
+            metadata_length = struct.unpack_from("<H", data, 66)[0]
+            self.assertEqual(struct.unpack_from("<I", data, 68)[0], 80)
+            self.assertEqual(struct.unpack_from("<I", data, 76)[0], 0)
             self.assertEqual(
-                data[44:ipvf.DATA_OFFSET], bytes(ipvf.DATA_OFFSET - 44)
+                ipvf.parse_metadata(data[80:80 + metadata_length]), metadata
             )
+            index_offset = struct.unpack_from("<Q", data, 52)[0]
+            index_count = struct.unpack_from("<I", data, 60)[0]
+            index_data = data[index_offset:index_offset + index_count * 16]
+            self.assertEqual(
+                struct.unpack_from("<I", data, 72)[0],
+                ipvf.rockbox_crc32(index_data),
+            )
+            self.assertEqual(
+                struct.unpack_from("<IQHH", index_data),
+                (
+                    0,
+                    ipvf.DATA_OFFSET,
+                    struct.unpack_from("<H", data, 14)[0],
+                    ipvf.INDEX_FLAG_KEY_LZ4,
+                ),
+            )
+            report = inspector.inspect_file(output)
+            self.assertEqual(report["metadata"], metadata)
+            self.assertEqual(report["index_count"], 1)
+            self.assertEqual(report["index"][0]["frame"], 0)
             records = self.parse_records(data)
             self.assertEqual([record[0] for record in records], [3, 1, 2])
             self.assertEqual(len(b"".join(record[3] for record in records)), 4_431)
@@ -172,6 +232,22 @@ class IPVFEncodeTests(unittest.TestCase):
             self.assertEqual(len(decoded), 17_640)
             self.assertEqual(decoded[:4], source_audio[:4])
 
+    def test_index_lists_every_keyframe(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            source_audio = bytes(i % 251 for i in range(17_000))
+            output = Path(td) / "clip.ipvf"
+            self.encode_with_audio(Path(td), source_audio, keyint=1)
+            report = inspector.inspect_file(output)
+            self.assertEqual(report["index_count"], len(self.frames))
+            self.assertEqual(
+                [entry["frame"] for entry in report["index"]],
+                list(range(len(self.frames))),
+            )
+            self.assertTrue(all(
+                entry["flags"] == ipvf.INDEX_FLAG_KEY_LZ4
+                for entry in report["index"]
+            ))
+
     def test_keyframe_sector_limit(self) -> None:
         audio_at_three = 8 + ipvf.audio_boundary(1, 3) - 1
         self.assertLessEqual(
@@ -181,6 +257,21 @@ class IPVFEncodeTests(unittest.TestCase):
         audio_at_two = 8 + ipvf.audio_boundary(1, 2) - 1
         with self.assertRaises(RuntimeError):
             ipvf.record_sectors(ipvf.FRAME_BYTES, audio_at_two)
+
+    def test_metadata_tlv_rejects_invalid_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "1..255"):
+            ipvf.encode_metadata({"title": ""})
+        with self.assertRaisesRegex(ValueError, "1..255"):
+            ipvf.encode_metadata({"title": "x" * 256})
+        for malformed in (
+            b"\x01",
+            b"\x01\x00",
+            b"\x09\x01x",
+            b"\x01\x02\xc3\x28",
+            b"\x01\x01x\x01\x01y",
+        ):
+            with self.assertRaises(ValueError):
+                ipvf.parse_metadata(malformed)
 
     def test_lz4_roundtrip_and_malformed_rejection(self) -> None:
         source = (b"abcd" * 20_000) + bytes(range(251))
@@ -239,7 +330,9 @@ class IPVFEncodeTests(unittest.TestCase):
                         60, 120, "unused", "auto", 8)
 
     def test_default_mode_is_hardware_proven_spatial(self) -> None:
-        self.assertEqual(ipvf.encode.__defaults__, ("spatial", 8, "best"))
+        self.assertEqual(
+            ipvf.encode.__defaults__, ("spatial", 8, "best", "rgb565")
+        )
         audio = bytes(ipvf.audio_boundary(len(self.frames), 30) *
                       ipvf.AUDIO_FRAME_BYTES)
 
@@ -292,7 +385,7 @@ class IPVFEncodeTests(unittest.TestCase):
             self.assertEqual(report["counts"]["xor_lz4"], 1)
 
             second = (ipvf.DATA_OFFSET +
-                      struct.unpack_from("<H", data, 28)[0] *
+                      struct.unpack_from("<H", data, 14)[0] *
                       ipvf.RECORD_SECTOR_SIZE)
             self.assertEqual(data[second], ipvf.TYPE_XOR_LZ4)
             data[second + 12] ^= 1
@@ -302,6 +395,33 @@ class IPVFEncodeTests(unittest.TestCase):
                 ValueError, "temporal payload CRC mismatch"
             ):
                 inspector.inspect_file(corrupted)
+
+    def test_malformed_index_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source_audio = bytes(i % 251 for i in range(17_000))
+            original = self.encode_with_audio(root, source_audio)
+            index_offset = struct.unpack_from("<Q", original, 52)[0]
+            index_count = struct.unpack_from("<I", original, 60)[0]
+            index_size = index_count * ipvf.INDEX_ENTRY_SIZE
+
+            bad_crc = bytearray(original)
+            bad_crc[index_offset] ^= 1
+            bad_crc_path = root / "bad-index-crc.ipvf"
+            bad_crc_path.write_bytes(bad_crc)
+            with self.assertRaisesRegex(ValueError, "index CRC mismatch"):
+                inspector.inspect_file(bad_crc_path)
+
+            bad_frame = bytearray(original)
+            struct.pack_into("<I", bad_frame, index_offset, 1)
+            index_data = bad_frame[index_offset:index_offset + index_size]
+            struct.pack_into(
+                "<I", bad_frame, 72, ipvf.rockbox_crc32(index_data)
+            )
+            bad_frame_path = root / "bad-index-frame.ipvf"
+            bad_frame_path.write_bytes(bad_frame)
+            with self.assertRaisesRegex(ValueError, "index must begin with frame 0"):
+                inspector.inspect_file(bad_frame_path)
 
     def test_ima_length_and_decode_contract(self) -> None:
         pcm = struct.pack("<hhhhhh", 1000, -1000, 1200, -1200, 900, -900)

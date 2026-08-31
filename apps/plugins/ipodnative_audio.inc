@@ -276,6 +276,46 @@ static void audio_stop_playback(void)
     rb->pcm_play_unlock();
 }
 
+/* Use the mixer's native channel pause so the current DMA slice and ring
+ * counters remain untouched. audio_clock() therefore freezes exactly where
+ * playback paused and resumes without re-decoding or dropping samples. */
+static bool audio_pause_playback(void)
+{
+    if (!audio.configured || !audio.started)
+        return false;
+    if (rb->mixer_channel_status(IPVF_AUDIO_CHANNEL) != CHANNEL_PLAYING)
+        return false;
+    rb->mixer_channel_play_pause(IPVF_AUDIO_CHANNEL, false);
+    return rb->mixer_channel_status(IPVF_AUDIO_CHANNEL) == CHANNEL_PAUSED;
+}
+
+static bool audio_resume_playback(void)
+{
+    if (!audio.configured || !audio.started ||
+        rb->mixer_channel_status(IPVF_AUDIO_CHANNEL) != CHANNEL_PAUSED)
+        return false;
+    rb->mixer_channel_play_pause(IPVF_AUDIO_CHANNEL, true);
+    return rb->mixer_channel_status(IPVF_AUDIO_CHANNEL) == CHANNEL_PLAYING;
+}
+
+/* Rebase the ring to an absolute media sample before decoding a seek target.
+ * The counters intentionally retain absolute time so existing frame/audio
+ * boundary calculations continue to work after a jump. */
+static bool audio_reset_to(uint32_t sample_frame)
+{
+    if (!audio.configured)
+        return false;
+
+    audio_stop_playback();
+    audio.completed_frames = sample_frame;
+    audio.current_frames = 0;
+    audio.written_frames = sample_frame;
+    audio.source_eof = false;
+    audio.started = false;
+    membarrier();
+    return true;
+}
+
 static void audio_shutdown(void)
 {
     if (audio.configured)

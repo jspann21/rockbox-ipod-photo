@@ -11,21 +11,22 @@ from __future__ import annotations
 import argparse
 import ctypes
 import ctypes.util
+import json
 import os
 import struct
 import subprocess
 import tempfile
+from fractions import Fraction
 from pathlib import Path
 from typing import BinaryIO
 
 W, H = 220, 176
 FRAME_BYTES = W * H * 2
-HEADER_SIZE = 64
+HEADER_SIZE = 80
 DATA_OFFSET = 512
 RECORD_SECTOR_SIZE = 512
 MAX_RECORD_SECTORS = 192
 MAGIC = b"IPVF"
-VERSION = 1
 FLAG_RGB565BE = 1
 FLAG_SECTOR_RECORDS = 2
 FLAG_IMA_ADPCM = 8
@@ -45,6 +46,48 @@ AUDIO_FRAME_BYTES = AUDIO_CHANNELS * AUDIO_BITS_PER_SAMPLE // 8
 MIN_FPS = 4
 MAX_FPS = 240
 UINT32_MAX = (1 << 32) - 1
+UINT64_MAX = (1 << 64) - 1
+DEVICE_FILE_SIZE_MAX = 0x7FFFFFFF
+INDEX_ENTRY_SIZE = 16
+INDEX_FLAG_KEY_LZ4 = 1
+METADATA_OFFSET = HEADER_SIZE
+METADATA_CAPACITY = DATA_OFFSET - METADATA_OFFSET
+METADATA_TAGS = {"title": 1, "artist": 2, "album": 3}
+METADATA_NAMES = {tag: name for name, tag in METADATA_TAGS.items()}
+
+CREATOR_PROFILES = {
+    "native": {
+        "fps": None,
+        "color_depth": "rgb565",
+        "description": "source cadence up to 30 fps, native RGB565 precision",
+    },
+    "everyday": {
+        "fps": None,
+        "color_depth": "rgb565",
+        "description": "source cadence up to 30 fps, full RGB565 precision",
+    },
+    "compact": {
+        "fps": 20,
+        "color_depth": "rgb565",
+        "description": "20 fps with full RGB565 precision",
+    },
+}
+
+COLOR_FILTERS = {
+    "rgb565": None,
+    "rgb555": (
+        "format=rgb24,lutrgb=r='floor(val/8)*8':"
+        "g='floor(val/8)*8':b='floor(val/8)*8',format=bgr0"
+    ),
+    "rgb454": (
+        "format=rgb24,lutrgb=r='floor(val/16)*16':"
+        "g='floor(val/8)*8':b='floor(val/16)*16',format=bgr0"
+    ),
+    "rgb444": (
+        "format=rgb24,lutrgb=r='floor(val/16)*16':"
+        "g='floor(val/16)*16':b='floor(val/16)*16',format=bgr0"
+    ),
+}
 
 
 class OfficialLZ4:
@@ -140,6 +183,76 @@ def rockbox_crc32(data: bytes, crc: int = 0xFFFFFFFF) -> int:
         crc = (ROCKBOX_CRC32_TABLE[((crc >> 24) ^ byte) & 0xFF] ^
                ((crc << 8) & 0xFFFFFFFF))
     return crc
+
+
+def encode_metadata(metadata: dict[str, str] | None = None) -> bytes:
+    """Encode the bounded metadata TLV region in stable tag order."""
+    if metadata is None:
+        return b""
+    unknown = set(metadata) - set(METADATA_TAGS)
+    if unknown:
+        raise ValueError(
+            "unsupported metadata tag(s): " + ", ".join(sorted(unknown))
+        )
+
+    encoded = bytearray()
+    for name, tag in METADATA_TAGS.items():
+        value = metadata.get(name)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"{name} metadata must be text")
+        try:
+            raw = value.encode("utf-8", "strict")
+        except UnicodeEncodeError as error:
+            raise ValueError(f"{name} metadata is not valid UTF-8") from error
+        if not raw or len(raw) > 255:
+            raise ValueError(
+                f"{name} metadata length must be 1..255 UTF-8 bytes"
+            )
+        if len(encoded) + 2 + len(raw) > METADATA_CAPACITY:
+            raise ValueError("metadata exceeds the superblock capacity")
+        encoded.extend((tag, len(raw)))
+        encoded.extend(raw)
+    return bytes(encoded)
+
+
+def parse_metadata(data: bytes) -> dict[str, str]:
+    """Parse a complete metadata TLV payload with strict bounds checks."""
+    metadata: dict[str, str] = {}
+    position = 0
+    while position < len(data):
+        if position + 2 > len(data):
+            raise ValueError("metadata has a truncated TLV header")
+        tag = data[position]
+        length = data[position + 1]
+        position += 2
+        name = METADATA_NAMES.get(tag)
+        if name is None:
+            raise ValueError(f"metadata has an unknown tag {tag}")
+        if length == 0:
+            raise ValueError(f"metadata tag {name} has an invalid zero length")
+        if position + length > len(data):
+            raise ValueError(f"metadata tag {name} exceeds metadata bounds")
+        if name in metadata:
+            raise ValueError(f"metadata tag {name} is duplicated")
+        try:
+            metadata[name] = data[position:position + length].decode(
+                "utf-8", "strict"
+            )
+        except UnicodeDecodeError as error:
+            raise ValueError(f"metadata tag {name} is not valid UTF-8") from error
+        position += length
+    return metadata
+
+
+def index_flags_for_kind(kind: int) -> int:
+    """Return the index flags for a keyframe record kind."""
+    if kind == TYPE_KEY:
+        return 0
+    if kind == TYPE_KEY_LZ4:
+        return INDEX_FLAG_KEY_LZ4
+    raise ValueError(f"record kind {kind} is not a keyframe")
 
 
 def _ima_step(predictor: int, index: int, code: int) -> tuple[int, int]:
@@ -617,46 +730,192 @@ def write_header(
     frames: int,
     first_record_sectors: int,
     flags: int,
+    media_end_offset: int,
+    index_count: int,
+    index_crc: int,
+    metadata: dict[str, str] | None = None,
 ) -> None:
+    metadata_bytes = encode_metadata(metadata)
+    if not 0 <= media_end_offset <= UINT64_MAX:
+        raise ValueError("media end offset does not fit in the IPVF header")
+    if not 0 <= index_count <= UINT32_MAX:
+        raise ValueError("index entry count does not fit in the IPVF header")
+    if not 0 <= index_crc <= UINT32_MAX:
+        raise ValueError("index CRC does not fit in the IPVF header")
     h = bytearray(DATA_OFFSET)
     h[0:4] = MAGIC
     struct.pack_into(
         "<HHHHHHIII",
         h,
         4,
-        VERSION,
         HEADER_SIZE,
         W,
         H,
         fps,
         1,
+        first_record_sectors,
         frames,
         flags,
         DATA_OFFSET,
     )
-    struct.pack_into("<H", h, 28, first_record_sectors)
     total_audio_frames = audio_boundary(frames, fps)
     if total_audio_frames > UINT32_MAX:
         raise RuntimeError("audio duration exceeds IPVF limits")
     struct.pack_into(
         "<HHHII",
         h,
-        30,
+        28,
         AUDIO_FORMAT_IMA_ADPCM,
         AUDIO_CHANNELS,
         AUDIO_BITS_PER_SAMPLE,
         AUDIO_SAMPLE_RATE,
         total_audio_frames,
     )
+    struct.pack_into("<H", h, 42, 0)
+    struct.pack_into("<Q", h, 44, media_end_offset)
+    struct.pack_into("<Q", h, 52, media_end_offset)
+    struct.pack_into("<I", h, 60, index_count)
+    struct.pack_into("<H", h, 64, INDEX_ENTRY_SIZE)
+    struct.pack_into("<H", h, 66, len(metadata_bytes))
+    struct.pack_into("<I", h, 68, METADATA_OFFSET)
+    struct.pack_into("<I", h, 72, index_crc)
+    struct.pack_into("<I", h, 76, 0)
+    h[METADATA_OFFSET:METADATA_OFFSET + len(metadata_bytes)] = metadata_bytes
     f.seek(0)
     f.write(h)
 
 
-def ffmpeg_frames(source: Path, fps: int, ffmpeg: str):
-    vf = (
+def probe_source_fps(source: Path, ffprobe: str) -> float:
+    """Return the first video stream's measured average frame rate."""
+    result = subprocess.run(
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=avg_frame_rate,r_frame_rate",
+            "-of",
+            "json",
+            str(source),
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode:
+        raise RuntimeError(
+            f"ffprobe could not inspect the first video stream: "
+            f"{result.stderr.strip()}"
+        )
+    try:
+        streams = json.loads(result.stdout)["streams"]
+        stream = streams[0]
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
+        raise RuntimeError("ffprobe returned no usable video stream") from error
+    for field in ("avg_frame_rate", "r_frame_rate"):
+        try:
+            rate = Fraction(stream[field])
+        except (KeyError, ValueError, ZeroDivisionError):
+            continue
+        if rate > 0:
+            return float(rate)
+    raise RuntimeError("ffprobe returned no usable video frame rate")
+
+
+def probe_source_metadata(source: Path, ffprobe: str) -> dict[str, str]:
+    """Return supported format/stream tags, preferring stream tags."""
+    result = subprocess.run(
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-show_entries",
+            "format_tags=title,artist,album:stream_tags=title,artist,album",
+            "-of",
+            "json",
+            str(source),
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode:
+        raise RuntimeError(
+            f"ffprobe could not inspect source metadata: "
+            f"{result.stderr.strip()}"
+        )
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("ffprobe returned invalid metadata JSON") from error
+
+    metadata: dict[str, str] = {}
+    candidates = payload.get("streams", [])
+    if isinstance(candidates, list):
+        candidates = [
+            stream.get("tags", {}) for stream in candidates
+            if isinstance(stream, dict)
+        ]
+    else:
+        candidates = []
+    format_info = payload.get("format", {})
+    if isinstance(format_info, dict):
+        candidates.append(format_info.get("tags", {}))
+    for tags in candidates:
+        if not isinstance(tags, dict):
+            continue
+        normalized = {
+            str(key).lower(): value for key, value in tags.items()
+        }
+        for name in METADATA_TAGS:
+            if name in metadata or name not in normalized:
+                continue
+            value = normalized[name]
+            if isinstance(value, str) and value:
+                metadata[name] = value
+    return metadata
+
+
+def profile_settings(
+    source: Path,
+    profile: str,
+    fps_override: int | None,
+    color_override: str | None,
+    ffprobe: str,
+) -> tuple[int, str, float | None]:
+    """Resolve one friendly profile, retaining explicit expert overrides."""
+    if profile not in CREATOR_PROFILES:
+        raise ValueError(f"unknown creator profile: {profile}")
+    settings = CREATOR_PROFILES[profile]
+    source_fps = None
+    fps = fps_override if fps_override is not None else settings["fps"]
+    if fps is None:
+        source_fps = probe_source_fps(source, ffprobe)
+        fps = max(MIN_FPS, min(30, int(source_fps + 0.5)))
+    color_depth = color_override or settings["color_depth"]
+    assert isinstance(fps, int) and isinstance(color_depth, str)
+    return fps, color_depth, source_fps
+
+
+def ffmpeg_frames(
+    source: Path,
+    fps: int,
+    ffmpeg: str,
+    color_depth: str = "rgb565",
+):
+    if color_depth not in COLOR_FILTERS:
+        raise ValueError(f"unknown color depth: {color_depth}")
+    filters = [
         f"fps={fps},scale={W}:{H}:force_original_aspect_ratio=decrease:"
         f"flags=lanczos,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black"
-    )
+    ]
+    if COLOR_FILTERS[color_depth] is not None:
+        filters.append(COLOR_FILTERS[color_depth])
+    vf = ",".join(filters)
     cmd = [
         ffmpeg,
         "-nostdin",
@@ -831,6 +1090,9 @@ def encode(
     video_mode: str = "spatial",
     max_rects: int = 8,
     lz4_mode: str = "best",
+    color_depth: str = "rgb565",
+    *,
+    metadata: dict[str, str] | None = None,
 ) -> None:
     if video_mode == "auto" and keyint == 0:
         raise ValueError("temporal mode requires a bounded keyframe interval")
@@ -851,6 +1113,8 @@ def encode(
     padding_total = 0
     prev = None
     pending = None
+    pending_frame: int | None = None
+    index_entries: list[tuple[int, int, int, int]] = []
     first_record_sectors = 0
     ima_left_index = 0
     ima_right_index = 0
@@ -870,7 +1134,7 @@ def encode(
 
         with temporary.open("wb+") as f:
             f.write(bytes(DATA_OFFSET))
-            for cur in ffmpeg_frames(source, fps, ffmpeg):
+            for cur in ffmpeg_frames(source, fps, ffmpeg, color_depth):
                 force_key = prev is None or (keyint > 0 and n % keyint == 0)
                 audio_start = audio_boundary(n, fps)
                 audio_end = audio_boundary(n + 1, fps)
@@ -901,7 +1165,9 @@ def encode(
                 )
                 if pending is None:
                     first_record_sectors = current_sectors
+                    pending_frame = n
                 else:
+                    record_offset = f.tell()
                     sectors, padding = write_record(
                         f,
                         pending[0],
@@ -911,8 +1177,17 @@ def encode(
                         current_sectors,
                         pending[4],
                     )
+                    assert pending_frame is not None
+                    if pending[0] in (TYPE_KEY, TYPE_KEY_LZ4):
+                        index_entries.append((
+                            pending_frame,
+                            record_offset,
+                            sectors,
+                            index_flags_for_kind(pending[0]),
+                        ))
                     record_total += sectors * RECORD_SECTOR_SIZE
                     padding_total += padding
+                    pending_frame = n
                 pending = current
                 counts[kind] += 1
                 video_payload_total += len(video_payload)
@@ -923,16 +1198,51 @@ def encode(
             if n == 0:
                 raise RuntimeError("ffmpeg produced no frames")
             assert pending is not None
+            assert pending_frame is not None
+            record_offset = f.tell()
             sectors, padding = write_record(
                 f, pending[0], pending[1], pending[2], pending[3], 0,
                 pending[4]
             )
+            if pending[0] in (TYPE_KEY, TYPE_KEY_LZ4):
+                index_entries.append((
+                    pending_frame,
+                    record_offset,
+                    sectors,
+                    index_flags_for_kind(pending[0]),
+                ))
             record_total += sectors * RECORD_SECTOR_SIZE
             padding_total += padding
+            media_end_offset = f.tell()
+            if not index_entries or index_entries[0][0] != 0:
+                raise RuntimeError("IPVF index must begin with frame 0")
+            index_data = b"".join(
+                struct.pack("<IQHH", frame, offset, record_sectors, flags)
+                for frame, offset, record_sectors, flags in index_entries
+            )
+            index_offset = f.tell()
+            if index_offset != media_end_offset:
+                raise RuntimeError("IPVF index offset does not follow media")
+            if media_end_offset + len(index_data) > DEVICE_FILE_SIZE_MAX:
+                raise RuntimeError(
+                    "IPVF exceeds the current Rockbox 2-GiB file API; "
+                    "transparent segmentation is required"
+                )
+            f.write(index_data)
             flags = FLAGS
             if counts[TYPE_XOR_LZ4] != 0:
                 flags |= FLAG_TEMPORAL_XOR
-            write_header(f, fps, n, first_record_sectors, flags)
+            write_header(
+                f,
+                fps,
+                n,
+                first_record_sectors,
+                flags,
+                media_end_offset,
+                len(index_entries),
+                rockbox_crc32(index_data),
+                metadata,
+            )
         os.replace(temporary, output)
     except BaseException:
         temporary.unlink(missing_ok=True)
@@ -951,7 +1261,7 @@ def encode(
         f"repeat={counts[TYPE_REPEAT]} key-lz4={counts[TYPE_KEY_LZ4]} "
         f"delta-lz4={counts[TYPE_RECTS_LZ4]} "
         f"xor-lz4={counts[TYPE_XOR_LZ4]} mode={video_mode} "
-        f"lz4={lz4_mode}"
+        f"lz4={lz4_mode} color={color_depth}"
     )
     print(
         f"  video={video_payload_total:,} bytes "
@@ -966,13 +1276,41 @@ def encode(
         f"  records={record_total:,} bytes, padding={padding_total:,} bytes "
         f"({padding_total / record_total:.1%} of records)"
     )
+    print(
+        f"  index={len(index_entries)} keyframes, "
+        f"metadata={len(encode_metadata(metadata))} bytes"
+    )
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        description=("Create one validated-layout IPVF with video scaling, "
+                     "audio conversion, and measured size profiles."),
+    )
     ap.add_argument("source", type=Path)
     ap.add_argument("output", type=Path)
-    ap.add_argument("--fps", type=int, default=30)
+    ap.add_argument(
+        "--profile",
+        choices=tuple(CREATOR_PROFILES),
+        default="everyday",
+        help=("everyday preserves source cadence up to 30 fps with RGB565; "
+              "native keeps RGB565 precision; compact uses 20 fps/RGB565"),
+    )
+    ap.add_argument(
+        "--fps",
+        type=int,
+        help="override profile frame rate (default: source cadence, capped at 30)",
+    )
+    ap.add_argument(
+        "--color-depth",
+        choices=tuple(COLOR_FILTERS),
+        help="override profile host color cleanup",
+    )
+    for name in METADATA_TAGS:
+        ap.add_argument(
+            f"--{name}",
+            help=f"set the IPVF {name} metadata tag (defaults to source tag)",
+        )
     ap.add_argument(
         "--keyint",
         type=int,
@@ -980,6 +1318,7 @@ def main() -> None:
         help="force a full frame every N frames (0 disables)",
     )
     ap.add_argument("--ffmpeg", default="ffmpeg")
+    ap.add_argument("--ffprobe", default="ffprobe")
     ap.add_argument(
         "--video-mode",
         choices=("current", "spatial", "auto"),
@@ -1001,18 +1340,44 @@ def main() -> None:
               "when host liblz4 is available"),
     )
     ns = ap.parse_args()
-    if not MIN_FPS <= ns.fps <= MAX_FPS:
+    try:
+        fps, color_depth, source_fps = profile_settings(
+            ns.source, ns.profile, ns.fps, ns.color_depth, ns.ffprobe
+        )
+    except (OSError, RuntimeError, ValueError) as error:
+        ap.error(str(error))
+    if not MIN_FPS <= fps <= MAX_FPS:
         ap.error(f"--fps must be {MIN_FPS}..{MAX_FPS}")
     if ns.keyint < 0:
         ap.error("--keyint must be >= 0")
     if ns.video_mode == "auto" and ns.keyint == 0:
         ap.error("--video-mode auto requires --keyint > 0")
-    if ns.video_mode == "auto" and ns.fps > 30:
+    if ns.video_mode == "auto" and fps > 30:
         ap.error("--video-mode auto is hardware-qualified only at <=30 fps")
     if not 1 <= ns.max_rects <= 255:
         ap.error("--max-rects must be 1..255")
-    encode(ns.source, ns.output, ns.fps, ns.keyint, ns.ffmpeg,
-           ns.video_mode, ns.max_rects, ns.lz4_mode)
+    metadata = {
+        name: value for name, value in (
+            ("title", ns.title),
+            ("artist", ns.artist),
+            ("album", ns.album),
+        ) if value is not None
+    }
+    missing_metadata = set(METADATA_TAGS) - set(metadata)
+    if missing_metadata:
+        try:
+            probed = probe_source_metadata(ns.source, ns.ffprobe)
+        except (OSError, RuntimeError, ValueError):
+            probed = {}
+        for name in missing_metadata:
+            if name in probed:
+                metadata[name] = probed[name]
+    cadence = (f"source {source_fps:.3f} fps -> {fps} fps"
+               if source_fps is not None else f"{fps} fps override")
+    print(f"profile={ns.profile}: {cadence}, color={color_depth}")
+    encode(ns.source, ns.output, fps, ns.keyint, ns.ffmpeg,
+           ns.video_mode, ns.max_rects, ns.lz4_mode, color_depth,
+           metadata=metadata)
 
 
 if __name__ == "__main__":

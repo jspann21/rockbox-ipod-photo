@@ -11,11 +11,27 @@ playback mixer ring.
 Install `ffmpeg`, then run:
 
 ```sh
-python3 tools/ipvf/encode.py input.mp4 output.ipvf --fps 30
+python3 tools/ipvf/encode.py input.mp4 output.ipvf
 ```
 
-Use `--fps 60` for a 60 fps file. `encode.py` is the only IPVF encoder;
-`test_encode.py` and `test_lab.py` are small host-only contract suites.
+The default `everyday` profile detects the source cadence, rounds it to the
+nearest integer rate up to 30 fps, and retains full RGB565 precision. The
+complete 224.71-second file is 153,456,640 bytes. Full-device comparison found
+noticeable gradient banding in RGB454 and very noticeable banding in RGB444,
+while RGB555 remained noticeable for only an 8.40% saving. None is promoted
+for normal use.
+
+The `compact` profile keeps full RGB565 color and uses 20 fps. It produced
+129,637,888 bytes, 15.52% below native, and passed exact source reconstruction.
+No objective 20 fps playback or motion defect was observed; the name describes
+its storage goal, not an established quality failure.
+
+Use `--profile native` to retain full RGB565 precision, or `--profile compact`
+for the 20 fps/RGB565 size-first option. `--fps` and `--color-depth` override
+either profile for experiments. For a true 60 fps source, use `--profile
+native --fps 60`; do not treat duplicated 24 fps frames as a 60 fps motion
+test. `encode.py` is the only IPVF encoder; `test_encode.py` and `test_lab.py`
+are small host-only contract suites.
 
 The source must contain an audio stream. The encoder converts the first audio
 stream to 44.1 kHz stereo signed 16-bit PCM, then stores each frame's time slice
@@ -23,6 +39,11 @@ as stereo IMA ADPCM. The stored audio is about 44,100 bytes per second, or 2.65
 MB per minute, plus an eight-byte state header per video frame. Predictors are
 anchored to exact samples at every record boundary, while step indices continue
 across records for better quality. Every block remains independently decodable.
+
+IPVF also carries bounded UTF-8 `title`, `artist`, and `album` metadata.
+The one-step creator imports those tags from the source when present; use
+`--title`, `--artist`, or `--album` to override them. Metadata is descriptive
+only and never changes decoding or compression.
 
 The encoder preserves aspect ratio, letterboxes to 220x176, and adaptively
 chooses among full keyframes, repeats, lossless rectangular patches, bounded
@@ -59,22 +80,31 @@ All integers are little-endian. The first record begins at byte 512.
 | Offset | Size | Meaning |
 | ---: | ---: | --- |
 | 0 | 4 | `IPVF` |
-| 4 | 2 | format version: `1` |
-| 6 | 2 | logical header size: `64` |
-| 8 | 2 | width: `220` |
-| 10 | 2 | height: `176` |
-| 12 | 2 | frame-rate numerator |
-| 14 | 2 | frame-rate denominator |
+| 4 | 2 | logical header size: `80` |
+| 6 | 2 | width: `220` |
+| 8 | 2 | height: `176` |
+| 10 | 2 | frame-rate numerator |
+| 12 | 2 | frame-rate denominator |
+| 14 | 2 | first record size in 512-byte sectors |
 | 16 | 4 | frame count |
 | 20 | 4 | flags: base `11`; temporal files use `27` (`base | TEMPORAL_XOR`) |
 | 24 | 4 | first record offset: `512` |
-| 28 | 2 | first record size in 512-byte sectors |
-| 30 | 2 | audio format: `2` (`IMA_ADPCM`) |
-| 32 | 2 | channels: `2` |
-| 34 | 2 | bits per sample: `16` |
-| 36 | 4 | sample rate: `44100` |
-| 40 | 4 | total decoded stereo sample frames |
-| 44 | 468 | zero padding |
+| 28 | 2 | audio format: `2` (`IMA_ADPCM`) |
+| 30 | 2 | channels: `2` |
+| 32 | 2 | bits per sample: `16` |
+| 34 | 4 | sample rate: `44100` |
+| 38 | 4 | total decoded stereo sample frames |
+| 42 | 2 | reserved zero |
+| 44 | 8 | exclusive media-record end offset |
+| 52 | 8 | keyframe-index offset; currently equal to the media end |
+| 60 | 4 | keyframe-index entry count |
+| 64 | 2 | index entry size: `16` |
+| 66 | 2 | metadata TLV byte count |
+| 68 | 4 | metadata offset: `80` |
+| 72 | 4 | Rockbox CRC32 of all index entries |
+| 76 | 4 | reserved zero |
+| 80 | variable | bounded metadata TLVs: one-byte tag, one-byte UTF-8 length, value |
+| after metadata | to 512 | zero padding |
 
 Each video frame is one whole-sector record:
 
@@ -103,6 +133,14 @@ player verifies the smaller stored payload before LZ4 decoding, reconstructs
 into a cached persistent reference, then copies the frame once into the
 uncached render slot. Only true type-0/type-3 keys reset the dependency chain
 and act as reconciliation or future seek anchors.
+
+The keyframe index immediately follows the final sector-aligned media record.
+Every 16-byte `<frame_u32, absolute_offset_u64, sectors_u16, flags_u16>` entry
+names one true keyframe; flag bit 0 distinguishes an LZ4 key. Entries are
+strictly increasing, begin at frame zero, enumerate every keyframe, and are
+covered by the superblock's index CRC. Keeping only keyframes makes the index
+small: a 45-second real-motion validation file needed 10 entries, or 160 bytes.
+Normal playback remains a sequential record walk.
 
 For frame `n`, define the cumulative audio boundary:
 
@@ -145,6 +183,17 @@ On PP5020 hardware, the player preserves the qualified three-slot pipeline:
 6. Displayed slots are released immediately. At exit, the CPU rereads and
    decodes from the last keyframe, reconstructs the final framebuffer, and
    commits it once so Rockbox resumes with coherent state.
+7. Play pauses/resumes the dedicated mixer channel without changing ring
+   counters, so decoded audio remains the clock. Left and Right seek ten
+   seconds through the keyframe index. Seeking rebases audio, drains and
+   restarts the render worker, reconstructs from the preceding keyframe without
+   presenting intermediate frames, promotes the exact target to one full-frame
+   LCD update, prebuffers from that sample boundary, and restarts the mixer.
+   Distinct rapid clicks accumulate instead of collapsing into one jump, and
+   clicks received during reconstruction carry into the next target. Seeking
+   beyond EOF clamps to the final frame and completes playback normally.
+   MENU and normal completion return directly to Rockbox without a diagnostic
+   frame-count/status screen; genuine failures retain one short error message.
 
 The target driver retains the per-word LCD2 readiness handshake. The player
 does not use raw plugin MMIO, cache invalidation, invented LCD DMA requests, or
@@ -165,17 +214,27 @@ Run them with:
 python3 -m unittest -v tools.ipvf.test_encode tools.ipvf.test_lab
 ```
 
-They verify the canonical header, raw/LZ4/repeat sector chaining, LZ4 roundtrip
-and malformed-input rejection, IMA block sizing and predictors, silence
-padding, trimming to the converted video duration, and the 96 KiB record bound.
+They verify the canonical header, metadata TLVs, complete keyframe index and
+CRC, raw/LZ4/repeat sector chaining, LZ4 roundtrip and malformed-input
+rejection, IMA block sizing and predictors, silence padding, trimming to the
+converted video duration, and the 96 KiB record bound.
 
 `validate.py` is the strict streaming file validator. It walks sector links,
 checks all bounds and zero padding, decodes every LZ4 and IMA block,
-reconstructs every video mode, verifies temporal payload CRCs, and can compare every
-frame byte-for-byte with fresh FFmpeg output:
+reconstructs every video mode, verifies temporal payload and keyframe-index
+CRCs, confirms every index entry names the exact keyframe record, and can
+compare every frame byte-for-byte with fresh FFmpeg output:
 
 ```sh
 python3 tools/ipvf/validate.py --source input.mp4 output.ipvf
+```
+
+When source-verifying an experimental reduced-color encode, pass its host color
+cleanup as well. Everyday and compact both use the validator's RGB565 default:
+
+```sh
+python3 tools/ipvf/validate.py --source input.mp4 \
+  --color-depth rgb555 output.ipvf
 ```
 
 ## Deterministic corpus and compression lab
@@ -226,13 +285,18 @@ promotion; SSIM cannot judge motion judder or visible banding by itself.
 
 The first A1099 LCD pass compared native-24, native-20, RGB454/24, RGB444/24,
 and RGB444/20 versions of the same three scenes. Every clip was smooth with no
-audio issue or immediate visible defect. Subjective motion preference still
-favors 30 or possibly 60 fps over 20, so RGB444/20 is compact-only;
-RGB444/24 is the leading tested cadence-preserving profile at 24.4% below
-native-24. This 23.976-fps source cannot evaluate true 30/60 motion by frame
-duplication; native-rate footage and host interpolation need separate tests.
-This run also confirmed that the current player has no live volume control:
-its button loop handles MENU stop and USB only.
+audio issue or immediate visible defect. No objective 20 fps quality defect was
+established. A later complete RGB444/24 run exposed visible gradient banding
+that the short comparison missed. A focused full-file comparison found RGB565
+clean, RGB454 noticeably banded, and RGB444 very noticeably banded; everyday
+therefore retains RGB565. RGB555 was also noticeable and its 8.40% saving was
+not worth the quality loss. Compact instead uses 20 fps with full RGB565. This
+23.976-fps source cannot evaluate true 30/60 motion by frame duplication;
+native-rate footage and host interpolation need separate tests.
+The follow-up viewer adds bounded wheel-event draining and maps clockwise and
+counter-clockwise movement to Rockbox's clamped playback volume. A combined
+A1099 pass confirmed ordinary track playback, IPVF playback, live IPVF volume,
+and uninterrupted audio/video operation.
 
 ## Hardware qualification status
 

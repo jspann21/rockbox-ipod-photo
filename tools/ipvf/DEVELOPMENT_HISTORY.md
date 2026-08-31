@@ -632,7 +632,7 @@
 ## 20. Current production architecture
 
 - Format:
-  - one canonical version-1 sector-chained layout;
+  - one canonical sector-chained layout;
   - exact 220 × 176 RGB565 pixels;
   - key, rectangle, and repeat records;
   - one 44.1 kHz stereo signed-16-bit PCM slice after every video payload;
@@ -872,8 +872,8 @@
 ## 28. Integrated PCM audio (PR #20)
 
 - The audio work extended the format while it was still being created; it did
-  not introduce an IPVF v2 or retain the earlier video-only prototype.
-- The canonical version-1 header now requires:
+  not retain the earlier video-only prototype or add compatibility branches.
+- The canonical header now requires:
   - flags `RGB565BE | SECTOR_RECORDS | PCM_S16LE`;
   - 44.1 kHz, two-channel, signed 16-bit little-endian PCM;
   - an exact total stereo-sample-frame count derived from video duration.
@@ -1023,7 +1023,7 @@
 - The 60 fps late counter records audio-clock boundaries missed by more than
   500 microseconds; it is not a dropped-frame counter. The 41 events did not
   produce visible stutter, corruption, or audio gaps.
-- The production format is therefore IPVF version 1 with independent raw/LZ4
+- The production format therefore uses independent raw/LZ4
   native-video records and per-record stereo IMA ADPCM, played by the existing
   three-slot CPU/COP display pipeline and Rockbox mixer. Temporary failure-stage
   instrumentation used during bring-up was removed after this acceptance run.
@@ -1070,7 +1070,7 @@
 - The friendly encoder temporarily returned to `current` while the spatial and
   optimized temporal follow-up was measured.
 - Decoder revision `xor-fastcrc-1` fuses XOR and CRC into one cached pass and
-  uses a generated 256-entry table. V2 qualification logs LZ4, reconstruct,
+  uses a generated 256-entry table. Pass-2 qualification logs LZ4, reconstruct,
   and copy timing separately.
 - Spatial-only files were added to the second matrix. They save 9.1%/11.4% for
   high-motion 30/60 fps, 2.4%/5.0% for local motion, and effectively zero for
@@ -1195,7 +1195,7 @@
   duration-normalized size projections.
 - The first source was the complete 224.792-second, 1920x820, 24000/1001-fps
   H.264/AAC `suds` real-footage sample. Evidence is saved under
-  `dist/ipvf-profile-lab-suds-v2-20260831`.
+  `dist/ipvf-profile-lab-suds-pass2-20260831`.
 - The native 24-fps reference was 9,454,592 bytes for 15 seconds, equivalent
   to 37.85 MB/minute or 4.54 GB for two hours. Native 20 and 15 fps reduced it
   by 15.5% and 34.9%, with normalized SSIM 0.9838 and 0.9628.
@@ -1222,12 +1222,127 @@
   All contained the same beginning/middle/end source scenes.
 - No immediate difference was apparent among the profiles. Every profile was
   smooth with no audio or playback issue.
-- Follow-up preference favored the motion feel of 30 or possibly 60 fps over
-  20 fps. RGB444/20 therefore passes only as a compact profile at 35.7% smaller;
-  RGB444/24 is the leading tested cadence-preserving profile at 24.4% smaller.
+- No objective 20 fps playback or motion defect was established. A comment
+  about how the numeric specification might sound is not test evidence and
+  does not disqualify the cadence. `compact` denotes the storage target.
 - The source is 24000/1001 fps, so duplicated output frames cannot judge true
   30/60 motion. Native-rate 30/60 footage and separate host-interpolated
   24-to-30/60 candidates remain future hardware gates.
 - Volume could not be changed in any file. Inspection confirmed the playback
   loop polls buttons but recognizes only MENU stop and USB; no wheel input is
   translated to Rockbox volume. Volume control is now an explicit viewer task.
+
+## 44. Bounded live volume control
+
+- The player now drains a bounded maximum of 16 queued button events per video
+  frame so rapid wheel input cannot accumulate indefinitely behind playback.
+- Clockwise and counter-clockwise wheel events are aggregated and applied once
+  per frame through Rockbox's existing volume state and sound limits. MENU stop
+  and USB interruption retain their existing behavior.
+- The logging-free WSL viewer grew from 13,924 to 14,112 bytes. All 18 existing
+  host contract/lab tests and the ARM plugin build passed.
+- A combined A1099 run confirmed ordinary track playback, IPVF playback, live
+  wheel volume, and no observed stutter or audio gaps.
+
+## 45. Named creator profiles and complete-source measurement
+
+- `encode.py` now exposes `native`, `everyday`, and `compact` profiles. The
+  one-step default detects source cadence, caps it at 30 fps, and uses the
+  quality-first RGB565 path. Explicit frame-rate and color-depth overrides
+  retain the experimental workflow.
+- `validate.py` accepts the matching host color depth so profiled files can be
+  reconstructed and compared byte-for-byte with a fresh source conversion.
+- Matched 224.708-second native and everyday files each contained 5,393 frames
+  at 24 fps and passed strict source, format, LZ4, IMA, padding, chain, and EOF
+  validation.
+- Everyday/native RGB565 was 153,456,640 bytes (40.97 MB/min), with a two-hour
+  equivalent of 4.92 GB. Smaller uniform-color candidates require explicit LCD
+  approval because objective similarity metrics missed visible banding.
+- The former RGB444/20 experiment was 99,302,400 bytes (26.52 MB/min),
+  35.29% below native
+  and passed strict reconstruction. No objective 20 fps defect was observed;
+  its RGB444 color depth now carries the known banding tradeoff.
+- Matched 24 fps files stored the same 9,947,389 audio bytes. Video payload fell
+  from 142,066,627 to 117,792,218 bytes, while padding stayed nearly flat. This is a
+  host-only storage win with no format, RAM, decoder, or playback-CPU increase.
+- The native complete encode took 305.05 seconds for 224.71 seconds of media.
+  Host creator stage profiling, sector-threshold pruning, and deterministic
+  bounded parallelism are now explicit follow-up work.
+
+## 46. Complete-device gradient result and RGB454 correction
+
+- The complete 224.71-second RGB444/24 file passed direct device-storage
+  validation and then completed on the A1099. Live volume, MENU stop/reopen,
+  audio, and video operation worked with no observed stutter or gaps.
+- Smooth dark-to-light transitions showed visible contour steps. This is color
+  banding and disqualifies RGB444 as the everyday default even though the short
+  scene comparison did not reveal it.
+- The full RGB454/24 replacement is 129,163,776 bytes, 15.83% below native and
+  10.34% larger than RGB444/24. It passed exact source reconstruction and is
+  installed beside native and RGB444 for a focused gradient comparison.
+- That comparison found RGB565 clean, RGB454 noticeably banded, and RGB444 very
+  noticeably banded. The everyday creator therefore returned to RGB565;
+  reduced color depth remains explicitly experimental.
+- Independent code/evidence review confirmed Sub16's exact 4.3617% gain over
+  adaptive spatial/LZ4HC is below the 10% promotion gate. No inverse exists or
+  is timed, so it remains lab-only pending a bounded host inverse benchmark.
+
+## 47. RGB555 final uniform-quantization candidate
+
+- RGB555/24 completed exact source reconstruction at 140,560,896 bytes, saving
+  12,895,744 bytes or 8.40% versus native RGB565. It is 37.53 MB/minute, or a
+  4.50 GB two-hour equivalent on this material.
+- The file passed strict validation directly from device storage and is
+  installed between native and RGB454 for one focused gradient comparison.
+- RGB555 banding was noticeable. The 8.40% saving was not worth the visible
+  loss, so all tested uniform color-bit reductions remain experimental and
+  everyday stays RGB565.
+
+## 48. Full-color compact profile
+
+- The compact creator profile now uses 20 fps with full RGB565 precision. This
+  follows the device evidence: no objective 20 fps problem was observed, while
+  reduced color precision produced visible banding.
+- The complete 224.70-second compact file contains 4,494 frames and is
+  129,637,888 bytes (34.62 MB/minute; 4.15 GB/two hours), saving 23,818,752
+  bytes or 15.52% versus native RGB565/24.
+- Strict source, frame, LZ4, IMA, chain, padding, and EOF validation passed.
+  The mode changes no device format or decoder path and introduces no color
+  quantization beyond the display's native RGB565 representation.
+
+## 49. Indexed container, metadata, pause, and seek
+
+- IPVF keeps the 512-byte superblock, byte-512 media start, all existing
+  sector-aligned record payloads, and the proven CPU/COP decode pipeline.
+- The superblock now records 64-bit logical media/index offsets, index count and
+  entry size, a Rockbox CRC32 over the index, and bounded UTF-8 title, artist,
+  and album TLVs. The host creator imports source tags or accepts explicit
+  overrides.
+- A compact 16-byte entry names each true keyframe by frame, absolute 64-bit
+  offset, sector count, and raw/LZ4 flag. The strict validator confirms ordering,
+  bounds, CRC, record identity, sector identity, and complete key coverage.
+- A 45.08-second real-motion encode produced 1,082 frames at the source's
+  24-fps cadence, 10 keyframes, a 160-byte index, and 37 metadata bytes. The
+  27,873,952-byte file passed strict reconstruction and index validation.
+- The player parses and verifies the superblock/index within the current
+  signed 32-bit Rockbox file-address limit. The 64-bit fields avoid another
+  layout change when transparent segmentation is added, but do not pretend the
+  current target can seek beyond 2 GiB.
+- Play uses the mixer's native channel pause/resume so ring counters and the
+  decoded-audio clock freeze together. Left/Right request bounded ten-second
+  seeks. The player drains and restarts the render worker, rebases the audio
+  ring to the exact target sample, binary-searches the prior key, reconstructs
+  without intermediate LCD updates, presents one full target frame, prebuffers,
+  and restarts audio.
+- All 21 WSL host tests pass and the updated ARM plugin compiles. A1099 hardware
+  playback qualified pause/resume, repeated backward/forward seeks, volume,
+  MENU/reopen, completion, and A/V sync. Persistent resume follows this gate;
+  USB interruption remains in the broader lifecycle matrix.
+- IPVF remains one unreleased canonical format. The header has no format-version
+  field, and neither the host nor device carries a legacy decoder path.
+- Follow-up rapid-click testing exposed an input aggregation defect: one event
+  burst collapsed to one direction, reconstruction cleared or consumed later
+  clicks, and MENU release/repeat events counted as stop. The corrected player
+  counts distinct clicks, carries reconstruction-time requests forward, and
+  accepts only a real MENU press. Seeking to the end retains normal completion
+  behavior; the short qualification clip had made that look unexpected.

@@ -27,8 +27,7 @@
 #endif
 
 #define IPVF_MAGIC                  "IPVF"
-#define IPVF_VERSION                1u
-#define IPVF_HEADER_SIZE            64u
+#define IPVF_HEADER_SIZE            80u
 #define IPVF_DATA_OFFSET            512u
 #define IPVF_RECORD_SECTOR_SIZE     512u
 #define IPVF_RECORD_MAX_SECTORS     192u
@@ -36,6 +35,8 @@
     (IPVF_RECORD_MAX_SECTORS * IPVF_RECORD_SECTOR_SIZE)
 #define IPVF_FRAME_HEADER_SIZE      12u
 #define IPVF_RECT_HEADER_SIZE       8u
+#define IPVF_INDEX_ENTRY_SIZE       16u
+#define IPVF_INDEX_FLAG_KEY_LZ4     0x0001u
 #define IPVF_FLAG_RGB565BE          0x00000001u
 #define IPVF_FLAG_SECTOR_RECORDS    0x00000002u
 #define IPVF_FLAG_IMA_ADPCM         0x00000008u
@@ -121,6 +122,10 @@ struct ipvf_info
     unsigned long frame_count;
     uint32_t first_record_sectors;
     off_t file_size;
+    off_t media_end_offset;
+    off_t index_offset;
+    uint32_t index_count;
+    uint32_t index_crc;
     uint32_t audio_sample_rate;
     uint32_t audio_sample_frames;
     bool temporal_xor;
@@ -198,6 +203,14 @@ struct ipvf_record_info
     bool keyframe;
 };
 
+struct ipvf_index_entry
+{
+    unsigned long frame;
+    off_t offset;
+    uint32_t sectors;
+    uint32_t flags;
+};
+
 struct ipvf_audio_state
 {
     unsigned char *video_scratch;
@@ -231,6 +244,11 @@ static uint32_t get_le32(const unsigned char *p)
            ((uint32_t)p[1] << 8) |
            ((uint32_t)p[2] << 16) |
            ((uint32_t)p[3] << 24);
+}
+
+static uint64_t get_le64(const unsigned char *p)
+{
+    return (uint64_t)get_le32(p) | ((uint64_t)get_le32(p + 4) << 32);
 }
 
 /* Temporal integrity covers the compressed residual. It detects stored/read
@@ -328,29 +346,53 @@ static uint32_t record_audio_bytes(uint32_t frames)
 static bool read_header(int fd, struct ipvf_info *info)
 {
     unsigned char h[IPVF_DATA_OFFSET];
+    unsigned char entry[IPVF_INDEX_ENTRY_SIZE];
     unsigned int i;
     uint32_t flags;
     uint32_t data_offset;
+    uint32_t metadata_length;
+    uint32_t metadata_offset;
+    uint32_t index_crc;
+    uint64_t media_end_offset;
+    uint64_t index_offset;
+    uint64_t index_bytes;
     uint64_t expected_audio_frames;
+    uint32_t previous_frame = 0;
+    uint64_t previous_offset = 0;
+    unsigned int metadata_tags = 0;
 
     if (!read_exact(fd, h, sizeof(h)) || rb->memcmp(h, IPVF_MAGIC, 4))
         return false;
 
-    info->fps_num = get_le16(h + 12);
-    info->fps_den = get_le16(h + 14);
+    info->fps_num = get_le16(h + 10);
+    info->fps_den = get_le16(h + 12);
+    info->first_record_sectors = get_le16(h + 14);
     info->frame_count = get_le32(h + 16);
     flags = get_le32(h + 20);
     info->temporal_xor = (flags & IPVF_FLAG_TEMPORAL_XOR) != 0;
     data_offset = get_le32(h + 24);
-    info->first_record_sectors = get_le16(h + 28);
-    info->audio_sample_rate = get_le32(h + 36);
-    info->audio_sample_frames = get_le32(h + 40);
+    info->audio_sample_rate = get_le32(h + 34);
+    info->audio_sample_frames = get_le32(h + 38);
+    media_end_offset = get_le64(h + 44);
+    index_offset = get_le64(h + 52);
+    info->index_count = get_le32(h + 60);
+    metadata_length = get_le16(h + 66);
+    metadata_offset = get_le32(h + 68);
+    info->index_crc = get_le32(h + 72);
     info->file_size = rb->filesize(fd);
 
-    if (get_le16(h + 4) != IPVF_VERSION ||
-        get_le16(h + 6) != IPVF_HEADER_SIZE ||
-        get_le16(h + 8) != LCD_WIDTH ||
-        get_le16(h + 10) != LCD_HEIGHT ||
+    /* The target's normal file API is signed 32-bit. The container keeps
+     * 64-bit logical offsets so transparent segmentation can be added without
+     * another layout change, but this player rejects an unaddressable part. */
+    if (media_end_offset > 0x7fffffffu || index_offset > 0x7fffffffu)
+        return false;
+    info->media_end_offset = (off_t)media_end_offset;
+    info->index_offset = (off_t)index_offset;
+    index_bytes = (uint64_t)info->index_count * IPVF_INDEX_ENTRY_SIZE;
+
+    if (get_le16(h + 4) != IPVF_HEADER_SIZE ||
+        get_le16(h + 6) != LCD_WIDTH ||
+        get_le16(h + 8) != LCD_HEIGHT ||
         info->fps_num == 0 || info->fps_den == 0 ||
         info->fps_num < IPVF_MIN_FPS * info->fps_den ||
         info->fps_num > IPVF_MAX_FPS * info->fps_den ||
@@ -360,11 +402,23 @@ static bool read_header(int fd, struct ipvf_info *info)
         data_offset != IPVF_DATA_OFFSET ||
         info->first_record_sectors == 0 ||
         info->first_record_sectors > IPVF_RECORD_MAX_SECTORS ||
-        get_le16(h + 30) != IPVF_AUDIO_FORMAT_IMA_ADPCM ||
-        get_le16(h + 32) != IPVF_AUDIO_CHANNELS ||
-        get_le16(h + 34) != IPVF_AUDIO_BITS_PER_SAMPLE ||
+        get_le16(h + 28) != IPVF_AUDIO_FORMAT_IMA_ADPCM ||
+        get_le16(h + 30) != IPVF_AUDIO_CHANNELS ||
+        get_le16(h + 32) != IPVF_AUDIO_BITS_PER_SAMPLE ||
         info->audio_sample_rate != IPVF_AUDIO_SAMPLE_RATE ||
-        info->file_size < (off_t)IPVF_DATA_OFFSET)
+        get_le16(h + 42) != 0 ||
+        info->file_size < (off_t)IPVF_DATA_OFFSET ||
+        info->media_end_offset <= (off_t)IPVF_DATA_OFFSET ||
+        info->index_offset != info->media_end_offset ||
+        info->index_count == 0 ||
+        info->index_count > info->frame_count ||
+        get_le16(h + 64) != IPVF_INDEX_ENTRY_SIZE ||
+        metadata_offset != IPVF_HEADER_SIZE ||
+        metadata_length > IPVF_DATA_OFFSET - IPVF_HEADER_SIZE ||
+        get_le32(h + 76) != 0 ||
+        index_bytes > 0x7fffffffu ||
+        info->index_offset > info->file_size ||
+        (off_t)index_bytes != info->file_size - info->index_offset)
         return false;
 
     expected_audio_frames =
@@ -375,12 +429,129 @@ static bool read_header(int fd, struct ipvf_info *info)
         info->audio_sample_frames != (uint32_t)expected_audio_frames)
         return false;
 
-    for (i = 44; i < sizeof(h); i++)
+    /* Metadata is a bounded sequence of tag/length/UTF-8-value TLVs. Device
+     * playback does not need to retain it, but malformed metadata must not be
+     * allowed to blur the superblock/media boundary. */
+    i = metadata_offset;
+    while (i < metadata_offset + metadata_length)
+    {
+        unsigned int value_length;
+
+        if (metadata_offset + metadata_length - i < 2u)
+            return false;
+        value_length = h[i + 1];
+        if (h[i] < 1u || h[i] > 3u || value_length == 0u ||
+            (metadata_tags & (1u << h[i])) != 0 ||
+            value_length > metadata_offset + metadata_length - i - 2u)
+            return false;
+        metadata_tags |= 1u << h[i];
+        i += 2u + value_length;
+    }
+    for (i = metadata_offset + metadata_length; i < sizeof(h); i++)
         if (h[i] != 0)
             return false;
 
+    if (rb->lseek(fd, info->index_offset, SEEK_SET) != info->index_offset)
+        return false;
+    index_crc = 0xffffffffu;
+    for (i = 0; i < info->index_count; i++)
+    {
+        uint32_t indexed_frame;
+        uint64_t indexed_offset;
+        uint32_t indexed_sectors;
+
+        if (!read_exact(fd, entry, sizeof(entry)))
+            return false;
+        index_crc = rb->crc_32(entry, sizeof(entry), index_crc);
+        indexed_frame = get_le32(entry);
+        indexed_offset = get_le64(entry + 4);
+        indexed_sectors = get_le16(entry + 12);
+        if ((i == 0 && (indexed_frame != 0 ||
+                        indexed_offset != IPVF_DATA_OFFSET)) ||
+            indexed_frame >= info->frame_count ||
+            indexed_offset < IPVF_DATA_OFFSET ||
+            indexed_offset >= media_end_offset ||
+            (indexed_offset & (IPVF_RECORD_SECTOR_SIZE - 1u)) != 0 ||
+            indexed_offset > 0x7fffffffu ||
+            indexed_sectors == 0 ||
+            indexed_sectors > IPVF_RECORD_MAX_SECTORS ||
+            indexed_offset +
+                (uint64_t)indexed_sectors * IPVF_RECORD_SECTOR_SIZE >
+                media_end_offset ||
+            (get_le16(entry + 14) & ~IPVF_INDEX_FLAG_KEY_LZ4) != 0 ||
+            (i != 0 && (indexed_frame <= previous_frame ||
+                        indexed_offset <= previous_offset)))
+            return false;
+        previous_frame = indexed_frame;
+        previous_offset = indexed_offset;
+    }
+    if (index_crc != info->index_crc)
+        return false;
+
     return rb->lseek(fd, IPVF_DATA_OFFSET, SEEK_SET) ==
            (off_t)IPVF_DATA_OFFSET;
+}
+
+static bool read_index_entry(int fd, const struct ipvf_info *info,
+                             uint32_t index,
+                             struct ipvf_index_entry *entry)
+{
+    unsigned char data[IPVF_INDEX_ENTRY_SIZE];
+    off_t position;
+    uint64_t offset;
+
+    if (info == NULL || entry == NULL || index >= info->index_count)
+        return false;
+    position = info->index_offset + (off_t)index * IPVF_INDEX_ENTRY_SIZE;
+    if (position < info->index_offset ||
+        rb->lseek(fd, position, SEEK_SET) != position ||
+        !read_exact(fd, data, sizeof(data)))
+        return false;
+
+    offset = get_le64(data + 4);
+    if (offset > 0x7fffffffu)
+        return false;
+    entry->frame = get_le32(data);
+    entry->offset = (off_t)offset;
+    entry->sectors = get_le16(data + 12);
+    entry->flags = get_le16(data + 14);
+    return entry->frame < info->frame_count &&
+           entry->offset >= (off_t)IPVF_DATA_OFFSET &&
+           entry->offset < info->media_end_offset &&
+           ((uint32_t)entry->offset &
+            (IPVF_RECORD_SECTOR_SIZE - 1u)) == 0 &&
+           entry->sectors != 0 &&
+           entry->sectors <= IPVF_RECORD_MAX_SECTORS &&
+           entry->offset <= info->media_end_offset -
+                            (off_t)(entry->sectors *
+                                    IPVF_RECORD_SECTOR_SIZE) &&
+           (entry->flags & ~IPVF_INDEX_FLAG_KEY_LZ4) == 0;
+}
+
+static bool find_seek_entry(int fd, const struct ipvf_info *info,
+                            unsigned long target,
+                            struct ipvf_index_entry *entry)
+{
+    uint32_t low = 0;
+    uint32_t high;
+
+    if (info == NULL || info->index_count == 0 || entry == NULL)
+        return false;
+    high = info->index_count;
+    while (low + 1u < high)
+    {
+        uint32_t middle = low + (high - low) / 2u;
+        struct ipvf_index_entry candidate;
+
+        if (!read_index_entry(fd, info, middle, &candidate))
+            return false;
+        if (candidate.frame <= target)
+            low = middle;
+        else
+            high = middle;
+    }
+    return read_index_entry(fd, info, low, entry) &&
+           entry->frame <= target;
 }
 
 static bool validate_rects(const unsigned char *payload, size_t bytes,

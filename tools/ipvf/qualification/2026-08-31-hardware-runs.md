@@ -39,10 +39,10 @@ remains explicit and experimental.
 
 ## Pass 2 - spatial-only candidate plus optimized temporal decoder
 
-Installed package: `dist/package-ipvf-qualification-v2-20260831`.
+Installed package: `dist/package-ipvf-qualification-pass2-20260831`.
 
 - Device directory: `Videos/IPVF Qualification 2`.
-- Device log: `.rockbox/ipvf-qualification-v2.tsv`.
+- Device log: `.rockbox/ipvf-qualification-pass2.tsv`.
 - Decoder revision: `xor-fastcrc-1`.
 - `ipodnative.rock` SHA-256:
   `6D65E7191A2DDD11B5A6B87A11517CDE74BF86DEB556B52330E7E75856384116`.
@@ -54,7 +54,7 @@ Installed package: `dist/package-ipvf-qualification-v2-20260831`.
 
 The optimized decoder fuses temporal XOR and CRC into one cached pass and uses
 a generated 256-entry CRC table instead of Rockbox's space-optimized two-nibble
-routine. V2 telemetry separates LZ4, temporal reconstruct, and copy timing.
+routine. Pass-2 telemetry separates LZ4, temporal reconstruct, and copy timing.
 
 Spatial-only host savings versus the pass-1 current files are:
 
@@ -69,7 +69,7 @@ Spatial-only host savings versus the pass-1 current files are:
 
 ## Pass 2 - device results
 
-Raw evidence: `dist/ipvf-qualification-results-v2-20260831`.
+Raw evidence: `dist/ipvf-qualification-results-pass2-20260831`.
 
 All 12 files completed with correct frame counts and framebuffer CRCs, zero
 decoder errors, and zero render failures. Spatial compression passed its
@@ -130,7 +130,7 @@ all five paired temporal workloads. The two-second prebuffer reduced
 high-motion 60 fps gaps from 140 to 120 and music 60 fps gaps from 55 to 44,
 but did not make either workload acceptable.
 
-| Corpus/rate | V2 -> V3 gaps | V2 -> V3 temporal ms/XOR | V2 -> V3 decode ms/frame |
+| Corpus/rate | Pass 2 -> 3 gaps | Pass 2 -> 3 temporal ms/XOR | Pass 2 -> 3 decode ms/frame |
 | --- | ---: | ---: | ---: |
 | high motion, 30 fps | 0 -> 4 | 13.78 -> 15.75 | 24.63 -> 26.38 |
 | high motion, 60 fps | 140 -> 120 | 13.75 -> 15.72 | 25.52 -> 27.44 |
@@ -231,13 +231,91 @@ the iPod and archived under `dist/ipod-removed-old-ipvf-tests-20260831`.
 ### Pass-6 device result
 
 No immediate visual difference was apparent among the five profiles. All
-played smoothly, with no stuttering or other audio/video issue. Follow-up
-subjective preference favored the motion feel of 30 or possibly 60 fps over 20
-fps. RGB444/20 therefore passes as a compact profile at 35.7% smaller, not as
-the quality default. RGB444/24 preserves this 23.976-fps source's cadence while
-saving 24.4%. Native 30/60 footage is required to evaluate genuinely higher-
-rate motion; duplicated frames from this source cannot settle it.
+played smoothly, with no stuttering or other audio/video issue. No objective
+20 fps quality defect was established; a concern about how the numeric label
+might sound is not technical test evidence. Native 30/60 footage is required
+to evaluate genuinely higher-rate motion; duplicated frames from this source
+cannot settle it.
 
-Volume could not be adjusted in any clip. This is consistent with the current
-player loop, which polls buttons but handles only MENU stop and USB events; live
-wheel volume control remains to be implemented and hardware-tested.
+Volume could not be adjusted in this pass. This isolated the missing viewer
+input mapping from the already-correct audio decoder and mixer behavior.
+
+## Pass 7 - combined playback and wheel-volume qualification
+
+- The production player drains at most 16 queued button events per video frame.
+- Clockwise/counter-clockwise wheel events aggregate into one clamped Rockbox
+  volume update per frame; MENU stop and USB handling remain intact.
+- The installed viewer was 14,112 bytes with qualification logging disabled.
+- Ordinary track playback, IPVF playback, and wheel volume adjustment all
+  worked in one combined device pass.
+- No stutter, audio gaps, or other playback issue was observed.
+
+The core volume control is accepted. A native-pipeline volume indicator and an
+explicit minimum/maximum/rapid-wheel stress matrix remain future usability
+qualification; neither blocks ordinary volume adjustment.
+
+## Pass 8 - complete RGB444 lifecycle and gradient quality
+
+- The complete 224.71-second RGB444/24 file passed strict validation directly
+  from device storage before playback.
+- Full playback, live volume changes, MENU stop, reopen, and brief replay all
+  worked. No stutter or audio gap was observed.
+- Dark-to-light transitions showed stepped contours rather than smooth fades.
+  This is visible color banding and rejects RGB444 as the everyday default.
+- No objective problem was observed with 20 fps in the earlier comparison; its
+  use remains a valid size choice independent of the RGB444 banding result.
+- Matched full native, RGB454, and RGB444 files are installed for a focused
+  gradient comparison. RGB454 is 15.83% smaller than native and 10.34% larger
+  than RGB444.
+
+### Pass-8 focused gradient result
+
+- Native RGB565 showed no visible banding.
+- RGB454 showed noticeable banding, though less than RGB444.
+- RGB444 showed very noticeable banding.
+
+RGB454 and RGB444 are rejected as everyday defaults. This quality result does
+not change the successful playback/lifecycle result or establish any problem
+with 20 fps.
+
+## Pass 9 - RGB555 gradient candidate
+
+- Full RGB555/24 size: 140,560,896 bytes, 8.40% below native.
+- The complete file passed strict frame/source, LZ4, IMA, chain, padding, and
+  EOF validation both on the host and directly from device storage.
+- Installed comparison order is native, RGB555, RGB454, RGB444.
+- RGB555 showed noticeable banding. Its 8.40% saving was not considered worth
+  the visible quality loss, so everyday remains RGB565.
+
+## Pass 10 - full-color compact host qualification
+
+- Compact now means 20 fps with full RGB565 color, separating cadence/storage
+  choice from the rejected color-bit reductions.
+- Complete size: 129,637,888 bytes, 15.52% below native RGB565/24.
+- All 4,494 frames passed strict source reconstruction, LZ4, IMA, sector-chain,
+  padding, and EOF validation.
+- The prior short A1099 comparison showed no objective 20 fps playback or
+  motion defect. A complete-file device run remains optional lifecycle evidence.
+
+## Pass 11 - indexed navigation and pause
+
+- The indexed IPVF file passed strict validation before installation.
+- Play pause/resume, repeated ten-second backward/forward seeks, live volume,
+  MENU exit and reopen, normal completion, picture, sound, and A/V sync all
+  worked correctly on A1099 hardware.
+- Indexed seeking and pause are accepted. Persistent resume is the next
+  navigation feature; USB interruption remains in the broader lifecycle matrix.
+- Production playback now exits silently after normal completion or MENU stop.
+  Only a genuine playback failure presents a short error message.
+- IPVF remains one unreleased canonical format. No version field, legacy parser,
+  or compatibility path is retained.
+
+### Rapid-seek follow-up
+
+Rapid multi-click seeking exposed burst coalescing and reconstruction-time
+input loss. The corrected player counts distinct press events, preserves
+requests received during reconstruction, ignores release/repeat noise, and
+stops only on a real MENU press. Extensive back-and-forth hardware input then
+worked correctly. A later browser return was normal completion: one ten-second
+jump from roughly 30 seconds in the 45-second clip leaves only about five
+seconds. No special EOF clamp or diagnostic build is retained.

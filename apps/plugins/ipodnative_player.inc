@@ -111,6 +111,121 @@ static void note_qualification_error(struct ipvf_stats *stats,
 #define IPVF_NOTE_QUALIFICATION_ERROR(stats, code, frame) ((void)0)
 #endif
 
+#define IPVF_BUTTON_DRAIN_LIMIT 16u
+#define IPVF_PENDING_SEEK_LIMIT 1024
+
+static void add_pending_seek(int *steps, int direction)
+{
+    if (direction > 0)
+    {
+        if (*steps < IPVF_PENDING_SEEK_LIMIT)
+            (*steps)++;
+    }
+    else if (direction < 0 && *steps > -IPVF_PENDING_SEEK_LIMIT)
+    {
+        (*steps)--;
+    }
+}
+
+static void adjust_playback_volume(int delta)
+{
+    int volume;
+    int minimum;
+    int maximum;
+
+    if (delta == 0)
+        return;
+
+    volume = rb->global_status->volume + delta;
+    minimum = rb->sound_min(SOUND_VOLUME);
+    maximum = rb->sound_max(SOUND_VOLUME);
+
+    if (volume < minimum)
+        volume = minimum;
+    else if (volume > maximum)
+        volume = maximum;
+
+    if (volume != rb->global_status->volume)
+        rb->sound_set(SOUND_VOLUME, volume);
+}
+
+enum ipvf_pause_result
+{
+    IPVF_PAUSE_RESUMED = 0,
+    IPVF_PAUSE_STOPPED,
+    IPVF_PAUSE_USB,
+    IPVF_PAUSE_SEEK_BACK,
+    IPVF_PAUSE_SEEK_FORWARD,
+    IPVF_PAUSE_FAILED,
+};
+
+static enum ipvf_pause_result pause_playback(unsigned long presented_frames)
+{
+    int volume_delta = 0;
+
+#ifdef IPVF_NATIVE_PIPELINE
+    if (!render_wait_presented(presented_frames))
+        return IPVF_PAUSE_FAILED;
+#else
+    (void)presented_frames;
+#endif
+    if (!audio_pause_playback())
+        return IPVF_PAUSE_FAILED;
+
+    rb->button_clear_queue();
+    while (true)
+    {
+        long button = rb->button_get_w_tmo(HZ / 4);
+        long base_button;
+
+        if (button == BUTTON_NONE)
+            continue;
+        base_button = button & ~(BUTTON_REL | BUTTON_REPEAT);
+        if (base_button == BUTTON_SCROLL_FWD)
+            volume_delta++;
+        else if (base_button == BUTTON_SCROLL_BACK)
+            volume_delta--;
+        else if (base_button == BUTTON_PLAY &&
+                 (button & (BUTTON_REL | BUTTON_REPEAT)) == 0)
+        {
+            adjust_playback_volume(volume_delta);
+            rb->button_clear_queue();
+            return audio_resume_playback() ?
+                   IPVF_PAUSE_RESUMED : IPVF_PAUSE_FAILED;
+        }
+        else if (base_button == BUTTON_MENU &&
+                 (button & (BUTTON_REL | BUTTON_REPEAT)) == 0)
+        {
+            adjust_playback_volume(volume_delta);
+            return IPVF_PAUSE_STOPPED;
+        }
+        else if (base_button == BUTTON_LEFT &&
+                 (button & (BUTTON_REL | BUTTON_REPEAT)) == 0)
+        {
+            adjust_playback_volume(volume_delta);
+            return IPVF_PAUSE_SEEK_BACK;
+        }
+        else if (base_button == BUTTON_RIGHT &&
+                 (button & (BUTTON_REL | BUTTON_REPEAT)) == 0)
+        {
+            adjust_playback_volume(volume_delta);
+            return IPVF_PAUSE_SEEK_FORWARD;
+        }
+        else if (rb->default_event_handler(button) == SYS_USB_CONNECTED)
+        {
+            adjust_playback_volume(volume_delta);
+            return IPVF_PAUSE_USB;
+        }
+
+        if (volume_delta >= 4 || volume_delta <= -4)
+        {
+            adjust_playback_volume(volume_delta);
+            volume_delta = 0;
+        }
+        rb->reset_poweroff_timer();
+    }
+}
+
 /* Fill the ring with future audio while frame zero is being held on screen. */
 static bool audio_prebuffer_records(int fd, const struct ipvf_info *info,
                                     unsigned char *read_buffer,
@@ -146,8 +261,8 @@ static bool audio_prebuffer_records(int fd, const struct ipvf_info *info,
             scan_sectors > IPVF_RECORD_MAX_SECTORS)
             return false;
         record_bytes = scan_sectors * IPVF_RECORD_SECTOR_SIZE;
-        if (scan_position > info->file_size ||
-            (off_t)record_bytes > info->file_size - scan_position ||
+        if (scan_position > info->media_end_offset ||
+            (off_t)record_bytes > info->media_end_offset - scan_position ||
             !read_exact(fd, read_buffer, record_bytes) ||
             !parse_record(read_buffer, scan_sectors, scan_frame, info,
                           &record_info))
@@ -195,9 +310,18 @@ static enum plugin_status play_file(const char *filename)
     off_t last_key_offset = -1;
     uint32_t last_key_sectors = 0;
     unsigned long last_key_frame = 0;
+    off_t seek_key_offset = -1;
+    uint32_t seek_key_sectors = 0;
+    unsigned long seek_key_frame = 0;
 #endif
     unsigned long frame;
     unsigned long prebuffer_end_frame = 1;
+    unsigned long render_frames = 0;
+    unsigned long seek_base_frame = 0;
+    uint32_t seek_base_flags = 0;
+    unsigned long seek_target = 0;
+    int pending_seek_steps = 0;
+    bool seeking = false;
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
     long playback_start_tick;
 #endif
@@ -269,7 +393,9 @@ static enum plugin_status play_file(const char *filename)
     }
     fb = vp->buffer->fb_ptr;
 
-    if (!ipodnative_audio_init(info.temporal_xor))
+    /* Indexed seeking reconstructs from a keyframe for every video mode, so
+     * retain a full reference frame even when temporal XOR is absent. */
+    if (!ipodnative_audio_init(true))
     {
         rb->close(fd);
         rb->splash(HZ * 2, "IPVF audio unavailable");
@@ -302,7 +428,8 @@ static enum plugin_status play_file(const char *filename)
 #endif
 
     current_sectors = info.first_record_sectors;
-    for (frame = 0; frame < info.frame_count; frame++)
+    frame = 0;
+    while (frame < info.frame_count)
     {
         unsigned char *decoded_record;
         unsigned char *record;
@@ -316,7 +443,7 @@ static enum plugin_status play_file(const char *filename)
 #ifdef IPVF_NATIVE_PIPELINE
         off_t frame_offset = file_position;
 #endif
-        int button;
+        long button;
 
 #ifdef IPVF_NATIVE_PIPELINE
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
@@ -354,8 +481,8 @@ static enum plugin_status play_file(const char *filename)
             break;
         }
         record_bytes = current_sectors * IPVF_RECORD_SECTOR_SIZE;
-        if (file_position > info.file_size ||
-            (off_t)record_bytes > info.file_size - file_position)
+        if (file_position > info.media_end_offset ||
+            (off_t)record_bytes > info.media_end_offset - file_position)
         {
 #ifdef IPVF_NATIVE_PIPELINE
             render_abandon();
@@ -397,6 +524,18 @@ static enum plugin_status play_file(const char *filename)
             failed = true;
             break;
         }
+        if (seeking && frame == seek_base_frame &&
+            (!record_info.keyframe ||
+             ((seek_base_flags & IPVF_INDEX_FLAG_KEY_LZ4) != 0) !=
+                 (record_info.source_type == IPVF_TYPE_KEY_LZ4)))
+        {
+#ifdef IPVF_NATIVE_PIPELINE
+            render_abandon();
+#endif
+            IPVF_NOTE_QUALIFICATION_ERROR(&stats, IPVF_ERROR_PARSE, frame);
+            failed = true;
+            break;
+        }
         file_position += record_bytes;
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
         stats.record_bytes += record_bytes;
@@ -415,7 +554,8 @@ static enum plugin_status play_file(const char *filename)
 
         audio_payload = record + IPVF_FRAME_HEADER_SIZE +
                         record_info.stored_video_bytes;
-        if (frame == 0 || frame >= prebuffer_end_frame)
+        if ((!seeking || frame >= seek_target) &&
+            (!audio.started || frame >= prebuffer_end_frame))
         {
             bool audio_ok;
 
@@ -475,6 +615,79 @@ static enum plugin_status play_file(const char *filename)
                                  &stats.max_video_decode_us,
                                  operation_us);
 #endif
+#ifdef IPVF_NATIVE_PIPELINE
+        if (record_info.keyframe && !seeking)
+        {
+            last_key_offset = frame_offset;
+            last_key_sectors = current_sectors;
+            last_key_frame = frame;
+        }
+#endif
+        if (seeking && frame < seek_target)
+        {
+            if (((frame - seek_base_frame) & 7u) == 0)
+            {
+                unsigned int seek_events;
+
+                for (seek_events = 0;
+                     seek_events < IPVF_BUTTON_DRAIN_LIMIT;
+                     seek_events++)
+                {
+                    long seek_button = rb->button_get(false);
+                    long base_button;
+
+                    if (seek_button == BUTTON_NONE)
+                        break;
+                    base_button =
+                        seek_button & ~(BUTTON_REL | BUTTON_REPEAT);
+                    if (base_button == BUTTON_LEFT &&
+                        (seek_button & (BUTTON_REL | BUTTON_REPEAT)) == 0)
+                        add_pending_seek(&pending_seek_steps, -1);
+                    else if (base_button == BUTTON_RIGHT &&
+                             (seek_button &
+                              (BUTTON_REL | BUTTON_REPEAT)) == 0)
+                        add_pending_seek(&pending_seek_steps, 1);
+                    else if (base_button == BUTTON_MENU &&
+                             (seek_button &
+                              (BUTTON_REL | BUTTON_REPEAT)) == 0)
+                    {
+                        stopped = true;
+                        break;
+                    }
+                    else if (base_button != BUTTON_LEFT &&
+                             base_button != BUTTON_RIGHT &&
+                             base_button != BUTTON_SCROLL_FWD &&
+                             base_button != BUTTON_SCROLL_BACK &&
+                             base_button != BUTTON_PLAY &&
+                             rb->default_event_handler(seek_button) ==
+                             SYS_USB_CONNECTED)
+                    {
+                        usb_connected = true;
+                        break;
+                    }
+                }
+            }
+#ifdef IPVF_NATIVE_PIPELINE
+            render_abandon();
+#endif
+            if (stopped || usb_connected)
+                break;
+            current_sectors = record_info.next_sectors;
+            frame++;
+            continue;
+        }
+        if (seeking)
+        {
+            /* Rectangle and repeat records assume the previous LCD contents.
+             * A seek reconstructs off-screen, then promotes the target to one
+             * full-frame render so the display has no dependency on its old
+             * position. */
+            rb->memcpy(decoded_record + IPVF_FRAME_HEADER_SIZE,
+                       audio.video_reference, IPVF_FRAME_BYTES);
+            record_info.type = IPVF_TYPE_KEY;
+            record_info.rect_count = 0;
+            record_info.decoded_video_bytes = IPVF_FRAME_BYTES;
+        }
         if (frame + 1 == info.frame_count)
             audio_mark_eof();
 
@@ -522,13 +735,8 @@ static enum plugin_status play_file(const char *filename)
             failed = true;
             break;
         }
-        if (record_info.keyframe)
-        {
-            last_key_offset = frame_offset;
-            last_key_sectors = current_sectors;
-            last_key_frame = frame;
-        }
-        if (frame == 0 && !render_wait_presented(1))
+        render_frames++;
+        if (!audio.started && !render_wait_presented(render_frames))
         {
             IPVF_NOTE_QUALIFICATION_ERROR(&stats,
                                           IPVF_ERROR_RENDER_PRESENT, frame);
@@ -554,7 +762,7 @@ static enum plugin_status play_file(const char *filename)
         }
 #endif
 
-        if (frame == 0)
+        if (!audio.started)
         {
             off_t frame1_position = file_position;
             uint32_t frame1_sectors = record_info.next_sectors;
@@ -564,13 +772,14 @@ static enum plugin_status play_file(const char *filename)
             operation_started = USEC_TIMER;
 #endif
             prebuffer_ok = audio_prebuffer_records(
-                fd, &info, record, 1, frame1_position, frame1_sectors,
+                fd, &info, record, frame + 1, frame1_position,
+                frame1_sectors,
                 &prebuffer_end_frame);
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             stats.prebuffer_us += USEC_TIMER - operation_started;
 #endif
             if (!prebuffer_ok ||
-                (info.frame_count > 1 &&
+                (frame + 1 < info.frame_count &&
                  rb->lseek(fd, frame1_position, SEEK_SET) !=
                  frame1_position) ||
                 !audio_start())
@@ -580,27 +789,155 @@ static enum plugin_status play_file(const char *filename)
                 failed = true;
                 break;
             }
+#ifdef IPVF_NATIVE_PIPELINE
+            if (seeking)
+            {
+                last_key_offset = seek_key_offset;
+                last_key_sectors = seek_key_sectors;
+                last_key_frame = seek_key_frame;
+            }
+#endif
+            seeking = false;
         }
 
         current_sectors = record_info.next_sectors;
-        stats.frames++;
+        stats.frames = frame + 1;
         rb->reset_poweroff_timer();
 
-        button = rb->button_get(false);
-        if ((button & ~(BUTTON_REL | BUTTON_REPEAT)) == BUTTON_MENU)
         {
-            stopped = true;
-            break;
+            unsigned int button_events;
+            int volume_delta = 0;
+            int seek_steps = pending_seek_steps;
+            bool pause_requested = false;
+
+            pending_seek_steps = 0;
+
+            /* Drain a bounded burst so fast wheel movement cannot accumulate
+             * behind video frames. Apply volume once after aggregation. */
+            for (button_events = 0;
+                 button_events < IPVF_BUTTON_DRAIN_LIMIT;
+                 button_events++)
+            {
+                long base_button;
+
+                button = rb->button_get(false);
+                if (button == BUTTON_NONE)
+                    break;
+
+                base_button = button & ~(BUTTON_REL | BUTTON_REPEAT);
+                if (base_button == BUTTON_SCROLL_FWD)
+                    volume_delta++;
+                else if (base_button == BUTTON_SCROLL_BACK)
+                    volume_delta--;
+                else if (base_button == BUTTON_PLAY &&
+                         (button & (BUTTON_REL | BUTTON_REPEAT)) == 0)
+                    pause_requested = true;
+                else if (base_button == BUTTON_LEFT &&
+                         (button & (BUTTON_REL | BUTTON_REPEAT)) == 0)
+                    add_pending_seek(&seek_steps, -1);
+                else if (base_button == BUTTON_RIGHT &&
+                         (button & (BUTTON_REL | BUTTON_REPEAT)) == 0)
+                    add_pending_seek(&seek_steps, 1);
+                else if (base_button == BUTTON_MENU &&
+                         (button & (BUTTON_REL | BUTTON_REPEAT)) == 0)
+                {
+                    stopped = true;
+                    break;
+                }
+                else if (rb->default_event_handler(button) ==
+                         SYS_USB_CONNECTED)
+                {
+                    usb_connected = true;
+                    break;
+                }
+            }
+
+            adjust_playback_volume(volume_delta);
+            if (pause_requested && !stopped && !usb_connected)
+            {
+                enum ipvf_pause_result pause_result =
+                    pause_playback(render_frames);
+
+                if (pause_result == IPVF_PAUSE_STOPPED)
+                    stopped = true;
+                else if (pause_result == IPVF_PAUSE_USB)
+                    usb_connected = true;
+                else if (pause_result == IPVF_PAUSE_SEEK_BACK)
+                {
+                    add_pending_seek(&seek_steps, -1);
+                    pause_requested = false;
+                }
+                else if (pause_result == IPVF_PAUSE_SEEK_FORWARD)
+                {
+                    add_pending_seek(&seek_steps, 1);
+                    pause_requested = false;
+                }
+                else if (pause_result == IPVF_PAUSE_FAILED)
+                    failed = true;
+            }
+            if (seek_steps != 0 && !pause_requested &&
+                !stopped && !usb_connected && !failed)
+            {
+                struct ipvf_index_entry entry;
+                unsigned long step =
+                    ((unsigned long)info.fps_num * 10u +
+                     info.fps_den - 1u) / info.fps_den;
+                unsigned long target_frame;
+                int64_t requested_frame;
+
+                if (step == 0)
+                    step = 1;
+                requested_frame = (int64_t)frame +
+                                  (int64_t)seek_steps * step;
+                if (requested_frame <= 0)
+                    target_frame = 0;
+                else if ((uint64_t)requested_frame >= info.frame_count)
+                    target_frame = info.frame_count - 1;
+                else
+                    target_frame = (unsigned long)requested_frame;
+
+                if (target_frame == frame)
+                {
+                    /* The request was clamped at a file boundary. */
+                }
+                else if (!find_seek_entry(fd, &info, target_frame, &entry) ||
+                    !audio_reset_to(audio_frame_boundary(&info,
+                                                         target_frame))
+#ifdef IPVF_NATIVE_PIPELINE
+                    || !render_finish(&stats)
+                    || !render_start(decoded_buffer)
+#endif
+                    || rb->lseek(fd, entry.offset, SEEK_SET) != entry.offset)
+                {
+                    failed = true;
+                }
+                else
+                {
+                    file_position = entry.offset;
+                    current_sectors = entry.sectors;
+                    frame = entry.frame;
+                    seek_base_frame = entry.frame;
+                    seek_base_flags = entry.flags;
+                    seek_target = target_frame;
+                    prebuffer_end_frame = target_frame + 1;
+                    render_frames = 0;
+                    seeking = true;
+#ifdef IPVF_NATIVE_PIPELINE
+                    seek_key_offset = entry.offset;
+                    seek_key_sectors = entry.sectors;
+                    seek_key_frame = entry.frame;
+#endif
+                    continue;
+                }
+            }
+            if (stopped || usb_connected || failed)
+                break;
         }
-        if (rb->default_event_handler(button) == SYS_USB_CONNECTED)
-        {
-            usb_connected = true;
-            break;
-        }
+        frame++;
     }
 
     if (!stopped && !usb_connected && stats.frames == info.frame_count &&
-        (current_sectors != 0 || file_position != info.file_size))
+        (current_sectors != 0 || file_position != info.media_end_offset))
     {
         IPVF_NOTE_QUALIFICATION_ERROR(&stats, IPVF_ERROR_EOF_CHAIN,
                                       stats.frames);
@@ -689,16 +1026,8 @@ static enum plugin_status play_file(const char *filename)
         (stats.frames == info.frame_count ? "complete" : "stopped"));
 #endif
 
-    if (!failed && stats.frames == info.frame_count)
-        rb->splashf(HZ * 2, "%lu frames, %lu late, %lu audio gaps",
-                    stats.frames, stats.late_frames,
-                    stats.audio_underruns);
-    else if (!failed && stopped)
-        rb->splashf(HZ, "Stopped at %lu/%lu",
-                    stats.frames, info.frame_count);
-    else
-        rb->splashf(HZ * 2, "Failed at %lu/%lu",
-                    stats.frames, info.frame_count);
+    if (failed)
+        rb->splash(HZ * 2, "IPVF playback failed");
 
     return (!failed &&
             (stats.frames == info.frame_count || stopped)) ?

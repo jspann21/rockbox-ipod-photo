@@ -459,8 +459,8 @@ static bool reconcile_framebuffer(int fd, const struct ipvf_info *info,
             break;
         }
         record_bytes = current_sectors * IPVF_RECORD_SECTOR_SIZE;
-        if (position > info->file_size ||
-            (off_t)record_bytes > info->file_size - position ||
+        if (position > info->media_end_offset ||
+            (off_t)record_bytes > info->media_end_offset - position ||
             !read_exact(fd, record, record_bytes) ||
             !parse_record(record, current_sectors, frame, info,
                           &record_info) ||
@@ -490,7 +490,7 @@ static bool reconcile_framebuffer(int fd, const struct ipvf_info *info,
     }
 
     if (passed && expect_eof &&
-        (current_sectors != 0 || position != info->file_size))
+        (current_sectors != 0 || position != info->media_end_offset))
         passed = false;
     if (passed)
         rb->commit_dcache();

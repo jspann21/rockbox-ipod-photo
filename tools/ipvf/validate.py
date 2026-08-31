@@ -80,6 +80,7 @@ def inspect_file(
     source: Path | None = None,
     ffmpeg: str = "ffmpeg",
     verify_audio: bool = True,
+    color_depth: str = "rgb565",
 ) -> dict:
     file_size = path.stat().st_size
     source_frames = None
@@ -88,13 +89,21 @@ def inspect_file(
         header = stream.read(ipvf.DATA_OFFSET)
         _require(len(header) == ipvf.DATA_OFFSET, "truncated IPVF header")
         _require(header[:4] == ipvf.MAGIC, "bad IPVF magic")
-        version, header_size, width, height, fps_num, fps_den, frame_count, \
+        header_size, width, height, fps_num, fps_den, first_sectors, \
+            frame_count, \
             flags, data_offset = struct.unpack_from("<HHHHHHIII", header, 4)
-        first_sectors = struct.unpack_from("<H", header, 28)[0]
         audio_format, channels, bits, sample_rate, audio_frames = \
-            struct.unpack_from("<HHHII", header, 30)
+            struct.unpack_from("<HHHII", header, 28)
+        pre_media_reserved = struct.unpack_from("<H", header, 42)[0]
+        media_end_offset = struct.unpack_from("<Q", header, 44)[0]
+        index_offset = struct.unpack_from("<Q", header, 52)[0]
+        index_count = struct.unpack_from("<I", header, 60)[0]
+        index_entry_size = struct.unpack_from("<H", header, 64)[0]
+        metadata_length = struct.unpack_from("<H", header, 66)[0]
+        metadata_offset = struct.unpack_from("<I", header, 68)[0]
+        index_crc = struct.unpack_from("<I", header, 72)[0]
+        reserved = struct.unpack_from("<I", header, 76)[0]
 
-        _require(version == ipvf.VERSION, "unsupported version")
         _require(header_size == ipvf.HEADER_SIZE, "invalid logical header size")
         _require((width, height) == (ipvf.W, ipvf.H), "invalid geometry")
         _require(fps_num > 0 and fps_den == 1, "unsupported frame rate")
@@ -116,10 +125,39 @@ def inspect_file(
         ), "invalid audio format")
         _require(audio_frames == ipvf.audio_boundary(frame_count, fps_num),
                  "audio duration does not match video")
-        _require(not any(header[44:]), "nonzero reserved header bytes")
+        _require(pre_media_reserved == 0,
+                 "nonzero reserved pre-media header field")
+        _require(metadata_offset == ipvf.METADATA_OFFSET,
+                 "invalid metadata offset")
+        _require(metadata_length <= ipvf.METADATA_CAPACITY,
+                 "metadata exceeds superblock bounds")
+        metadata_end = metadata_offset + metadata_length
+        _require(metadata_end <= ipvf.DATA_OFFSET,
+                 "metadata exceeds superblock bounds")
+        metadata = ipvf.parse_metadata(header[metadata_offset:metadata_end])
+        _require(not any(header[metadata_end:ipvf.DATA_OFFSET]),
+                 "nonzero superblock padding")
+        _require(reserved == 0, "nonzero reserved header field")
+        _require(media_end_offset > ipvf.DATA_OFFSET,
+                 "invalid media end offset")
+        _require(media_end_offset <= file_size,
+                 "media end offset exceeds file")
+        _require(media_end_offset % ipvf.RECORD_SECTOR_SIZE == 0,
+                 "media end offset is not sector aligned")
+        _require(index_offset == media_end_offset,
+                 "index does not begin at media end")
+        _require(index_entry_size == ipvf.INDEX_ENTRY_SIZE,
+                 "invalid index entry size")
+        _require(index_count > 0 and index_count <= frame_count,
+                 "invalid index entry count")
+        index_bytes = index_count * index_entry_size
+        _require(index_offset + index_bytes == file_size,
+                 "index bounds do not match file end")
 
         if source is not None:
-            source_frames = iter(ipvf.ffmpeg_frames(source, fps_num, ffmpeg))
+            source_frames = iter(ipvf.ffmpeg_frames(
+                source, fps_num, ffmpeg, color_depth
+            ))
 
         counts: Counter[str] = Counter()
         current_sectors = first_sectors
@@ -129,17 +167,23 @@ def inspect_file(
         audio_total = 0
         padding_total = 0
         max_record_sectors = 0
+        keyframe_entries: list[tuple[int, int, int, int]] = []
+        record_info: dict[int, tuple[int, int, int]] = {}
 
         for frame in range(frame_count):
             _require(1 <= current_sectors <= ipvf.MAX_RECORD_SECTORS,
                      f"frame {frame}: invalid sector chain")
             record_size = current_sectors * ipvf.RECORD_SECTOR_SIZE
+            record_offset = position
+            _require(record_offset + record_size <= media_end_offset,
+                     f"frame {frame}: record exceeds media end")
             record = stream.read(record_size)
             _require(len(record) == record_size,
                      f"frame {frame}: truncated record")
             kind, rect_count, next_sectors, stored_size, decoded_size = \
                 struct.unpack_from("<BBHII", record)
             _require(kind in TYPE_NAMES, f"frame {frame}: unknown type {kind}")
+            record_info[record_offset] = (frame, kind, current_sectors)
             audio_count = (ipvf.audio_boundary(frame + 1, fps_num) -
                            ipvf.audio_boundary(frame, fps_num))
             _require(audio_count > 0, f"frame {frame}: empty audio block")
@@ -218,6 +262,13 @@ def inspect_file(
 
             _require(len(current) == ipvf.FRAME_BYTES,
                      f"frame {frame}: reconstructed size mismatch")
+            if kind in (ipvf.TYPE_KEY, ipvf.TYPE_KEY_LZ4):
+                keyframe_entries.append((
+                    frame,
+                    record_offset,
+                    current_sectors,
+                    ipvf.index_flags_for_kind(kind),
+                ))
             if source_frames is not None:
                 expected = next(source_frames, None)
                 _require(expected is not None,
@@ -235,13 +286,62 @@ def inspect_file(
             current_sectors = next_sectors
 
         _require(current_sectors == 0, "record chain does not terminate")
-        _require(position == file_size, "trailing or missing file bytes")
-        _require(stream.read(1) == b"", "trailing file data")
+        _require(position == media_end_offset,
+                 "record chain does not end at media end offset")
         if source_frames is not None:
             _require(next(source_frames, None) is None,
                      "source contains more frames than IPVF")
         assert previous is not None
         final_crc = rockbox_crc32(previous)
+
+        stream.seek(index_offset)
+        index_data = stream.read(index_bytes)
+        _require(len(index_data) == index_bytes, "truncated index")
+        _require(rockbox_crc32(index_data) == index_crc,
+                 "index CRC mismatch")
+
+        parsed_index: list[tuple[int, int, int, int]] = []
+        previous_frame = -1
+        previous_offset = ipvf.DATA_OFFSET - 1
+        for entry_number in range(index_count):
+            entry_offset = entry_number * ipvf.INDEX_ENTRY_SIZE
+            entry = struct.unpack_from("<IQHH", index_data, entry_offset)
+            frame, offset, sectors, entry_flags = entry
+            _require(entry_number != 0 or frame == 0,
+                     "index must begin with frame 0")
+            _require(frame > previous_frame,
+                     f"index entry {entry_number}: frames are not monotonic")
+            _require(offset > previous_offset,
+                     f"index entry {entry_number}: offsets are not monotonic")
+            _require(offset >= ipvf.DATA_OFFSET and
+                     offset % ipvf.RECORD_SECTOR_SIZE == 0,
+                     f"index entry {entry_number}: invalid record offset")
+            _require(1 <= sectors <= ipvf.MAX_RECORD_SECTORS,
+                     f"index entry {entry_number}: invalid record sectors")
+            _require(offset + sectors * ipvf.RECORD_SECTOR_SIZE <=
+                     media_end_offset,
+                     f"index entry {entry_number}: record exceeds media")
+            info = record_info.get(offset)
+            _require(info is not None,
+                     f"index entry {entry_number}: offset is not a record start")
+            assert info is not None
+            record_frame, record_kind, record_sectors = info
+            _require(record_frame == frame,
+                     f"index entry {entry_number}: frame identity mismatch")
+            _require(record_kind in (ipvf.TYPE_KEY, ipvf.TYPE_KEY_LZ4),
+                     f"index entry {entry_number}: not a keyframe record")
+            _require(record_sectors == sectors,
+                     f"index entry {entry_number}: sector identity mismatch")
+            _require(entry_flags == ipvf.index_flags_for_kind(record_kind),
+                     f"index entry {entry_number}: keyframe flags mismatch")
+            parsed_index.append(entry)
+            previous_frame = frame
+            previous_offset = offset
+
+        _require(parsed_index and parsed_index[0][0] == 0,
+                 "index must begin with frame 0")
+        _require(parsed_index == keyframe_entries,
+                 "index does not enumerate every keyframe")
 
     return {
         "path": str(path),
@@ -253,10 +353,25 @@ def inspect_file(
         "stored_video_bytes": stored_video_total,
         "audio_bytes": audio_total,
         "padding_bytes": padding_total,
-        "record_bytes": file_size - ipvf.DATA_OFFSET,
+        "record_bytes": media_end_offset - ipvf.DATA_OFFSET,
         "max_record_sectors": max_record_sectors,
         "final_crc": f"{final_crc:08x}",
         "source_verified": source is not None,
+        "media_end_offset": media_end_offset,
+        "index_offset": index_offset,
+        "index_count": index_count,
+        "index_entry_size": index_entry_size,
+        "index_crc": f"{index_crc:08x}",
+        "index": [
+            {
+                "frame": frame,
+                "offset": offset,
+                "sectors": sectors,
+                "flags": entry_flags,
+            }
+            for frame, offset, sectors, entry_flags in parsed_index
+        ],
+        "metadata": metadata,
     }
 
 
@@ -265,6 +380,12 @@ def main() -> None:
     parser.add_argument("files", nargs="+", type=Path)
     parser.add_argument("--source", type=Path)
     parser.add_argument("--ffmpeg", default="ffmpeg")
+    parser.add_argument(
+        "--color-depth",
+        choices=tuple(ipvf.COLOR_FILTERS),
+        default="rgb565",
+        help="host color cleanup used when --source was encoded",
+    )
     parser.add_argument("--skip-audio-decode", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -272,7 +393,8 @@ def main() -> None:
         parser.error("--source requires exactly one IPVF file")
 
     reports = [inspect_file(
-        path, args.source, args.ffmpeg, not args.skip_audio_decode
+        path, args.source, args.ffmpeg, not args.skip_audio_decode,
+        args.color_depth,
     ) for path in args.files]
     if args.json:
         print(json.dumps(reports, indent=2))
@@ -289,6 +411,10 @@ def main() -> None:
             f"{report['audio_bytes']:,} padding="
             f"{report['padding_bytes']:,} max-record="
             f"{report['max_record_sectors']} sectors"
+        )
+        print(
+            f"  media-end={report['media_end_offset']} index="
+            f"{report['index_count']} entries metadata={report['metadata']}"
         )
 
 
