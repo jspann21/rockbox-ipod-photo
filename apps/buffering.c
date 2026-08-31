@@ -66,14 +66,52 @@
 
 #define GUARD_BUFSIZE   (32*1024)
 
-/* amount of data to read in one read() call */
-#define BUFFERING_DEFAULT_FILECHUNK      (1024*32)
+/* Keep the proven 32 KiB request as the floor. Sequential iPod Color reads
+ * may grow to 64 KiB while the queue is idle; an arriving request immediately
+ * returns the next invocation to the floor. 128 KiB remains a policy option,
+ * but is deliberately not enabled until 64 KiB is hardware-qualified. */
+#define BUFFERING_FILECHUNK_32K          (32u * 1024u)
+#define BUFFERING_FILECHUNK_64K          (64u * 1024u)
+#define BUFFERING_FILECHUNK_128K         (128u * 1024u)
+#define BUFFERING_DEFAULT_FILECHUNK      BUFFERING_FILECHUNK_32K
+
+struct storage_read_policy {
+    size_t initial_chunk;
+    size_t max_chunk;
+    bool adjacent_prefetch;
+};
+
+#ifdef IPOD_COLOR
+static const struct storage_read_policy read_policies[] = {
+    [STORAGE_READ_SEQUENTIAL_MEDIA] = {
+        BUFFERING_FILECHUNK_32K, BUFFERING_FILECHUNK_64K, true },
+    [STORAGE_READ_DEADLINE_MEDIA] = {
+        BUFFERING_FILECHUNK_64K, BUFFERING_FILECHUNK_64K, true },
+    [STORAGE_READ_INTERACTIVE_IMAGE] = {
+        BUFFERING_FILECHUNK_64K, BUFFERING_FILECHUNK_64K, false },
+    [STORAGE_READ_RANDOM_METADATA] = {
+        BUFFERING_FILECHUNK_32K, BUFFERING_FILECHUNK_32K, false },
+};
+#else
+static const struct storage_read_policy read_policies[] = {
+    [STORAGE_READ_SEQUENTIAL_MEDIA] = {
+        BUFFERING_FILECHUNK_32K, BUFFERING_FILECHUNK_32K, true },
+    [STORAGE_READ_DEADLINE_MEDIA] = {
+        BUFFERING_FILECHUNK_32K, BUFFERING_FILECHUNK_32K, true },
+    [STORAGE_READ_INTERACTIVE_IMAGE] = {
+        BUFFERING_FILECHUNK_32K, BUFFERING_FILECHUNK_32K, false },
+    [STORAGE_READ_RANDOM_METADATA] = {
+        BUFFERING_FILECHUNK_32K, BUFFERING_FILECHUNK_32K, false },
+};
+#endif
 
 enum handle_flags
 {
     H_CANWRAP   = 0x1,   /* Handle data may wrap in buffer */
     H_ALLOCALL  = 0x2,   /* All data must be allocated up front */
     H_FIXEDDATA = 0x4,   /* Data is fixed in position */
+    H_INTENT_SHIFT = 3,
+    H_INTENT_MASK = 0x18,/* Two spare flag bits store read intent */
 };
 
 struct memory_handle {
@@ -118,6 +156,39 @@ static struct lld_head handle_list; /* buffer-order handle list */
 static struct lld_head mru_cache;   /* MRU-ordered list of handles */
 static int num_handles;             /* number of handles in the lists */
 static int base_handle_id;
+
+static enum storage_read_intent default_read_intent(enum data_type type)
+{
+    switch (type)
+    {
+        case TYPE_PACKET_AUDIO:
+        case TYPE_ATOMIC_AUDIO:
+            return STORAGE_READ_SEQUENTIAL_MEDIA;
+
+        case TYPE_BITMAP:
+            return STORAGE_READ_INTERACTIVE_IMAGE;
+
+        default:
+            return STORAGE_READ_RANDOM_METADATA;
+    }
+}
+
+static void set_read_intent(struct memory_handle *h,
+                            enum storage_read_intent intent)
+{
+    h->flags = (h->flags & ~H_INTENT_MASK) |
+               ((unsigned int)intent << H_INTENT_SHIFT);
+}
+
+static enum storage_read_intent
+effective_read_intent(const struct memory_handle *h)
+{
+    if (h->id == base_handle_id &&
+        (h->type == TYPE_PACKET_AUDIO || h->type == TYPE_ATOMIC_AUDIO))
+        return STORAGE_READ_DEADLINE_MEDIA;
+
+    return (h->flags & H_INTENT_MASK) >> H_INTENT_SHIFT;
+}
 
 /* Main lock for adding / removing handles */
 static struct mutex llist_mutex SHAREDBSS_ATTR;
@@ -661,12 +732,18 @@ static bool buffer_handle(int handle_id, size_t to_buffer)
     }
 
     bool stop = false;
+    size_t request_n = read_policies[effective_read_intent(h)].initial_chunk;
     while (h->end < h->filesize && !stop)
     {
+        enum storage_read_intent intent = effective_read_intent(h);
+        const struct storage_read_policy *policy = &read_policies[intent];
+        request_n = MAX(request_n, policy->initial_chunk);
+        request_n = MIN(request_n, policy->max_chunk);
+
         /* max amount to copy */
         size_t widx = h->widx;
         ssize_t copy_n = h->filesize - h->end;
-        copy_n = MIN(copy_n, BUFFERING_DEFAULT_FILECHUNK);
+        copy_n = MIN(copy_n, (ssize_t)request_n);
         copy_n = MIN(copy_n, (off_t)(buffer_len - widx));
 
         mutex_lock(&llist_mutex);
@@ -705,9 +782,17 @@ static bool buffer_handle(int handle_id, size_t to_buffer)
 
         yield();
 
+        bool queue_pending = !queue_empty(&buffering_queue);
+        if (queue_pending)
+            request_n = policy->initial_chunk;
+        else if (policy->adjacent_prefetch && rc == copy_n &&
+                 (size_t)copy_n == request_n &&
+                 request_n < policy->max_chunk)
+            request_n = MIN(request_n * 2, policy->max_chunk);
+
         if (to_buffer == 0) {
             /* Normal buffering - check queue */
-            if (!queue_empty(&buffering_queue))
+            if (queue_pending)
                 break;
         } else {
             if (to_buffer <= (size_t)rc)
@@ -903,14 +988,17 @@ management functions for all the actual handle management work.
    return value: <0 if the file cannot be opened, or one file already
    queued to be opened, otherwise the handle for the file in the buffer
 */
-int bufopen(const char *file, off_t offset, enum data_type type,
-            void *user_data)
+int bufopen_with_intent(const char *file, off_t offset, enum data_type type,
+                        enum storage_read_intent intent, void *user_data)
 {
     int handle_id = ERR_BUFFER_FULL;
     size_t data;
     struct memory_handle *h;
 
     /* No buffer refs until after the mutex_lock call! */
+
+    if ((unsigned int)intent >= STORAGE_READ_INTENT_COUNT)
+        return ERR_INVALID_VALUE;
 
     if (type == TYPE_ID3) {
         /* ID3 case: allocate space, init the handle and return. */
@@ -922,6 +1010,7 @@ int bufopen(const char *file, off_t offset, enum data_type type,
             handle_id = h->id;
 
             h->type     = type;
+            set_read_intent(h, intent);
             h->fd       = -1;
             h->data     = data;
             h->ridx     = data;
@@ -1024,6 +1113,7 @@ int bufopen(const char *file, off_t offset, enum data_type type,
     handle_id = h->id;
 
     h->type = type;
+    set_read_intent(h, intent);
     h->fd   = -1;
 
 #ifdef STORAGE_WANTS_ALIGN
@@ -1090,6 +1180,13 @@ int bufopen(const char *file, off_t offset, enum data_type type,
 
     /* Currently only used for aa loading */
     (void)user_data;
+}
+
+int bufopen(const char *file, off_t offset, enum data_type type,
+            void *user_data)
+{
+    return bufopen_with_intent(file, offset, type,
+                               default_read_intent(type), user_data);
 }
 
 /* Open a new handle from data that needs to be copied from memory.
@@ -1178,7 +1275,7 @@ static void rebuffer_handle(int handle_id, off_t newpos)
        avoid rebuffering the whole track, just read enough to satisfy */
     off_t amount = newpos - h->pos;
 
-    if (amount > 0 && amount <= BUFFERING_DEFAULT_FILECHUNK) {
+    if (amount > 0 && amount <= (off_t)BUFFERING_DEFAULT_FILECHUNK) {
         h->ridx = ringbuf_add(h->data, newpos - h->start);
         h->pos  = newpos;
 

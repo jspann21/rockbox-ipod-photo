@@ -38,6 +38,16 @@ enum data_type {
     TYPE_RAW_ATOMIC,
 };
 
+/* Describes why a caller is reading, without changing storage timings or
+ * transfer modes. The buffering thread uses this only for read-ahead policy. */
+enum storage_read_intent {
+    STORAGE_READ_SEQUENTIAL_MEDIA = 0,
+    STORAGE_READ_DEADLINE_MEDIA,
+    STORAGE_READ_INTERACTIVE_IMAGE,
+    STORAGE_READ_RANDOM_METADATA,
+    STORAGE_READ_INTENT_COUNT,
+};
+
 /* Error return values */
 #define ERR_HANDLE_NOT_FOUND    -1
 #define ERR_BUFFER_FULL         -2
@@ -74,6 +84,8 @@ bool buffering_reset(char *buf, size_t buflen);
 
 int bufopen(const char *file, off_t offset, enum data_type type,
             void *user_data);
+int bufopen_with_intent(const char *file, off_t offset, enum data_type type,
+                        enum storage_read_intent intent, void *user_data);
 int bufalloc(const void *src, size_t size, enum data_type type);
 bool bufclose(int handle_id);
 int bufseek(int handle_id, size_t newpos);

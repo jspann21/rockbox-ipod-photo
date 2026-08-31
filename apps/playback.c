@@ -2476,7 +2476,8 @@ static int audio_finish_load_track(struct track_info *infop)
         file_offset = track_id3->first_frame_offset;
     }
 
-    int hid = bufopen(track_id3->path, file_offset, audiotype, NULL);
+    int hid = bufopen_with_intent(track_id3->path, file_offset, audiotype,
+                                  STORAGE_READ_SEQUENTIAL_MEDIA, NULL);
 
     if (hid >= 0)
     {
