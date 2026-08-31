@@ -2,11 +2,14 @@
 
 This test is designed as one continuous capture. Battery Benchmark keeps
 running in the background, records every real battery conversion in RAM, and
-writes batches when storage is already active. It records the raw, median,
-filtered, and compensated voltages; learned voltage sag; disk, CPU, backlight,
-and audio load; external-power state; reported percentage; shutdown state; and
-the RetailOS-derived PCF low-battery register. The extra five-second PCF status
-poll is enabled only while this diagnostic capture is running.
+normally flushes from its background worker after an iFlash idle notification.
+It records the raw, median, filtered, and compensated voltages; learned voltage
+sag; disk, CPU, backlight, and audio load; external-power state; reported
+percentage; shutdown state; and the RetailOS-derived PCF register. A five-second
+live status poll is enabled only for PMU ID `0x24`, where RetailOS uses status
+register `0x36`. The physical test unit reports PMU ID `0x4a`, whose selected
+`0x34` register is configuration and is captured once rather than repeatedly
+polled.
 
 ## The only device steps
 
@@ -38,22 +41,25 @@ run.
 
 The collector never deletes or changes anything on the iPod. It copies the
 telemetry, the normal Battery Benchmark log, the exact Rockbox version and
-configuration, any custom battery tables, and `logf.txt` if present. It hashes
-the copied files and creates both `report.md` and `report.json` under
+configuration, any custom battery tables, playback/performance logs, and
+`logf.txt` if present. It hashes the copied files and creates both `report.md`
+and `report.json` under
 `results/a1099-battery-logs/<timestamp>/`.
 
 The report checks sample continuity, clock rate, load-step coverage, power
 transitions, voltage ranges, model compensation, low-battery state transitions,
-and whether the PCF status bit changed near shutdown. A time-derived voltage
-curve is emitted only when the log contains a sufficiently long, continuous,
-battery-only run that reaches the low-battery region. It is never applied to
-the firmware automatically.
+and the selected PCF register's role. A live status-bit transition is required
+only when the device actually selects status register `0x36`; register `0x34`
+is configuration data. A time-derived voltage curve is emitted only when the
+log contains a sufficiently long, continuous, battery-only run that reaches
+the low-battery region. It is never applied to the firmware automatically.
 
 ## Why one sample per second is appropriate
 
 The firmware already takes these voltage conversions for power management.
 The benchmark only copies each small record to RAM, wakes its background thread
-every 20 seconds to drain the 128-sample firmware ring, and normally writes when
-storage is already active. The one-second detail is needed to distinguish real
-battery depletion from short disk and CPU voltage sag; a minute-level trace
-cannot do that.
+every 20 seconds to drain the 128-sample firmware ring, and normally writes on
+an iFlash idle notification. A full multi-hour RAM buffer permits one deliberate
+battery-safe write so qualification data cannot silently stop. The one-second
+detail is needed to distinguish real battery depletion from short disk and CPU
+voltage sag; a minute-level trace cannot do that.

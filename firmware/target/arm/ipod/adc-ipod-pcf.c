@@ -40,11 +40,11 @@ static struct adc_struct adcdata[NUM_ADC_CHANNELS] IDATA_ATTR;
 static long adc_cache_interval(const struct adc_struct *adc)
 {
 #ifdef IPOD_COLOR
-    /* With the power thread polling at HZ/2 and a strict cache deadline,
-     * HZ/2 produces one real conversion per second. Accessory detection keeps
-     * the original 400 ms cadence for responsive attach/detach handling. */
+    /* battery_read_info() has callers outside the power thread, so use a real
+     * one-second deadline here rather than assuming HZ/2 polling is the only
+     * ADC consumer. Accessory detection keeps its original 400 ms cadence. */
     if (adc == &adcdata[ADC_BATTERY])
-        return HZ / 2;
+        return HZ;
 #else
     (void)adc;
 #endif
@@ -53,7 +53,15 @@ static long adc_cache_interval(const struct adc_struct *adc)
 
 static unsigned short _adc_read(struct adc_struct *adc)
 {
-    if (adc->timeout == 0 || TIME_AFTER(current_tick, adc->timeout)) {
+    bool expired = adc->timeout == 0;
+#ifdef IPOD_COLOR
+    if (adc == &adcdata[ADC_BATTERY])
+        expired = expired || !TIME_BEFORE(current_tick, adc->timeout);
+    else
+#endif
+        expired = expired || TIME_AFTER(current_tick, adc->timeout);
+
+    if (expired) {
         unsigned char data[2] = {0};
         unsigned short value;
 

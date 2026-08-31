@@ -45,7 +45,7 @@ struct battery_tables_t {
 #ifdef HAVE_BATTERY_MEASURED_MODEL
 #define BATTERY_MODEL_LOG HOME_DIR "/a1099_battery_model.csv"
 #define MODEL_DRAIN_TICKS (20 * HZ)
-#define MODEL_FLUSH_SAMPLES 512
+#define MODEL_FLUSH_SAMPLES 8192
 #define POWEROFF_MODEL_FLUSH_SAMPLES 128
 #else
 #define MODEL_FLUSH_SAMPLES 0
@@ -652,6 +652,14 @@ static void thread(void)
     {
 #ifdef HAVE_BATTERY_MEASURED_MODEL
         drain_model_samples();
+        /* A full buffer represents hours without a successful write. One
+         * deliberate, battery-safe iFlash wake is preferable to silently
+         * losing the low-voltage half of a qualification run. */
+        if (model_buf_idx == model_buf_count && rb->battery_level_safe())
+        {
+            flush_buffer();
+            drain_model_samples();
+        }
 #endif
 
         /* add data to buffer */
@@ -731,8 +739,10 @@ static void thread(void)
                 storage_callback_registered = false;
                 storage_flush_pending = false;
 #endif
-                if (rb->storage_disk_is_active())
-                    flush_buffer();
+                /* The idle callback is the permission to write. The storage
+                 * thread may have gone to sleep before this worker runs, so
+                 * an active-state recheck here would discard that opportunity. */
+                flush_buffer();
                 break;
             case EV_EXIT:
                 rb->splash(HZ, "Exiting battery_bench...");

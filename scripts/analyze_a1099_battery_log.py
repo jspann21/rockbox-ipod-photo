@@ -51,6 +51,12 @@ STATE_NAMES = {
     2: "low_confirmed",
     3: "shutdown_pending",
 }
+LEGACY_ROW_RE = re.compile(
+    r"^(\d+):(\d+):(\d+),\s+(\d+),\s+(\d+)%.*?(\d{4}),"
+)
+LEGACY_END_RE = re.compile(
+    r"^--Battery bench ended, reason: (.*?), unsaved rows: (\d+)--$"
+)
 
 
 def percentile(values: list[int], fraction: float) -> float | None:
@@ -133,6 +139,39 @@ def read_log(path: Path) -> tuple[list[dict[str, int]], dict[str, dict[str, str]
     if not rows:
         raise ValueError("telemetry file contains no samples")
     return rows, metadata
+
+
+def summarize_legacy_log(path: Path) -> dict[str, object] | None:
+    rows: list[dict[str, int]] = []
+    end_reason: str | None = None
+    unsaved_rows: int | None = None
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = LEGACY_ROW_RE.match(line)
+        if match:
+            rows.append(
+                {
+                    "seconds": int(match.group(4)),
+                    "percent": int(match.group(5)),
+                    "voltage_mv": int(match.group(6)),
+                }
+            )
+            continue
+        end_match = LEGACY_END_RE.match(line)
+        if end_match:
+            end_reason = end_match.group(1)
+            unsaved_rows = int(end_match.group(2))
+    if not rows:
+        return None
+    return {
+        "source": str(path),
+        "samples": len(rows),
+        "duration_seconds": rows[-1]["seconds"] - rows[0]["seconds"],
+        "first_sample": rows[0],
+        "final_sample": rows[-1],
+        "voltage_mv": stats(row["voltage_mv"] for row in rows),
+        "end_reason": end_reason,
+        "unsaved_rows": unsaved_rows,
+    }
 
 
 def longest_unpowered_segment(rows: list[dict[str, int]]) -> list[dict[str, int]]:
@@ -242,13 +281,6 @@ def summarize_run(rows: list[dict[str, int]], meta: dict[str, str]) -> dict[str,
     if severe_gaps:
         issues.append(f"{len(severe_gaps)} logging gaps longer than five seconds")
 
-    estimated_hz_values = []
-    for left, right in zip(rows, rows[1:]):
-        second_delta = right["run_seconds"] - left["run_seconds"]
-        tick_delta = (right["tick"] - left["tick"]) & 0xFFFFFFFF
-        if second_delta > 0 and 0 < tick_delta < 0x80000000:
-            estimated_hz_values.append(tick_delta / second_delta)
-
     for name in ("raw_mv", "median_mv", "filtered_mv", "model_mv"):
         if any(row[name] < 2500 or row[name] > 4500 for row in rows):
             issues.append(f"{name} contains values outside 2500-4500 mV")
@@ -276,6 +308,12 @@ def summarize_run(rows: list[dict[str, int]], meta: dict[str, str]) -> dict[str,
     pcf_values = Counter(row["pcf_lowbat"] for row in rows)
     pcf_known = [value for value in pcf_values if value != 0xFF]
     pcf_bit_states = sorted({value & 1 for value in pcf_known})
+    pcf_register = meta.get("pcf_reg", "").lower()
+    pcf_role = (
+        "status"
+        if pcf_register == "0x36"
+        else "configuration" if pcf_register == "0x34" else "unknown"
+    )
     load_summary = {}
     for name, flag in LOAD_FLAGS.items():
         selected = [row for row in rows if row["load_flags"] & flag]
@@ -297,14 +335,40 @@ def summarize_run(rows: list[dict[str, int]], meta: dict[str, str]) -> dict[str,
             or load_summary["cpu_boost"]["samples"] >= 5
         ),
         "power_transition_captured": bool(detach_events),
-        "pcf_status_readable": bool(pcf_known),
-        "pcf_low_bit_transition_captured": pcf_bit_states == [0, 1],
         "shutdown_region_captured": (
             any(row["state"] >= 2 for row in rows)
             or (bool(valid_percent) and min(valid_percent) <= 3)
         ),
         "complete_end_marker": end_recorded and unsaved_rows == 0,
     }
+    if pcf_role == "status":
+        qualification["pcf_status_readable"] = bool(pcf_known)
+        qualification["pcf_low_bit_transition_captured"] = pcf_bit_states == [0, 1]
+    elif pcf_role == "configuration":
+        qualification["pcf_configuration_readable"] = bool(pcf_known)
+
+    tick_seconds = rows[-1]["run_seconds"] - rows[0]["run_seconds"]
+    tick_span = (rows[-1]["tick"] - rows[0]["tick"]) & 0xFFFFFFFF
+    estimated_hz = tick_span / tick_seconds if tick_seconds > 0 else None
+    expected_hz = round(estimated_hz) if estimated_hz else None
+    tick_deltas = [
+        (right["tick"] - left["tick"]) & 0xFFFFFFFF
+        for left, right in zip(rows, rows[1:])
+    ]
+    subsecond_intervals = (
+        sum(delta < expected_hz for delta in tick_deltas)
+        if expected_hz
+        else None
+    )
+    records_per_second = Counter(seconds)
+    max_records_per_second = max(records_per_second.values(), default=0)
+    cadence_at_most_1hz = subsecond_intervals == 0 if expected_hz else False
+    qualification["trace_cadence_at_most_1hz"] = cadence_at_most_1hz
+    if subsecond_intervals:
+        issues.append(
+            f"{subsecond_intervals} telemetry intervals were shorter than "
+            f"one second ({expected_hz} ticks)"
+        )
 
     return {
         "run_start_tick": rows[0]["run_start_tick"],
@@ -313,11 +377,12 @@ def summarize_run(rows: list[dict[str, int]], meta: dict[str, str]) -> dict[str,
         "duration_seconds": duration,
         "coverage": round(coverage, 4),
         "largest_gap_seconds": max(gaps, default=0),
-        "estimated_hz": (
-            round(float(statistics.median(estimated_hz_values)), 2)
-            if estimated_hz_values
-            else None
-        ),
+        "estimated_hz": round(estimated_hz, 2) if estimated_hz else None,
+        "telemetry_cadence": {
+            "minimum_tick_delta": min(tick_deltas, default=None),
+            "subsecond_intervals": subsecond_intervals,
+            "max_records_per_run_second": max_records_per_second,
+        },
         "voltage_mv": {
             name: stats(row[name] for row in rows)
             for name in ("raw_mv", "median_mv", "filtered_mv", "model_mv")
@@ -329,6 +394,7 @@ def summarize_run(rows: list[dict[str, int]], meta: dict[str, str]) -> dict[str,
         "state_samples": dict(state_counts),
         "pcf_lowbat_values": {f"0x{key:02x}": value for key, value in sorted(pcf_values.items())},
         "pcf_low_bit_states": pcf_bit_states,
+        "pcf_register_role": pcf_role,
         "detach_events": detach_events,
         "longest_unpowered_seconds": (
             unpowered[-1]["run_seconds"] - unpowered[0]["run_seconds"]
@@ -350,6 +416,21 @@ def render_markdown(report: dict[str, object], source: Path) -> str:
         f"Source: `{source}`",
         "",
     ]
+    legacy = report.get("legacy")
+    if isinstance(legacy, dict):
+        final_sample = legacy["final_sample"]
+        lines.extend(
+            [
+                "## Minute-log cross-check",
+                "",
+                f"- Samples: {legacy['samples']} over "
+                f"{legacy['duration_seconds'] / 3600:.2f} hours",
+                f"- Final reading: {final_sample['voltage_mv']} mV at "
+                f"{final_sample['percent']}% reported",
+                f"- End marker: {legacy['end_reason'] or 'missing'}",
+                "",
+            ]
+        )
     for index, run in enumerate(report["runs"], 1):
         assert isinstance(run, dict)
         hours = run["duration_seconds"] / 3600
@@ -361,8 +442,15 @@ def render_markdown(report: dict[str, object], source: Path) -> str:
                 f"- Capture coverage: {run['coverage'] * 100:.1f}%",
                 f"- Largest logging gap: {run['largest_gap_seconds']} seconds",
                 f"- Estimated tick rate: {run['estimated_hz']} Hz",
+                f"- Minimum telemetry interval: "
+                f"{run['telemetry_cadence']['minimum_tick_delta']} ticks",
+                f"- Sub-second telemetry intervals: "
+                f"{run['telemetry_cadence']['subsecond_intervals']}",
+                f"- Maximum records in one run-second bucket: "
+                f"{run['telemetry_cadence']['max_records_per_run_second']}",
                 f"- Longest continuous battery-only segment: "
                 f"{run['longest_unpowered_seconds'] / 3600:.2f} hours",
+                f"- PCF register role: {run['pcf_register_role']}",
                 "",
                 "### Qualification signals",
                 "",
@@ -408,6 +496,11 @@ def render_markdown(report: dict[str, object], source: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("log", type=Path, help="a1099_battery_model.csv")
+    parser.add_argument(
+        "--legacy",
+        type=Path,
+        help="battery_bench.txt (defaults to the telemetry file's directory)",
+    )
     parser.add_argument("--markdown", type=Path, help="write a Markdown report")
     parser.add_argument("--json", dest="json_path", type=Path, help="write JSON details")
     args = parser.parse_args()
@@ -420,7 +513,20 @@ def main() -> int:
         summarize_run(run_rows, metadata.get(str(start), {}))
         for start, run_rows in grouped.items()
     ]
-    report = {"schema": 1, "source": str(args.log), "runs": runs}
+    legacy_path = args.legacy or args.log.with_name("battery_bench.txt")
+    legacy = summarize_legacy_log(legacy_path) if legacy_path.exists() else None
+    if legacy:
+        for run in runs:
+            missing_seconds = max(
+                0, int(legacy["duration_seconds"]) - int(run["duration_seconds"])
+            )
+            run["telemetry_truncated_seconds"] = missing_seconds
+            if missing_seconds > 60:
+                run["issues"].append(
+                    "high-resolution telemetry ends "
+                    f"{missing_seconds} seconds before the minute log"
+                )
+    report = {"schema": 2, "source": str(args.log), "legacy": legacy, "runs": runs}
     markdown = render_markdown(report, args.log)
 
     if args.markdown:

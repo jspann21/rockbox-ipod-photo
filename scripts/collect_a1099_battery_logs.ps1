@@ -78,7 +78,9 @@ $files = @(
     @{ Source = ".rockbox\rockbox-info.txt"; Destination = "rockbox-info.txt" },
     @{ Source = ".rockbox\battery_levels.cfg"; Destination = "battery_levels.cfg" },
     @{ Source = ".rockbox\battery_levels.default"; Destination = "battery_levels.default" },
-    @{ Source = ".rockbox\logf.txt"; Destination = "logf.txt" }
+    @{ Source = ".rockbox\logf.txt"; Destination = "logf.txt" },
+    @{ Source = ".rockbox\playback.log"; Destination = "playback.log" },
+    @{ Source = ".rockbox\pp5020-perf.log"; Destination = "pp5020-perf.log" }
 )
 
 $copied = @()

@@ -62,6 +62,10 @@ selected register, and boot-time value for diagnostics only. Register `0x36`
 is not used as a Rockbox shutdown decision until its behavior is qualified on
 physical A1099 boards.
 
+The first physical unit reported ID `0x4a`, selected configuration register
+`0x34`, and returned a stable value of `0x16`; this is not treated as a live
+low-battery status bit.
+
 The decompilation did not reveal a battery percentage curve, a current sensor,
 or a coulomb counter. It therefore supports debouncing and independent PMU
 backstop behavior, but it does not justify inventing an Apple percentage
@@ -76,7 +80,11 @@ PMU diagnostic. The trace page shows the ten newest one-second samples;
 the in-memory ring retains 128 samples.
 
 Battery Benchmark also drains that ring every 20 seconds into a large RAM
-buffer and appends bounded telemetry batches when storage is already active.
+buffer and appends bounded telemetry batches from a background worker. An
+iFlash idle notification authorizes the write even if storage finishes going
+to sleep before the worker runs. Active batches drain up to 8,192 rows, and a
+full multi-hour buffer may cause one battery-safe write rather than silently
+dropping the remainder of the run.
 Failed writes remain buffered while the benchmark is running, and the analyzer
 reports any continuity gaps. During a critical shutdown, stopped storage is not
 woken just to save diagnostics. If storage remains active, shutdown writes at
@@ -88,8 +96,10 @@ single-cycle procedure and one-command collector are documented in
 
 One continuous charge-to-shutdown capture on the intended battery and storage
 configuration is enough to validate sample timing, transient compensation,
-safety-state transitions, and the RetailOS-derived PMU bit. For a percentage
-curve, use a repeatable playback workload:
+safety-state transitions, and the RetailOS-derived PMU diagnostic. A live
+low-battery bit can be qualified only on hardware that selects status register
+`0x36`; the observed `0x34` configuration value is not a status signal. For a
+percentage curve, use a repeatable playback workload:
 
 1. Charge to termination, rest unplugged, then record idle voltage.
 2. Discharge with a repeatable playback workload and normal backlight use.
@@ -102,6 +112,20 @@ floor and validate that a learned sag correction never delays shutdown. A
 second run is requested only if the automated report finds missing coverage or
 an ambiguous transition; production battery characterization normally uses
 multiple cells/runs, but that is not required to begin validating this device.
+
+### First physical capture (2026-08-31)
+
+The minute logger captured 772 samples over 12.85 hours and ended at 3,619 mV
+while the old table still reported 8%. The high-resolution voltage path agreed
+with the minute logger over their shared interval, and observed load sag was
+small (23 mV maximum; 11 mV median learned sag). However, the original
+high-resolution writer persisted only the first 5.92 hours: its 512-row write
+batch could not drain a roughly 1.63-sample/second producer, leaving a
+597-second ring-buffer gap and the entire low-voltage region in RAM. No new
+percentage curve is fitted from this truncated trace. The follow-up revision
+enforces at most one battery ADC conversion/telemetry record per second,
+increases active flushes to 8,192 rows, permits a rare safe full-buffer write,
+and cross-checks high-resolution duration against `battery_bench.txt`.
 
 ## Research sources
 

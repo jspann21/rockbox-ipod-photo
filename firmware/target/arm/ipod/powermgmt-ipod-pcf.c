@@ -148,6 +148,7 @@ int _battery_voltage(void)
 #define MODEL_HARD_FLOOR_MV     3200
 #define MODEL_HARD_FLOOR_TICKS   (2 * HZ)
 #define MODEL_PCF_STATUS_TICKS    (5 * HZ)
+#define MODEL_TRACE_TICKS         (1 * HZ)
 
 struct ipodphoto_battery_model
 {
@@ -175,6 +176,7 @@ struct ipodphoto_battery_model
     unsigned char pcf_lowbat_boot;
     unsigned char pcf_lowbat_now;
     long pcf_lowbat_tick;
+    long trace_tick;
     bool telemetry_enabled;
     struct mutex mutex;
     struct battery_model_sample trace[MODEL_TRACE_LEN];
@@ -410,6 +412,7 @@ void battery_model_init(int raw_mv)
     battery_model.pcf_lowbat_boot = lowbat < 0 ? 0xff : lowbat;
     battery_model.pcf_lowbat_now = battery_model.pcf_lowbat_boot;
     battery_model.pcf_lowbat_tick = current_tick;
+    battery_model.trace_tick = current_tick - MODEL_TRACE_TICKS;
     battery_model.telemetry_enabled = false;
 }
 
@@ -437,6 +440,7 @@ int battery_model_step(int raw_mv)
     }
 
     if (battery_model.telemetry_enabled &&
+        battery_model.pcf_lowbat_reg == PCF5060X_LEDC1 &&
         model_elapsed(battery_model.pcf_lowbat_tick,
                       MODEL_PCF_STATUS_TICKS))
     {
@@ -528,7 +532,11 @@ int battery_model_step(int raw_mv)
     battery_model.transient = transient;
     model_mv = q8_to_mv(battery_model.model_q8);
     model_update_policy(terminal_mv, model_mv, source_flags);
-    model_trace(raw_mv, terminal_mv, model_mv, source_flags, load_flags);
+    if (model_elapsed(battery_model.trace_tick, MODEL_TRACE_TICKS))
+    {
+        battery_model.trace_tick = current_tick;
+        model_trace(raw_mv, terminal_mv, model_mv, source_flags, load_flags);
+    }
     mutex_unlock(&battery_model.mutex);
     return model_mv;
 }
@@ -553,7 +561,10 @@ void battery_model_set_telemetry(bool enable)
     mutex_lock(&battery_model.mutex);
     battery_model.telemetry_enabled = enable;
     if (enable)
+    {
         battery_model.pcf_lowbat_tick = current_tick - MODEL_PCF_STATUS_TICKS;
+        battery_model.trace_tick = current_tick - MODEL_TRACE_TICKS;
+    }
     mutex_unlock(&battery_model.mutex);
 }
 
