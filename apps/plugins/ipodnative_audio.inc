@@ -290,13 +290,14 @@ static void audio_shutdown(void)
     rb->memset(&audio, 0, sizeof(audio));
 }
 
-static bool ipodnative_audio_init(void)
+static bool ipodnative_audio_init(bool needs_video_reference)
 {
     unsigned char *raw;
     uintptr_t aligned;
     size_t size;
     size_t skipped;
     uint32_t ring_bytes;
+    size_t reference_bytes = needs_video_reference ? IPVF_FRAME_BYTES : 0;
 
     rb->memset(&audio, 0, sizeof(audio));
     raw = rb->plugin_get_audio_buffer(&size);
@@ -312,12 +313,21 @@ static bool ipodnative_audio_init(void)
         goto fail;
     size -= skipped;
 #ifdef IPVF_NATIVE_PIPELINE
-    if (size < IPVF_MAX_PAYLOAD + IPVF_AUDIO_RING_MIN_BYTES ||
-        aligned > (uintptr_t)-1 - IPVF_MAX_PAYLOAD)
+    if (size < IPVF_MAX_PAYLOAD + reference_bytes +
+               IPVF_AUDIO_RING_MIN_BYTES ||
+        aligned > (uintptr_t)-1 - IPVF_MAX_PAYLOAD ||
+        aligned + IPVF_MAX_PAYLOAD >
+            (uintptr_t)-1 - reference_bytes)
         goto fail;
     audio.video_scratch = (unsigned char *)aligned;
     aligned += IPVF_MAX_PAYLOAD;
     size -= IPVF_MAX_PAYLOAD;
+    if (needs_video_reference)
+    {
+        audio.video_reference = (unsigned char *)aligned;
+        aligned += reference_bytes;
+        size -= reference_bytes;
+    }
 #endif
     ring_bytes = floor_power_of_two(size);
     if (ring_bytes < IPVF_AUDIO_RING_MIN_BYTES)

@@ -1027,3 +1027,126 @@
   native-video records and per-record stereo IMA ADPCM, played by the existing
   three-slot CPU/COP display pipeline and Rockbox mixer. Temporary failure-stage
   instrumentation used during bring-up was removed after this acceptance run.
+
+## 35. Adaptive temporal XOR qualification build
+
+- The encoder now evaluates the existing representation, bounded
+  multi-rectangle patches, and previous-frame XOR+LZ4 using final sector cost.
+  A CPU-heavier candidate must remove at least one whole 512-byte sector.
+- Temporal type 5 stores a four-byte Rockbox CRC32 followed by an independent
+  LZ4-compressed 77,440-byte XOR residual. A header capability bit makes the
+  memory/decoder requirement explicit, and `auto` mode requires a nonzero
+  keyframe interval.
+- The player keeps a persistent cached reference in the plugin audio buffer,
+  reconstructs there with aligned 32-bit XOR, verifies the CRC, and performs
+  one bulk copy to the uncached render slot. All three proven render slots and
+  the 96 KiB record buffer remain unchanged.
+- Qualification telemetry is marker-gated. It accumulates in RAM and appends
+  one TSV row after teardown with mode/byte counts, error stage and frame,
+  read/audio/video/render timing, render-slot waits, late frames, audio gaps,
+  and final framebuffer CRC. There are no hot-path file writes.
+- Ten host unit/contract tests pass, including CRC-corruption rejection and a
+  guard that keeps the friendly encoder on the hardware-proven default. The
+  streaming inspector decoded all IMA blocks and compared every reconstructed
+  RGB565 frame with fresh FFmpeg output.
+- Whole-file adaptive savings over the current representation were 18.2% and
+  28.5% for high-motion 30/60 fps, 8.1% and 7.9% for the music clip, and 2.7%
+  and 5.8% for local-motion 30/60 fps.
+- WSL build `dddffd0151M-260831` and a paired 12-file matrix were installed for
+  the first device qualification.
+
+## 36. First temporal device result and fast-CRC follow-up
+
+- All 12 paired files completed on the A1099 with the expected frame count,
+  zero parser/decoder errors, zero render failures, and matching final CRCs.
+  The temporal record format and lifecycle are correct.
+- The initial temporal reconstruction was too expensive. Dense high-motion
+  XOR averaged about 38--40 ms of video decode per frame and peaked near 42 ms;
+  music peaks reached 46 ms. This caused audio gaps and rejected temporal mode
+  as a production default.
+- Storage and LCD were not the regression: reads generally improved and render
+  time stayed comparable. The added cached XOR plus Rockbox's space-optimized
+  two-nibble CRC pass dominated the difference.
+- The friendly encoder temporarily returned to `current` while the spatial and
+  optimized temporal follow-up was measured.
+- Decoder revision `xor-fastcrc-1` fuses XOR and CRC into one cached pass and
+  uses a generated 256-entry table. V2 qualification logs LZ4, reconstruct,
+  and copy timing separately.
+- Spatial-only files were added to the second matrix. They save 9.1%/11.4% for
+  high-motion 30/60 fps, 2.4%/5.0% for local motion, and effectively zero for
+  the music clip, demonstrating that the selector declines unhelpful spatial
+  complexity.
+
+## 37. Spatial promotion and slicing-by-four temporal follow-up
+
+- Spatial mode passed its six-file device matrix. High-motion savings were
+  9.1%/11.4% at 30/60 fps while decode and render time both improved. Local
+  motion saved 2.4%/5.0%, and music correctly stayed unchanged. Spatial mode
+  is now the friendly encoder default.
+- The byte-table fused XOR/CRC path cut dense temporal decode from roughly
+  38--40 to 25 ms/frame. High-motion 30 fps reached zero gaps, but
+  reconstruction still averaged 13.8 ms per XOR record.
+- High-motion 60 fps remained at 140 gaps and music 60 fps visibly stuttered
+  with 55 gaps. Temporal mode remains experimental and is not suitable for
+  general 60 fps encoding.
+- The next bounded experiment uses a four-slice non-reflected CRC table,
+  preserving the exact per-frame CRC while removing serial byte dependencies.
+  The 4 KiB table is allocated from the audio buffer so the three render slots
+  and 96 KiB record buffer keep their previous plugin-buffer margin.
+- Audio prebuffering increases from one to two seconds for the short-jitter
+  cases. A targeted six-file pass separates that scheduling effect from the
+  CRC speedup.
+
+## 38. Slicing-by-four rejection and temporal lower-bound pass
+
+- All six pass-3 files completed with correct frame counts/final CRCs and zero
+  decoder or render errors. Music temporal 60 fps visibly stuttered with 44
+  gaps; high-motion temporal 60 fps logged 120 gaps.
+- Slicing-by-four was consistently slower on the PP5020: temporal
+  reconstruction increased from about 13.8 to 15.7 ms per XOR record. It is
+  rejected and removed from the working decoder.
+- The two-second audio prebuffer softened some 60 fps gap counts but could not
+  make dense temporal playback real-time. It remains in the bounded follow-up
+  so the decoder-cost experiment is not confounded by less startup coverage.
+- Decoder revision `xor-nocrc-bound-3` measures the temporal reconstruction
+  lower bound by performing aligned word XOR without the full-frame on-device
+  CRC. The stored CRC and strict host validator are unchanged. This is a
+  diagnostic build, not a production integrity policy.
+- The five-file v4 matrix is installed with package/device hash equality. Its
+  result will decide between a cheaper integrity field and abandoning
+  full-frame temporal XOR in favor of spatial or lower-complexity prediction.
+
+## 39. Temporal lower bound and compressed-payload integrity
+
+- The no-CRC diagnostic completed all five files with exact final CRCs and no
+  decoder/render errors. Plain aligned XOR consistently cost 6.13--6.14 ms per
+  dependent frame.
+- High-motion temporal 60 fps still averaged 17.99 ms total decode and logged
+  95 gaps. Music temporal 60 fps visibly stuttered with 27 gaps. Both 30 fps
+  workloads reached zero gaps, establishing a clear hardware boundary.
+- Encoder `auto` now rejects rates above 30 fps. The normal `spatial` default
+  remains available and hardware-proven at 30 and 60 fps.
+- Type 5 now stores the Rockbox CRC32 of its compressed residual rather than
+  the reconstructed frame. The player verifies that smaller payload before
+  LZ4 decoding, then performs the 6.14 ms aligned XOR. This detects storage or
+  read corruption without a second full-frame integrity pass.
+- Decoder revision `xor-payloadcrc-4` builds cleanly in WSL. Eleven host tests
+  pass, including the 60 fps temporal guard and payload-corruption rejection.
+  Three regenerated 30 fps files pass strict source-frame validation and are
+  installed as the v5 qualification matrix with matching hashes.
+
+## 40. Payload-CRC hardware acceptance
+
+- High-motion, music, and local-motion 30 fps files all completed with exact
+  final framebuffer CRCs, zero decoder/render errors, and zero audio gaps. The
+  user reported correct video and audio.
+- Payload CRC averaged 4.58 ms per temporal record for high motion, 5.96 ms for
+  music, and 0.34 ms for local motion. Aligned full-frame XOR remained stable
+  near 6.22 ms. Total decode stayed inside the 33.3 ms 30 fps budget.
+- `xor-payloadcrc-4` is the checked temporal decoder. Encoder `auto` remains
+  capped at 30 fps, and the proven spatial selector stays the friendly default
+  until long-duration drift/lifecycle qualification is complete.
+- The v5 evidence is archived under
+  `dist/ipvf-qualification-results-v5-20260831`. All qualification media, TSVs,
+  and the marker were removed from the device after collection, leaving the
+  checked plugin installed with production logging disabled.

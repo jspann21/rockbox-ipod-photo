@@ -33,6 +33,7 @@
 #define IPVF_FLAG_RGB565BE          0x00000001u
 #define IPVF_FLAG_SECTOR_RECORDS    0x00000002u
 #define IPVF_FLAG_IMA_ADPCM         0x00000008u
+#define IPVF_FLAG_TEMPORAL_XOR      0x00000010u
 #define IPVF_FLAGS \
     (IPVF_FLAG_RGB565BE | IPVF_FLAG_SECTOR_RECORDS | \
      IPVF_FLAG_IMA_ADPCM)
@@ -41,6 +42,8 @@
 #define IPVF_TYPE_REPEAT            2u
 #define IPVF_TYPE_KEY_LZ4           3u
 #define IPVF_TYPE_RECTS_LZ4         4u
+#define IPVF_TYPE_XOR_LZ4           5u
+#define IPVF_TYPE_COUNT              6u
 #define IPVF_MAX_FPS                240u
 #define IPVF_FRAME_BYTES \
     ((size_t)LCD_WIDTH * LCD_HEIGHT * sizeof(fb_data))
@@ -58,6 +61,32 @@
     (IPVF_AUDIO_DMA_MAX_BYTES / IPVF_AUDIO_FRAME_BYTES)
 #define IPVF_AUDIO_CHANNEL           PCM_MIXER_CHAN_PLAYBACK
 #define IPVF_DECODED_SLOT_STRIDE      0x20000u
+#define IPVF_QUALIFICATION_LOG \
+    ROCKBOX_DIR "/ipvf-qualification-v5.tsv"
+#define IPVF_QUALIFICATION_MARKER \
+    ROCKBOX_DIR "/ipvf-qualification.enable"
+#define IPVF_DECODER_REV             "xor-payloadcrc-4"
+
+enum ipvf_error_code
+{
+    IPVF_ERROR_NONE = 0,
+    IPVF_ERROR_RENDER_ACQUIRE,
+    IPVF_ERROR_RECORD_CHAIN,
+    IPVF_ERROR_RECORD_BOUNDS,
+    IPVF_ERROR_READ,
+    IPVF_ERROR_PARSE,
+    IPVF_ERROR_AUDIO_FEED,
+    IPVF_ERROR_VIDEO_DECODE,
+    IPVF_ERROR_AUDIO_CLOCK,
+    IPVF_ERROR_RENDER_QUEUE,
+    IPVF_ERROR_RENDER_PRESENT,
+    IPVF_ERROR_DISPLAY_APPLY,
+    IPVF_ERROR_PREBUFFER,
+    IPVF_ERROR_EOF_CHAIN,
+    IPVF_ERROR_RENDER_FINISH,
+    IPVF_ERROR_AUDIO_FINISH,
+    IPVF_ERROR_RECONCILE,
+};
 
 #if defined(IPOD_COLOR) && NUM_CORES > 1 && \
     defined(HAVE_SEMAPHORE_OBJECTS) && !defined(SIMULATOR)
@@ -81,6 +110,7 @@ struct ipvf_info
     off_t file_size;
     uint32_t audio_sample_rate;
     uint32_t audio_sample_frames;
+    bool temporal_xor;
 };
 
 struct ipvf_stats
@@ -89,10 +119,56 @@ struct ipvf_stats
     unsigned long late_frames;
     unsigned long max_late_us;
     unsigned long audio_underruns;
+    unsigned long max_read_us;
+    unsigned long max_video_decode_us;
+    unsigned long max_lz4_decode_us;
+    unsigned long max_temporal_check_us;
+    unsigned long max_temporal_reconstruct_us;
+    unsigned long max_video_copy_us;
+    unsigned long max_audio_feed_us;
+    unsigned long max_render_us;
+    unsigned long max_render_slot_wait_us;
+    unsigned long max_record_sectors;
+    unsigned long start_tick;
+    unsigned long elapsed_ticks;
+    unsigned long render_calls;
+    unsigned long rectangle_calls;
+    unsigned long render_failures;
+    unsigned long error_count;
+    unsigned long first_error;
+    unsigned long first_error_frame;
+    unsigned long type_counts[IPVF_TYPE_COUNT];
+    uint64_t read_us;
+    uint64_t video_decode_us;
+    uint64_t lz4_decode_us;
+    uint64_t temporal_check_us;
+    uint64_t temporal_reconstruct_us;
+    uint64_t video_copy_us;
+    uint64_t audio_feed_us;
+    uint64_t prebuffer_us;
+    uint64_t render_us;
+    uint64_t render_slot_wait_us;
+    uint64_t record_bytes;
+    uint64_t stored_video_bytes;
+    uint64_t decoded_video_bytes;
+    uint64_t audio_bytes;
+    uint64_t audio_frames;
+    uint64_t padding_bytes;
+    uint32_t final_crc;
 };
+
+static void add_qualification_timing(uint64_t *total,
+                                     unsigned long *maximum,
+                                     uint32_t elapsed)
+{
+    *total += elapsed;
+    if (elapsed > *maximum)
+        *maximum = elapsed;
+}
 
 struct ipvf_record_info
 {
+    unsigned int source_type;
     unsigned int type;
     unsigned int rect_count;
     uint32_t stored_video_bytes;
@@ -101,11 +177,14 @@ struct ipvf_record_info
     uint32_t audio_bytes;
     uint32_t next_sectors;
     bool compressed;
+    bool temporal;
+    bool keyframe;
 };
 
 struct ipvf_audio_state
 {
     unsigned char *video_scratch;
+    unsigned char *video_reference;
     unsigned char *buffer;
     uint32_t capacity_frames;
     uint32_t frame_mask;
@@ -121,6 +200,8 @@ struct ipvf_audio_state
 };
 
 static struct ipvf_audio_state audio;
+static uint32_t temporal_crc32_table[256];
+static bool temporal_crc32_table_ready;
 
 static uint16_t get_le16(const unsigned char *p)
 {
@@ -133,6 +214,56 @@ static uint32_t get_le32(const unsigned char *p)
            ((uint32_t)p[1] << 8) |
            ((uint32_t)p[2] << 16) |
            ((uint32_t)p[3] << 24);
+}
+
+/* Temporal integrity covers the compressed residual. It detects stored/read
+ * corruption before LZ4 touches the reference frame while avoiding a second
+ * full-frame pass. The table lives in cached plugin BSS. */
+static uint32_t ipvf_temporal_payload_crc32(const unsigned char *data,
+                                            size_t bytes)
+{
+    uint32_t crc = 0xffffffffu;
+    size_t i;
+
+    if (!temporal_crc32_table_ready)
+    {
+        unsigned int index;
+
+        for (index = 0; index < 256u; index++)
+        {
+            uint32_t value = (uint32_t)index << 24;
+            unsigned int bit;
+
+            for (bit = 0; bit < 8u; bit++)
+                value = (value << 1) ^
+                        ((value & 0x80000000u) ? 0x04c11db7u : 0u);
+            temporal_crc32_table[index] = value;
+        }
+        temporal_crc32_table_ready = true;
+    }
+    for (i = 0; i < bytes; i++)
+        crc = temporal_crc32_table[((crc >> 24) ^ data[i]) & 0xffu] ^
+              (crc << 8);
+    return crc;
+}
+
+static void ipvf_xor_frame(unsigned char *frame,
+                           const unsigned char *residual)
+{
+    size_t i;
+
+#ifdef ROCKBOX_LITTLE_ENDIAN
+    {
+        uint32_t *frame_words = (uint32_t *)frame;
+        const uint32_t *residual_words = (const uint32_t *)residual;
+
+        for (i = 0; i < IPVF_FRAME_BYTES / sizeof(uint32_t); i++)
+            frame_words[i] ^= residual_words[i];
+    }
+#else
+    for (i = 0; i < IPVF_FRAME_BYTES; i++)
+        frame[i] ^= residual[i];
+#endif
 }
 
 #include "ipodnative_lz4.inc"
@@ -192,6 +323,7 @@ static bool read_header(int fd, struct ipvf_info *info)
     info->fps_den = get_le16(h + 14);
     info->frame_count = get_le32(h + 16);
     flags = get_le32(h + 20);
+    info->temporal_xor = (flags & IPVF_FLAG_TEMPORAL_XOR) != 0;
     data_offset = get_le32(h + 24);
     info->first_record_sectors = get_le16(h + 28);
     info->audio_sample_rate = get_le32(h + 36);
@@ -205,7 +337,9 @@ static bool read_header(int fd, struct ipvf_info *info)
         info->fps_num == 0 || info->fps_den == 0 ||
         info->fps_num < IPVF_MIN_FPS * info->fps_den ||
         info->fps_num > IPVF_MAX_FPS * info->fps_den ||
-        info->frame_count == 0 || flags != IPVF_FLAGS ||
+        info->frame_count == 0 ||
+        (flags != IPVF_FLAGS &&
+         flags != (IPVF_FLAGS | IPVF_FLAG_TEMPORAL_XOR)) ||
         data_offset != IPVF_DATA_OFFSET ||
         info->first_record_sectors == 0 ||
         info->first_record_sectors > IPVF_RECORD_MAX_SECTORS ||
@@ -267,6 +401,34 @@ static bool validate_rects(const unsigned char *payload, size_t bytes,
     return p == end;
 }
 
+static void update_reference_rects(const unsigned char *payload,
+                                   unsigned int rect_count,
+                                   unsigned char *reference)
+{
+    const unsigned char *p = payload;
+    unsigned int i;
+
+    for (i = 0; i < rect_count; i++)
+    {
+        unsigned int x = p[0];
+        unsigned int y = p[1];
+        unsigned int w = p[2];
+        unsigned int h = p[3];
+        unsigned int row;
+
+        p += IPVF_RECT_HEADER_SIZE;
+        for (row = 0; row < h; row++)
+        {
+            rb->memcpy(reference +
+                       ((size_t)(y + row) * LCD_WIDTH + x) *
+                       sizeof(fb_data),
+                       p + (size_t)row * w * sizeof(fb_data),
+                       (size_t)w * sizeof(fb_data));
+        }
+        p += (size_t)w * h * sizeof(fb_data);
+    }
+}
+
 static bool parse_record(const unsigned char *record,
                          uint32_t current_sectors,
                          unsigned long frame,
@@ -286,6 +448,7 @@ static bool parse_record(const unsigned char *record,
         return false;
 
     source_type = record[0];
+    record_info->source_type = source_type;
     record_info->rect_count = record[1];
     record_info->next_sectors = get_le16(record + 2);
     record_info->stored_video_bytes = get_le32(record + 4);
@@ -295,7 +458,11 @@ static bool parse_record(const unsigned char *record,
         return false;
     record_info->audio_bytes = record_audio_bytes(record_info->audio_frames);
     record_info->compressed = source_type == IPVF_TYPE_KEY_LZ4 ||
-                              source_type == IPVF_TYPE_RECTS_LZ4;
+                              source_type == IPVF_TYPE_RECTS_LZ4 ||
+                              source_type == IPVF_TYPE_XOR_LZ4;
+    record_info->temporal = source_type == IPVF_TYPE_XOR_LZ4;
+    record_info->keyframe = source_type == IPVF_TYPE_KEY ||
+                            source_type == IPVF_TYPE_KEY_LZ4;
 
     if (record_info->stored_video_bytes > IPVF_RECORD_MAX_BYTES ||
         record_info->decoded_video_bytes > IPVF_MAX_PAYLOAD)
@@ -342,6 +509,17 @@ static bool parse_record(const unsigned char *record,
             record_info->decoded_video_bytes != 0 || record_info->compressed)
             return false;
     }
+    else if (source_type == IPVF_TYPE_XOR_LZ4)
+    {
+        /* Temporal XOR reconstructs a full renderable frame, but remains
+         * dependent on the immediately preceding reconstructed frame. */
+        record_info->type = IPVF_TYPE_KEY;
+        if (record_info->rect_count != 0 ||
+            record_info->decoded_video_bytes != IPVF_FRAME_BYTES ||
+            !record_info->compressed || frame == 0 ||
+            !info->temporal_xor || record_info->stored_video_bytes < 5u)
+            return false;
+    }
     else
     {
         return false;
@@ -374,20 +552,61 @@ static bool decode_record_video(const unsigned char *record,
                                 const struct ipvf_record_info *record_info,
                                 unsigned char *decoded_record,
                                 unsigned char *scratch,
-                                bool native_geometry)
+                                unsigned char *reference,
+                                bool native_geometry,
+                                struct ipvf_stats *stats)
 {
     const unsigned char *source = record + IPVF_FRAME_HEADER_SIZE;
     unsigned char *destination = decoded_record + IPVF_FRAME_HEADER_SIZE;
     unsigned char *payload = destination;
     bool valid;
+    uint32_t operation_started;
+    uint32_t operation_us;
+    uint32_t stored_bytes = record_info->stored_video_bytes;
+    uint32_t expected_crc = 0;
 
     if (record_info->compressed)
     {
+        if (record_info->temporal)
+        {
+            expected_crc = get_le32(source);
+            source += sizeof(uint32_t);
+            stored_bytes -= sizeof(uint32_t);
+            operation_started = USEC_TIMER;
+            valid = ipvf_temporal_payload_crc32(source, stored_bytes) ==
+                    expected_crc;
+            operation_us = USEC_TIMER - operation_started;
+            if (stats != NULL)
+                add_qualification_timing(
+                    &stats->temporal_check_us,
+                    &stats->max_temporal_check_us, operation_us);
+            if (!valid)
+                return false;
+        }
         payload = scratch != NULL ? scratch : destination;
-        if (!ipvf_lz4_decode(source, record_info->stored_video_bytes,
-                             payload,
-                             record_info->decoded_video_bytes))
+        operation_started = USEC_TIMER;
+        valid = ipvf_lz4_decode(source, stored_bytes, payload,
+                                record_info->decoded_video_bytes);
+        operation_us = USEC_TIMER - operation_started;
+        if (stats != NULL)
+            add_qualification_timing(&stats->lz4_decode_us,
+                                     &stats->max_lz4_decode_us,
+                                     operation_us);
+        if (!valid)
             return false;
+        if (record_info->temporal)
+        {
+            if (scratch == NULL || reference == NULL)
+                return false;
+            operation_started = USEC_TIMER;
+            ipvf_xor_frame(reference, scratch);
+            operation_us = USEC_TIMER - operation_started;
+            if (stats != NULL)
+                add_qualification_timing(
+                    &stats->temporal_reconstruct_us,
+                    &stats->max_temporal_reconstruct_us, operation_us);
+            payload = reference;
+        }
     }
     else if (record_info->stored_video_bytes != 0)
     {
@@ -408,9 +627,25 @@ static bool decode_record_video(const unsigned char *record,
 
     if (!valid)
         return false;
-    if (record_info->compressed && scratch != NULL)
+    operation_started = USEC_TIMER;
+    if (record_info->temporal)
+        rb->memcpy(destination, reference, IPVF_FRAME_BYTES);
+    else if (record_info->compressed && scratch != NULL)
         rb->memcpy(destination, scratch,
                    record_info->decoded_video_bytes);
+
+    if (reference != NULL)
+    {
+        if (record_info->type == IPVF_TYPE_KEY && !record_info->temporal)
+            rb->memcpy(reference, destination, IPVF_FRAME_BYTES);
+        else if (record_info->type == IPVF_TYPE_RECTS)
+            update_reference_rects(destination,
+                                   record_info->rect_count, reference);
+    }
+    operation_us = USEC_TIMER - operation_started;
+    if (stats != NULL)
+        add_qualification_timing(&stats->video_copy_us,
+                                 &stats->max_video_copy_us, operation_us);
 
     return true;
 }

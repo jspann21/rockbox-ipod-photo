@@ -78,6 +78,10 @@ struct ipvf_render_control
     volatile bool failed;
     volatile unsigned int produce;
     volatile unsigned int consume;
+    volatile uint64_t render_us;
+    volatile uint32_t max_render_us;
+    volatile uint32_t render_calls;
+    volatile uint32_t render_failures;
     struct ipvf_render_slot slots[IPVF_RENDER_SLOTS];
 };
 
@@ -173,9 +177,23 @@ static void render_worker(void)
             continue;
         }
 
-        if (!control->failed &&
-            !render_apply_slot(&control->slots[render_slot_index(consume)]))
-            control->failed = true;
+        if (!control->failed)
+        {
+            uint32_t started = USEC_TIMER;
+            bool applied = render_apply_slot(
+                &control->slots[render_slot_index(consume)]);
+            uint32_t elapsed = USEC_TIMER - started;
+
+            control->render_us += elapsed;
+            control->render_calls++;
+            if (elapsed > control->max_render_us)
+                control->max_render_us = elapsed;
+            if (!applied)
+            {
+                control->render_failures++;
+                control->failed = true;
+            }
+        }
 
         control->consume = consume + 1;
 #ifdef HAVE_IPOD_CRASH_RECORD
@@ -338,7 +356,7 @@ static bool render_wait_presented(unsigned int count)
     return control->consume >= count && !control->failed;
 }
 
-static bool render_finish(void)
+static bool render_finish(struct ipvf_stats *stats)
 {
     volatile struct ipvf_render_control *control = UNCACHED_ADDR(&render);
     long deadline;
@@ -375,6 +393,13 @@ static bool render_finish(void)
 
     rb->thread_wait(render_thread_id);
     passed = !control->failed;
+    if (stats != NULL)
+    {
+        stats->render_us = control->render_us;
+        stats->max_render_us = control->max_render_us;
+        stats->render_calls = control->render_calls;
+        stats->render_failures = control->render_failures;
+    }
     render_thread_id = 0;
     render_active = false;
 #ifdef HAVE_IPOD_CRASH_RECORD
@@ -425,8 +450,9 @@ static bool reconcile_framebuffer(int fd, const struct ipvf_info *info,
             !parse_record(record, current_sectors, frame, info,
                           &record_info) ||
             !decode_record_video(record, &record_info, decoded_record,
-                                 scratch, true) ||
-            (frame == key_frame && record_info.type != IPVF_TYPE_KEY))
+                                 scratch, audio.video_reference, true,
+                                 NULL) ||
+            (frame == key_frame && !record_info.keyframe))
         {
             passed = false;
             break;

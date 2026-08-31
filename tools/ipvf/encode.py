@@ -27,12 +27,14 @@ VERSION = 1
 FLAG_RGB565BE = 1
 FLAG_SECTOR_RECORDS = 2
 FLAG_IMA_ADPCM = 8
+FLAG_TEMPORAL_XOR = 16
 FLAGS = FLAG_RGB565BE | FLAG_SECTOR_RECORDS | FLAG_IMA_ADPCM
 TYPE_KEY = 0
 TYPE_RECTS = 1
 TYPE_REPEAT = 2
 TYPE_KEY_LZ4 = 3
 TYPE_RECTS_LZ4 = 4
+TYPE_XOR_LZ4 = 5
 AUDIO_FORMAT_IMA_ADPCM = 2
 AUDIO_CHANNELS = 2
 AUDIO_BITS_PER_SAMPLE = 16
@@ -55,6 +57,27 @@ IMA_STEP_TABLE = (
     6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818,
     18500, 20350, 22385, 24623, 27086, 29794, 32767,
 )
+
+def _make_rockbox_crc32_table() -> tuple[int, ...]:
+    table = []
+    for index in range(256):
+        crc = index << 24
+        for _ in range(8):
+            crc = ((crc << 1) ^ (0x04C11DB7 if crc & 0x80000000 else 0))
+            crc &= 0xFFFFFFFF
+        table.append(crc)
+    return tuple(table)
+
+
+ROCKBOX_CRC32_TABLE = _make_rockbox_crc32_table()
+
+
+def rockbox_crc32(data: bytes, crc: int = 0xFFFFFFFF) -> int:
+    """Match Rockbox's non-reflected crc_32 with no final XOR."""
+    for byte in data:
+        crc = (ROCKBOX_CRC32_TABLE[((crc >> 24) ^ byte) & 0xFF] ^
+               ((crc << 8) & 0xFFFFFFFF))
+    return crc
 
 
 def _ima_step(predictor: int, index: int, code: int) -> tuple[int, int]:
@@ -313,8 +336,14 @@ def lz4_decompress(data: bytes, expected_size: int | None = None) -> bytes:
         if expected_size is not None and match_len > expected_size - len(out):
             raise ValueError("LZ4 decoded size exceeds expected size")
         last_match_start = len(out)
-        for _ in range(match_len):
-            out.append(out[-offset])
+        match_source = len(out) - offset
+        while match_len:
+            # Slice from all bytes currently available at the match source.
+            # For overlapping matches this naturally grows geometrically,
+            # while preserving the byte-at-a-time LZ4 copy semantics.
+            count = min(match_len, len(out) - match_source)
+            out.extend(out[match_source:match_source + count])
+            match_len -= count
     if expected_size is not None and len(out) != expected_size:
         raise ValueError("LZ4 decoded size mismatch")
     if last_match_start is not None and len(out) - last_match_start < 12:
@@ -360,6 +389,129 @@ def rect_payload(frame: bytes, rect):
     return struct.pack("<BBBBI", x, y, w, h, len(pix)) + pix
 
 
+def rects_payload(frame: bytes, rects) -> bytes:
+    """Build one native-aligned payload containing all rectangles."""
+    return b"".join(rect_payload(frame, rect) for rect in rects)
+
+
+def multi_rect_diff(
+    prev: bytes,
+    cur: bytes,
+    max_rects: int = 8,
+    tile_pairs: int = 4,
+    tile_rows: int = 4,
+):
+    """Return a bounded rectangle cover for spatially separate changes.
+
+    The working grid is made of four two-pixel LCD words by four rows.  It
+    keeps component discovery cheap, preserves the LCD's two-pixel alignment,
+    and prevents a noisy frame from creating hundreds of tiny transfers.
+    Components are merged whenever doing so saves payload bytes, then the
+    cheapest remaining merges are used to enforce ``max_rects``.
+    """
+    if len(prev) != FRAME_BYTES or len(cur) != FRAME_BYTES:
+        raise ValueError("frames must match the native IPVF geometry")
+    if max_rects <= 0 or max_rects > 255:
+        raise ValueError("max_rects must be 1..255")
+    if tile_pairs <= 0 or tile_rows <= 0:
+        raise ValueError("tile dimensions must be positive")
+
+    pair_columns = W // 2
+    changed = set()
+    for y in range(H):
+        row = y * W * 2
+        for pair in range(pair_columns):
+            p = row + pair * 4
+            if prev[p:p + 4] != cur[p:p + 4]:
+                changed.add((pair // tile_pairs, y // tile_rows))
+    if not changed:
+        return []
+
+    components = []
+    remaining = set(changed)
+    while remaining:
+        seed = min(remaining)
+        remaining.remove(seed)
+        stack = [seed]
+        cells = [seed]
+        while stack:
+            tx, ty = stack.pop()
+            for neighbour in ((tx - 1, ty), (tx + 1, ty),
+                              (tx, ty - 1), (tx, ty + 1)):
+                if neighbour in remaining:
+                    remaining.remove(neighbour)
+                    stack.append(neighbour)
+                    cells.append(neighbour)
+        min_tx = min(cell[0] for cell in cells)
+        max_tx = max(cell[0] for cell in cells)
+        min_ty = min(cell[1] for cell in cells)
+        max_ty = max(cell[1] for cell in cells)
+
+        # Tighten the tile component to the actual changed LCD words.
+        min_pair = pair_columns
+        max_pair = -1
+        min_y = H
+        max_y = -1
+        for y in range(min_ty * tile_rows,
+                       min(H, (max_ty + 1) * tile_rows)):
+            row = y * W * 2
+            for pair in range(min_tx * tile_pairs,
+                              min(pair_columns,
+                                  (max_tx + 1) * tile_pairs)):
+                p = row + pair * 4
+                if prev[p:p + 4] != cur[p:p + 4]:
+                    min_pair = min(min_pair, pair)
+                    max_pair = max(max_pair, pair)
+                    min_y = min(min_y, y)
+                    max_y = max(max_y, y)
+        if max_pair >= 0:
+            components.append((min_pair * 2, min_y,
+                               (max_pair - min_pair + 1) * 2,
+                               max_y - min_y + 1))
+
+    def payload_cost(rect) -> int:
+        return 8 + rect[2] * rect[3] * 2
+
+    def merged(a, b):
+        x0 = min(a[0], b[0])
+        y0 = min(a[1], b[1])
+        x1 = max(a[0] + a[2], b[0] + b[2])
+        y1 = max(a[1] + a[3], b[1] + b[3])
+        return x0, y0, x1 - x0, y1 - y0
+
+    # A pathological sparse frame can have many isolated components.  A
+    # single bounding rectangle is a safe bounded fallback for host memory and
+    # encode time; normal multi-object footage stays far below this limit.
+    if len(components) > 128:
+        return [bbox_diff(prev, cur)]
+
+    while len(components) > 1:
+        best = None
+        for i in range(len(components) - 1):
+            for j in range(i + 1, len(components)):
+                union = merged(components[i], components[j])
+                extra = (payload_cost(union) -
+                         payload_cost(components[i]) -
+                         payload_cost(components[j]))
+                candidate = (extra, i, j, union)
+                if best is None or candidate < best:
+                    best = candidate
+        assert best is not None
+        if len(components) <= max_rects and best[0] > 0:
+            break
+        _, i, j, union = best
+        components[i] = union
+        del components[j]
+
+    return sorted(components, key=lambda rect: (rect[1], rect[0]))
+
+
+def xor_frames(prev: bytes, cur: bytes) -> bytes:
+    if len(prev) != FRAME_BYTES or len(cur) != FRAME_BYTES:
+        raise ValueError("frames must match the native IPVF geometry")
+    return bytes(a ^ b for a, b in zip(prev, cur))
+
+
 def audio_boundary(frame: int, fps: int) -> int:
     """Nearest 44.1 kHz sample-frame boundary for an integer video frame."""
     return (frame * AUDIO_SAMPLE_RATE + fps // 2) // fps
@@ -402,6 +554,7 @@ def write_header(
     fps: int,
     frames: int,
     first_record_sectors: int,
+    flags: int,
 ) -> None:
     h = bytearray(DATA_OFFSET)
     h[0:4] = MAGIC
@@ -416,7 +569,7 @@ def write_header(
         fps,
         1,
         frames,
-        FLAGS,
+        flags,
         DATA_OFFSET,
     )
     struct.pack_into("<H", h, 28, first_record_sectors)
@@ -515,20 +668,102 @@ def read_audio_slice(audio: BinaryIO, size: int) -> tuple[bytes, int]:
     return data, missing
 
 
+def _compress_record_if_smaller(
+    kind: int,
+    rect_count: int,
+    payload: bytes,
+    audio_size: int,
+):
+    """Return a raw or LZ4 record, requiring a whole-sector saving."""
+    decoded_size = len(payload)
+    if kind not in (TYPE_KEY, TYPE_RECTS):
+        return kind, rect_count, payload, decoded_size
+    compressed = lz4_compress(payload)
+    if (len(compressed) < decoded_size and
+            record_sectors(len(compressed), audio_size) <
+            record_sectors(decoded_size, audio_size)):
+        return kind + 3, rect_count, compressed, decoded_size
+    return kind, rect_count, payload, decoded_size
+
+
+def choose_video_record(
+    prev: bytes | None,
+    cur: bytes,
+    audio_size: int,
+    force_key: bool,
+    video_mode: str,
+    max_rects: int,
+):
+    """Choose a video record by final sector count, with bounded tie costs."""
+    if video_mode not in ("current", "spatial", "auto"):
+        raise ValueError("video_mode must be current, spatial, or auto")
+    if prev is None or force_key:
+        return _compress_record_if_smaller(
+            TYPE_KEY, 0, cur, audio_size
+        )
+
+    rect = bbox_diff(prev, cur)
+    if rect is None:
+        return TYPE_REPEAT, 0, b"", 0
+    delta = rect_payload(cur, rect)
+    if len(delta) < FRAME_BYTES:
+        selected = _compress_record_if_smaller(
+            TYPE_RECTS, 1, delta, audio_size
+        )
+    else:
+        selected = _compress_record_if_smaller(
+            TYPE_KEY, 0, cur, audio_size
+        )
+    selected_sectors = record_sectors(len(selected[2]), audio_size)
+
+    if video_mode in ("spatial", "auto"):
+        rectangles = multi_rect_diff(prev, cur, max_rects=max_rects)
+        if len(rectangles) > 1:
+            multi_payload = rects_payload(cur, rectangles)
+            if len(multi_payload) < FRAME_BYTES:
+                candidate = _compress_record_if_smaller(
+                    TYPE_RECTS, len(rectangles), multi_payload, audio_size
+                )
+                candidate_sectors = record_sectors(
+                    len(candidate[2]), audio_size
+                )
+                if candidate_sectors < selected_sectors:
+                    selected = candidate
+                    selected_sectors = candidate_sectors
+
+    if video_mode == "auto":
+        temporal = lz4_compress(xor_frames(prev, cur))
+        temporal_payload = struct.pack(
+            "<I", rockbox_crc32(temporal)
+        ) + temporal
+        temporal_sectors = record_sectors(len(temporal_payload), audio_size)
+        if (len(temporal_payload) < FRAME_BYTES and
+                temporal_sectors < selected_sectors):
+            selected = TYPE_XOR_LZ4, 0, temporal_payload, FRAME_BYTES
+
+    return selected
+
+
 def encode(
     source: Path,
     output: Path,
     fps: int,
     keyint: int,
     ffmpeg: str,
+    video_mode: str = "spatial",
+    max_rects: int = 8,
 ) -> None:
+    if video_mode == "auto" and keyint == 0:
+        raise ValueError("temporal mode requires a bounded keyframe interval")
+    if video_mode == "auto" and fps > 30:
+        raise ValueError("temporal mode is hardware-qualified only at <=30 fps")
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.name + ".tmp")
     audio_temp: Path | None = None
     audio_file: BinaryIO | None = None
     counts = {
         TYPE_KEY: 0, TYPE_RECTS: 0, TYPE_REPEAT: 0,
-        TYPE_KEY_LZ4: 0, TYPE_RECTS_LZ4: 0,
+        TYPE_KEY_LZ4: 0, TYPE_RECTS_LZ4: 0, TYPE_XOR_LZ4: 0,
     }
     video_payload_total = 0
     audio_payload_total = 0
@@ -558,27 +793,6 @@ def encode(
             f.write(bytes(DATA_OFFSET))
             for cur in ffmpeg_frames(source, fps, ffmpeg):
                 force_key = prev is None or (keyint > 0 and n % keyint == 0)
-                if force_key:
-                    video_payload = cur
-                    kind = TYPE_KEY
-                    rects = 0
-                else:
-                    rect = bbox_diff(prev, cur)
-                    if rect is None:
-                        video_payload = b""
-                        kind = TYPE_REPEAT
-                        rects = 0
-                    else:
-                        delta = rect_payload(cur, rect)
-                        if len(delta) < FRAME_BYTES:
-                            video_payload = delta
-                            kind = TYPE_RECTS
-                            rects = 1
-                        else:
-                            video_payload = cur
-                            kind = TYPE_KEY
-                            rects = 0
-
                 audio_start = audio_boundary(n, fps)
                 audio_end = audio_boundary(n + 1, fps)
                 audio_frames = audio_end - audio_start
@@ -592,17 +806,12 @@ def encode(
                 )
                 audio_padding_total += missing
 
-                # Compression is worthwhile only if the complete record uses
-                # fewer sectors.  This keeps sector readers from paying for a
-                # larger payload merely because its byte count is smaller.
-                decoded_video_bytes = len(video_payload)
-                if kind in (TYPE_KEY, TYPE_RECTS):
-                    compressed = lz4_compress(video_payload)
-                    if record_sectors(len(compressed), len(audio_payload)) < record_sectors(
-                        len(video_payload), len(audio_payload)
-                    ):
-                        video_payload = compressed
-                        kind += 3
+                kind, rects, video_payload, decoded_video_bytes = (
+                    choose_video_record(
+                        prev, cur, len(audio_payload), force_key,
+                        video_mode, max_rects,
+                    )
+                )
 
                 current = (
                     kind, rects, video_payload, audio_payload,
@@ -641,7 +850,10 @@ def encode(
             )
             record_total += sectors * RECORD_SECTOR_SIZE
             padding_total += padding
-            write_header(f, fps, n, first_record_sectors)
+            flags = FLAGS
+            if counts[TYPE_XOR_LZ4] != 0:
+                flags |= FLAG_TEMPORAL_XOR
+            write_header(f, fps, n, first_record_sectors, flags)
         os.replace(temporary, output)
     except BaseException:
         temporary.unlink(missing_ok=True)
@@ -658,7 +870,8 @@ def encode(
     print(
         f"  key={counts[TYPE_KEY]} delta={counts[TYPE_RECTS]} "
         f"repeat={counts[TYPE_REPEAT]} key-lz4={counts[TYPE_KEY_LZ4]} "
-        f"delta-lz4={counts[TYPE_RECTS_LZ4]}"
+        f"delta-lz4={counts[TYPE_RECTS_LZ4]} "
+        f"xor-lz4={counts[TYPE_XOR_LZ4]} mode={video_mode}"
     )
     print(
         f"  video={video_payload_total:,} bytes "
@@ -687,12 +900,32 @@ def main() -> None:
         help="force a full frame every N frames (0 disables)",
     )
     ap.add_argument("--ffmpeg", default="ffmpeg")
+    ap.add_argument(
+        "--video-mode",
+        choices=("current", "spatial", "auto"),
+        default="spatial",
+        help=("current=bounds only; spatial=bounded multi-rectangle; "
+              "auto=spatial plus temporal XOR+LZ4"),
+    )
+    ap.add_argument(
+        "--max-rects",
+        type=int,
+        default=8,
+        help="maximum rectangles in a spatial record (1..255)",
+    )
     ns = ap.parse_args()
     if not MIN_FPS <= ns.fps <= MAX_FPS:
         ap.error(f"--fps must be {MIN_FPS}..{MAX_FPS}")
     if ns.keyint < 0:
         ap.error("--keyint must be >= 0")
-    encode(ns.source, ns.output, ns.fps, ns.keyint, ns.ffmpeg)
+    if ns.video_mode == "auto" and ns.keyint == 0:
+        ap.error("--video-mode auto requires --keyint > 0")
+    if ns.video_mode == "auto" and ns.fps > 30:
+        ap.error("--video-mode auto is hardware-qualified only at <=30 fps")
+    if not 1 <= ns.max_rects <= 255:
+        ap.error("--max-rects must be 1..255")
+    encode(ns.source, ns.output, ns.fps, ns.keyint, ns.ffmpeg,
+           ns.video_mode, ns.max_rects)
 
 
 if __name__ == "__main__":
