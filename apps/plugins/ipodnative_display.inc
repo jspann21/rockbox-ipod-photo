@@ -365,6 +365,13 @@ static bool render_wait_presented(unsigned int count)
     return control->consume >= count && !control->failed;
 }
 
+static unsigned int render_presented_count(void)
+{
+    volatile struct ipvf_render_control *control = UNCACHED_ADDR(&render);
+
+    return control->failed ? 0 : control->consume;
+}
+
 static bool render_finish(struct ipvf_stats *stats)
 {
     volatile struct ipvf_render_control *control = UNCACHED_ADDR(&render);

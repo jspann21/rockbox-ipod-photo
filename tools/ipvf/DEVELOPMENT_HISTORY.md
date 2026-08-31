@@ -1346,3 +1346,30 @@
   counts distinct clicks, carries reconstruction-time requests forward, and
   accepts only a real MENU press. Seeking to the end retains normal completion
   behavior; the short qualification clip had made that look unexpected.
+
+## 50. Content identity, persistent resume, and metadata details candidate
+
+- The encoder calculates one Rockbox CRC32 over every complete sector-aligned
+  media record and stores it as the media identity. Renaming a file preserves
+  identity; changing encoded video/audio changes it. Strict validation fuses
+  recomputation into its existing record walk and rejects a mismatch.
+- Resume state is per media identity rather than pathname. Two alternating
+  36-byte slots retain media identity, frame/audio/media bounds, resume frame,
+  active/dismissed/complete state, monotonic sequence, and CRC. A torn new slot
+  leaves the previous slot valid; state changes supersede rather than delete it.
+- Checkpoints persist only the renderer's confirmed presentation boundary.
+  They run every 30 seconds, on pause/details, after successful seek activation,
+  on clean stop, and in a pre-USB/power/reboot cleanup callback that stops
+  audio/render work and closes the movie before Rockbox takes storage.
+- Reopening active matching content asks whether to resume. Declining writes a
+  newer dismissed record, completion writes a newer complete record, and
+  accepting enters the qualified indexed seek path.
+- Center Select is a metadata/details screen rather than a restart command.
+  Playback and the render worker are quiescent while Rockbox draws title,
+  artist, album, duration, frame rate, and size. Select or Play restores the
+  exact reference frame and resumes audio; MENU exits.
+- Host tests pass, including media-payload corruption rejection. The combined
+  A1099 hardware run passed details/return, MENU/reopen resume, explicit
+  start-over, natural-completion suppression, and a 30-second checkpoint with
+  no reported stutter or A/V error. USB/reboot/interruption recovery remains in
+  the lifecycle matrix.

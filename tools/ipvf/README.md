@@ -45,6 +45,11 @@ The one-step creator imports those tags from the source when present; use
 `--title`, `--artist`, or `--album` to override them. Metadata is descriptive
 only and never changes decoding or compression.
 
+Each encode also stores a content-derived media identity: the Rockbox CRC32 of
+all complete sector-aligned media records. It remains stable when the file is
+renamed and changes when encoded video or audio changes. The strict validator
+recomputes it while walking records; the player uses it to key resume state.
+
 The encoder preserves aspect ratio, letterboxes to 220x176, and adaptively
 chooses among full keyframes, repeats, lossless rectangular patches, bounded
 multi-rectangle patches, and temporal XOR+LZ4. A more expensive representation
@@ -102,7 +107,7 @@ All integers are little-endian. The first record begins at byte 512.
 | 66 | 2 | metadata TLV byte count |
 | 68 | 4 | metadata offset: `80` |
 | 72 | 4 | Rockbox CRC32 of all index entries |
-| 76 | 4 | reserved zero |
+| 76 | 4 | media identity: Rockbox CRC32 of all sector-aligned media records |
 | 80 | variable | bounded metadata TLVs: one-byte tag, one-byte UTF-8 length, value |
 | after metadata | to 512 | zero padding |
 
@@ -194,6 +199,16 @@ On PP5020 hardware, the player preserves the qualified three-slot pipeline:
    beyond EOF clamps to the final frame and completes playback normally.
    MENU and normal completion return directly to Rockbox without a diagnostic
    frame-count/status screen; genuine failures retain one short error message.
+8. Center Select pauses playback and opens an ownership-safe details screen
+   with title, artist, album, duration, frame rate, and file size. Select or
+   Play restores the exact paused video frame and resumes; MENU exits.
+9. Resume state uses two alternating 36-byte records in Rockbox plugin storage
+   per media identity. The prior valid slot survives a torn update. Records
+   distinguish active, dismissed, and complete state so completion never
+   destructively exposes an older position. Checkpoints use only frames the
+   renderer has definitely presented, run every 30 seconds and on pause,
+   details, seek completion, clean stop, USB, poweroff, or reboot, and ask
+   whether to resume when the same content is opened under any filename.
 
 The target driver retains the per-word LCD2 readiness handshake. The player
 does not use raw plugin MMIO, cache invalidation, invented LCD DMA requests, or
@@ -214,9 +229,10 @@ Run them with:
 python3 -m unittest -v tools.ipvf.test_encode tools.ipvf.test_lab
 ```
 
-They verify the canonical header, metadata TLVs, complete keyframe index and
-CRC, raw/LZ4/repeat sector chaining, LZ4 roundtrip and malformed-input
-rejection, IMA block sizing and predictors, silence padding, trimming to the
+They verify the canonical header, metadata TLVs, content-derived media
+identity, complete keyframe index and CRC, raw/LZ4/repeat sector chaining, LZ4
+roundtrip and malformed-input rejection, IMA block sizing and predictors,
+silence padding, trimming to the
 converted video duration, and the 96 KiB record bound.
 
 `validate.py` is the strict streaming file validator. It walks sector links,

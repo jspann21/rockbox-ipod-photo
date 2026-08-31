@@ -319,3 +319,23 @@ stops only on a real MENU press. Extensive back-and-forth hardware input then
 worked correctly. A later browser return was normal completion: one ten-second
 jump from roughly 30 seconds in the 45-second clip leaves only about five
 seconds. No special EOF clamp or diagnostic build is retained.
+
+## Pass 12 - resume and metadata candidate
+
+- Candidate scope: content-derived media identity, alternating CRC-protected
+  resume slots, presentation-safe periodic/event checkpoints, atomic
+  active/dismissed/complete state, resume/start-over prompt, and a
+  Select-triggered metadata/details screen.
+- Resume enters the existing indexed keyframe reconstruction and exact audio
+  sample reset path; details pause the mixer and drain render ownership before
+  drawing, then restore the exact reference frame.
+- Host suite: 22 passing WSL tests, including corruption of an otherwise valid
+  audio payload being rejected by the media-identity check.
+- USB/power/reboot handling checkpoints the last confirmed presentation and
+  closes media/audio/render ownership before Rockbox storage takeover.
+- A1099 hardware qualification passed. Center Select opened details and returned
+  to coherent playback; MENU/reopen resumed correctly; declining resume started
+  from the beginning; natural completion suppressed the next resume prompt.
+- The 45-second completion run crossed the 30-second periodic checkpoint with no
+  reported stutter, desynchronization, wrong frame, or unexpected exit.
+- Reboot, USB-takeover, and forced-interruption recovery remain lifecycle cases.

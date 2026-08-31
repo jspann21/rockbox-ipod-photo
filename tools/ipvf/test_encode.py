@@ -183,7 +183,10 @@ class IPVFEncodeTests(unittest.TestCase):
             self.assertEqual(struct.unpack_from("<H", data, 64)[0], 16)
             metadata_length = struct.unpack_from("<H", data, 66)[0]
             self.assertEqual(struct.unpack_from("<I", data, 68)[0], 80)
-            self.assertEqual(struct.unpack_from("<I", data, 76)[0], 0)
+            self.assertEqual(
+                struct.unpack_from("<I", data, 76)[0],
+                ipvf.rockbox_crc32(data[ipvf.DATA_OFFSET:media_end]),
+            )
             self.assertEqual(
                 ipvf.parse_metadata(data[80:80 + metadata_length]), metadata
             )
@@ -422,6 +425,21 @@ class IPVFEncodeTests(unittest.TestCase):
             bad_frame_path.write_bytes(bad_frame)
             with self.assertRaisesRegex(ValueError, "index must begin with frame 0"):
                 inspector.inspect_file(bad_frame_path)
+
+    def test_media_identity_rejects_audio_payload_corruption(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source_audio = bytes(i % 251 for i in range(17_000))
+            original = bytearray(self.encode_with_audio(root, source_audio))
+            first = ipvf.DATA_OFFSET
+            video_size = struct.unpack_from("<I", original, first + 4)[0]
+            audio_byte = first + 12 + video_size + 8
+            original[audio_byte] ^= 1
+            corrupted = root / "bad-media-id.ipvf"
+            corrupted.write_bytes(original)
+            with self.assertRaisesRegex(ValueError,
+                                        "media identity CRC mismatch"):
+                inspector.inspect_file(corrupted)
 
     def test_ima_length_and_decode_contract(self) -> None:
         pcm = struct.pack("<hhhhhh", 1000, -1000, 1200, -1200, 900, -900)

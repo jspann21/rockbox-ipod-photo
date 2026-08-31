@@ -58,9 +58,15 @@ The plan is evidence-driven:
       qualification clip.
 - [x] One canonical unreleased container is used. The header has no format
       version field, and the host/player contain no legacy compatibility path.
+- [x] Content-derived media identity is stored in the header and strictly
+      recomputed by host validation, remaining stable across file renames.
+- [ ] Measure whether resume identity should be widened beyond CRC32, and
+      whether logical decoded-timeline identity should survive recompression;
+      do not change the container until collision/lifecycle testing justifies it.
 - [x] Normal completion and MENU stop return silently without diagnostic frame
       counters; genuine playback failures retain a concise error.
-- [ ] Persistent playback position remains.
+- [x] Persistent playback position, resume/start-over choice, and completion
+      handling are implemented and qualified on A1099.
 - [ ] Durable production-quality run journal.
 - [ ] Long-duration and lifecycle qualification.
 
@@ -655,18 +661,24 @@ there is one format and no compatibility/version branch.
 - [ ] Test 0/10/50/90/99%, immediately before/after keyframes, rapid repeated
       seeks, and segment boundaries.
 - [x] Play pause/resume and Left/Right ten-second seek controls are implemented
-      and A1099-qualified. Persistent restart/resume choice remains.
+      and A1099-qualified. Persistent resume/start-over choice is implemented
+      and A1099-qualified.
 - [x] Add live playback volume control using Rockbox's existing sound/volume
       state with bounded wheel-repeat handling. Core control is device-qualified.
 - [ ] Add a non-blocking on-screen level indicator through the native render
       path without pausing playback or racing the COP framebuffer transfer.
 - [ ] Verify minimum/maximum clamping, rapid wheel input, MENU interaction,
       USB interruption, and that changing volume causes no audio gaps.
-- [ ] Persist resume atomically under Rockbox data storage, keyed by media ID,
-      with segment/frame/audio sample and a validity checksum.
-- [ ] Checkpoint resume sparingly (for example every 30 seconds and on clean
-      stop) to avoid hot-path storage writes.
+- [x] Dual-slot persistent resume is implemented under Rockbox plugin storage,
+      keyed by content-derived media identity with frame/media bounds, atomic
+      active/dismissed/complete state, sequence, and CRC; resume, dismissal, and
+      completion behavior passed A1099 qualification.
+- [x] Presentation-safe checkpoints are implemented every thirty seconds, on
+      pause/details, after seek activation, on clean exit, and before Rockbox
+      USB/power/reboot takeover. The combined 45-second A1099 run crossed the
+      periodic checkpoint without an observed gap.
 - [ ] Resume correctly after MENU, reboot, USB, and an interrupted prior run.
+      MENU resume passed; reboot, USB, and forced-interruption cases remain.
 
 ### Metadata
 
@@ -677,9 +689,9 @@ there is one format and no compatibility/version branch.
 - [x] Reject unknown, duplicate, malformed UTF-8, oversized, and out-of-bounds
       metadata in the strict host validator. Device parsing remains bounded and
       metadata-independent playback remains possible.
-- [ ] Add a metadata/details screen only after controls are qualified; do not
-      overlay text through the active COP render path without an ownership-safe
-      OSD design.
+- [x] An ownership-safe metadata/details screen is implemented and qualified:
+      Select drains render work, pauses the mixer, displays details, restores
+      the exact frame, and resumes with stable sound and picture on A1099.
 
 ## Phase 4 - Native temporal/movie codec experiments
 
@@ -832,7 +844,7 @@ Reference bitrates:
 
 - [ ] Early/middle/late MENU stop followed by immediate replay.
 - [ ] Early/middle/late USB insertion during read, decode, audio, and display.
-- [ ] Pause/resume and rapid seek/restart once controls exist.
+- [ ] Pause/resume, rapid seek, and persistent resume/start-over.
 - [ ] Ten full play/stop/reopen cycles.
 - [ ] One hundred short cycles for leaks, stuck mixer channels, slot ownership,
       CPU boost, backlight, spindown, and plugin-buffer restoration.
@@ -899,8 +911,10 @@ Do these in order:
 - [x] P3.3: A1099 pause/seek, rapid multi-click accumulation, volume,
       MENU/reopen, completion, and A/V sync passed. USB during active seek
       remains in the broader lifecycle matrix.
-- [ ] P3.4: add atomic persistent resume only after P3.3 proves the seek reset
+- [x] P3.4: add atomic persistent resume only after P3.3 proves the seek reset
       path; key it by stable media identity rather than a mutable filename.
+      The combined A1099 resume/reopen/start-over/completion/details/checkpoint
+      test passed.
 - [ ] P3.1: settle 2-GiB behavior before final segment/rollover and long-movie
       resume rules. IPVF stores 64-bit logical media/index offsets but the
       current A1099 Rockbox file API deliberately rejects offsets above 2 GiB.

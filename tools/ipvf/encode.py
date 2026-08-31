@@ -185,6 +185,28 @@ def rockbox_crc32(data: bytes, crc: int = 0xFFFFFFFF) -> int:
     return crc
 
 
+def rockbox_crc32_file_range(
+    stream: BinaryIO,
+    start: int,
+    end: int,
+    chunk_size: int = 1024 * 1024,
+) -> int:
+    """CRC one bounded file range without retaining it in memory."""
+    if start < 0 or end < start or chunk_size <= 0:
+        raise ValueError("invalid CRC file range")
+    stream.flush()
+    stream.seek(start)
+    remaining = end - start
+    crc = 0xFFFFFFFF
+    while remaining:
+        block = stream.read(min(remaining, chunk_size))
+        if not block:
+            raise RuntimeError("short read while calculating media identity")
+        crc = rockbox_crc32(block, crc)
+        remaining -= len(block)
+    return crc
+
+
 def encode_metadata(metadata: dict[str, str] | None = None) -> bytes:
     """Encode the bounded metadata TLV region in stable tag order."""
     if metadata is None:
@@ -733,6 +755,7 @@ def write_header(
     media_end_offset: int,
     index_count: int,
     index_crc: int,
+    media_id: int,
     metadata: dict[str, str] | None = None,
 ) -> None:
     metadata_bytes = encode_metadata(metadata)
@@ -742,6 +765,8 @@ def write_header(
         raise ValueError("index entry count does not fit in the IPVF header")
     if not 0 <= index_crc <= UINT32_MAX:
         raise ValueError("index CRC does not fit in the IPVF header")
+    if not 0 <= media_id <= UINT32_MAX:
+        raise ValueError("media identity does not fit in the IPVF header")
     h = bytearray(DATA_OFFSET)
     h[0:4] = MAGIC
     struct.pack_into(
@@ -779,7 +804,7 @@ def write_header(
     struct.pack_into("<H", h, 66, len(metadata_bytes))
     struct.pack_into("<I", h, 68, METADATA_OFFSET)
     struct.pack_into("<I", h, 72, index_crc)
-    struct.pack_into("<I", h, 76, 0)
+    struct.pack_into("<I", h, 76, media_id)
     h[METADATA_OFFSET:METADATA_OFFSET + len(metadata_bytes)] = metadata_bytes
     f.seek(0)
     f.write(h)
@@ -1214,6 +1239,10 @@ def encode(
             record_total += sectors * RECORD_SECTOR_SIZE
             padding_total += padding
             media_end_offset = f.tell()
+            media_id = rockbox_crc32_file_range(
+                f, DATA_OFFSET, media_end_offset
+            )
+            f.seek(media_end_offset)
             if not index_entries or index_entries[0][0] != 0:
                 raise RuntimeError("IPVF index must begin with frame 0")
             index_data = b"".join(
@@ -1241,6 +1270,7 @@ def encode(
                 media_end_offset,
                 len(index_entries),
                 rockbox_crc32(index_data),
+                media_id,
                 metadata,
             )
         os.replace(temporary, output)

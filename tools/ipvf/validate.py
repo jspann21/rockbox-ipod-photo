@@ -102,7 +102,7 @@ def inspect_file(
         metadata_length = struct.unpack_from("<H", header, 66)[0]
         metadata_offset = struct.unpack_from("<I", header, 68)[0]
         index_crc = struct.unpack_from("<I", header, 72)[0]
-        reserved = struct.unpack_from("<I", header, 76)[0]
+        media_id = struct.unpack_from("<I", header, 76)[0]
 
         _require(header_size == ipvf.HEADER_SIZE, "invalid logical header size")
         _require((width, height) == (ipvf.W, ipvf.H), "invalid geometry")
@@ -137,7 +137,6 @@ def inspect_file(
         metadata = ipvf.parse_metadata(header[metadata_offset:metadata_end])
         _require(not any(header[metadata_end:ipvf.DATA_OFFSET]),
                  "nonzero superblock padding")
-        _require(reserved == 0, "nonzero reserved header field")
         _require(media_end_offset > ipvf.DATA_OFFSET,
                  "invalid media end offset")
         _require(media_end_offset <= file_size,
@@ -167,6 +166,7 @@ def inspect_file(
         audio_total = 0
         padding_total = 0
         max_record_sectors = 0
+        calculated_media_id = 0xFFFFFFFF
         keyframe_entries: list[tuple[int, int, int, int]] = []
         record_info: dict[int, tuple[int, int, int]] = {}
 
@@ -180,6 +180,9 @@ def inspect_file(
             record = stream.read(record_size)
             _require(len(record) == record_size,
                      f"frame {frame}: truncated record")
+            calculated_media_id = rockbox_crc32(
+                record, calculated_media_id
+            )
             kind, rect_count, next_sectors, stored_size, decoded_size = \
                 struct.unpack_from("<BBHII", record)
             _require(kind in TYPE_NAMES, f"frame {frame}: unknown type {kind}")
@@ -288,6 +291,8 @@ def inspect_file(
         _require(current_sectors == 0, "record chain does not terminate")
         _require(position == media_end_offset,
                  "record chain does not end at media end offset")
+        _require(calculated_media_id == media_id,
+                 "media identity CRC mismatch")
         if source_frames is not None:
             _require(next(source_frames, None) is None,
                      "source contains more frames than IPVF")
@@ -362,6 +367,7 @@ def inspect_file(
         "index_count": index_count,
         "index_entry_size": index_entry_size,
         "index_crc": f"{index_crc:08x}",
+        "media_id": f"{media_id:08x}",
         "index": [
             {
                 "frame": frame,
@@ -414,7 +420,8 @@ def main() -> None:
         )
         print(
             f"  media-end={report['media_end_offset']} index="
-            f"{report['index_count']} entries metadata={report['metadata']}"
+            f"{report['index_count']} entries media-id={report['media_id']} "
+            f"metadata={report['metadata']}"
         )
 
 

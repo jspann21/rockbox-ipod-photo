@@ -37,6 +37,7 @@
 #define IPVF_RECT_HEADER_SIZE       8u
 #define IPVF_INDEX_ENTRY_SIZE       16u
 #define IPVF_INDEX_FLAG_KEY_LZ4     0x0001u
+#define IPVF_METADATA_TEXT_SIZE     96u
 #define IPVF_FLAG_RGB565BE          0x00000001u
 #define IPVF_FLAG_SECTOR_RECORDS    0x00000002u
 #define IPVF_FLAG_IMA_ADPCM         0x00000008u
@@ -126,8 +127,12 @@ struct ipvf_info
     off_t index_offset;
     uint32_t index_count;
     uint32_t index_crc;
+    uint32_t media_id;
     uint32_t audio_sample_rate;
     uint32_t audio_sample_frames;
+    char title[IPVF_METADATA_TEXT_SIZE];
+    char artist[IPVF_METADATA_TEXT_SIZE];
+    char album[IPVF_METADATA_TEXT_SIZE];
     bool temporal_xor;
 };
 
@@ -249,6 +254,16 @@ static uint32_t get_le32(const unsigned char *p)
 static uint64_t get_le64(const unsigned char *p)
 {
     return (uint64_t)get_le32(p) | ((uint64_t)get_le32(p + 4) << 32);
+}
+
+static void copy_metadata_text(char *destination,
+                               const unsigned char *source,
+                               unsigned int length)
+{
+    if (length >= IPVF_METADATA_TEXT_SIZE)
+        length = IPVF_METADATA_TEXT_SIZE - 1u;
+    rb->memcpy(destination, source, length);
+    destination[length] = '\0';
 }
 
 /* Temporal integrity covers the compressed residual. It detects stored/read
@@ -379,6 +394,7 @@ static bool read_header(int fd, struct ipvf_info *info)
     metadata_length = get_le16(h + 66);
     metadata_offset = get_le32(h + 68);
     info->index_crc = get_le32(h + 72);
+    info->media_id = get_le32(h + 76);
     info->file_size = rb->filesize(fd);
 
     /* The target's normal file API is signed 32-bit. The container keeps
@@ -415,7 +431,6 @@ static bool read_header(int fd, struct ipvf_info *info)
         get_le16(h + 64) != IPVF_INDEX_ENTRY_SIZE ||
         metadata_offset != IPVF_HEADER_SIZE ||
         metadata_length > IPVF_DATA_OFFSET - IPVF_HEADER_SIZE ||
-        get_le32(h + 76) != 0 ||
         index_bytes > 0x7fffffffu ||
         info->index_offset > info->file_size ||
         (off_t)index_bytes != info->file_size - info->index_offset)
@@ -445,6 +460,12 @@ static bool read_header(int fd, struct ipvf_info *info)
             value_length > metadata_offset + metadata_length - i - 2u)
             return false;
         metadata_tags |= 1u << h[i];
+        if (h[i] == 1u)
+            copy_metadata_text(info->title, h + i + 2u, value_length);
+        else if (h[i] == 2u)
+            copy_metadata_text(info->artist, h + i + 2u, value_length);
+        else
+            copy_metadata_text(info->album, h + i + 2u, value_length);
         i += 2u + value_length;
     }
     for (i = metadata_offset + metadata_length; i < sizeof(h); i++)
