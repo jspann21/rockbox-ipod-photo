@@ -239,7 +239,11 @@ void usb_insert_int(void)
     usb_status = (val == USB_GPIO_VAL) ? USB_INSERTED : USB_EXTRACTED;
     GPIO_WRITE_BITWISE(USB_GPIO_INT_LEV, val ^ USB_GPIO_MASK, USB_GPIO_MASK);
     USB_GPIO_INT_CLR = USB_GPIO_MASK;
-    timeout_register(&usb_oneshot, usb_timeout_event, HZ/5, val);
+    if (!timeout_register(&usb_oneshot, usb_timeout_event, HZ/5, val))
+    {
+        usb_oneshot.data = val;
+        usb_timeout_event(&usb_oneshot);
+    }
 }
 #endif /* USB_STATUS_BY_EVENT */
 
@@ -295,7 +299,12 @@ void firewire_insert_int(void)
     firewire_status = val == 0x00;
     GPIO_WRITE_BITWISE(GPIOC_INT_LEV, val ^ 0x02, 0x02);
     GPIOC_INT_CLR = 0x02;
-    timeout_register(&firewire_oneshot, firewire_timeout_event, HZ/5, val);
+    if (!timeout_register(&firewire_oneshot, firewire_timeout_event,
+                          HZ/5, val))
+    {
+        firewire_oneshot.data = val;
+        firewire_timeout_event(&firewire_oneshot);
+    }
 }
 #endif /* USB_STATUS_BY_EVENT */
 #endif /* USB_FIREWIRE_HANDLING */

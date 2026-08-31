@@ -2024,6 +2024,7 @@ static bool dbg_disk_info(void)
 static bool pp5020_perf_save_snapshot(void)
 {
     struct pp5020_perf_stats perf;
+    struct timeout_stats timeout_stats;
 #ifdef HAVE_ATA_DMA_RECOVERY
     struct ata_dma_recovery_stats recovery;
 #endif
@@ -2035,11 +2036,16 @@ static bool pp5020_perf_save_snapshot(void)
         return false;
 
     pp5020_perf_get(&perf);
+    timeout_get_stats(&timeout_stats);
 #ifdef HAVE_ATA_DMA_RECOVERY
     ata_get_dma_recovery_stats(&recovery);
 #endif
     fdprintf(fd, "\n--- PP5020 performance snapshot ---\n");
+    fdprintf(fd, "snapshot_format=1\n");
     fdprintf(fd, "build=%s\n", rbversion);
+    fdprintf(fd, "target=%s\n", MODEL_NAME);
+    fdprintf(fd, "memory_mb=%d\n", MEMORYSIZE);
+    fdprintf(fd, "tick_hz=%d\n", HZ);
     fdprintf(fd, "uptime=%lu\n", current_tick / HZ);
     fdprintf(fd, "ata_model=%s\n", perf.ata_model);
     fdprintf(fd, "ata_is_ssd=%d\n", perf.ata_is_ssd);
@@ -2104,6 +2110,12 @@ static bool pp5020_perf_save_snapshot(void)
              perf.pcm_duplicate_notifications);
     fdprintf(fd, "pcm_missed_transitions=%llu\n",
              perf.pcm_missed_transitions);
+    fdprintf(fd, "timeout_active=%u\n", timeout_stats.active);
+    fdprintf(fd, "timeout_capacity=%u\n", MAX_NUM_TIMEOUTS);
+    fdprintf(fd, "timeout_high_watermark=%u\n",
+             timeout_stats.high_watermark);
+    fdprintf(fd, "timeout_registration_failures=%u\n",
+             timeout_stats.registration_failures);
 
     ok = fsync(fd) >= 0;
     if (close(fd) < 0)
@@ -2114,6 +2126,7 @@ static bool pp5020_perf_save_snapshot(void)
 static int pp5020_perf_callback(int btn, struct gui_synclist *lists)
 {
     struct pp5020_perf_stats perf;
+    struct timeout_stats timeout_stats;
 #ifdef HAVE_ATA_DMA_RECOVERY
     struct ata_dma_recovery_stats recovery;
 #endif
@@ -2135,6 +2148,7 @@ static int pp5020_perf_callback(int btn, struct gui_synclist *lists)
     }
 
     pp5020_perf_get(&perf);
+    timeout_get_stats(&timeout_stats);
 #ifdef HAVE_ATA_DMA_RECOVERY
     ata_get_dma_recovery_stats(&recovery);
 #endif
@@ -2195,6 +2209,11 @@ static int pp5020_perf_callback(int btn, struct gui_synclist *lists)
         perf.pcm_deferred_notifications);
     simplelist_addline("PCM duplicate/missed: %llu/%llu",
         perf.pcm_duplicate_notifications, perf.pcm_missed_transitions);
+    simplelist_addline("Timeouts active/peak: %u/%u of %u",
+        timeout_stats.active, timeout_stats.high_watermark,
+        MAX_NUM_TIMEOUTS);
+    simplelist_addline("Timeout registration failures: %u",
+        timeout_stats.registration_failures);
     return btn;
 }
 

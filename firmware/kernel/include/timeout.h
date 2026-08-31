@@ -21,6 +21,7 @@
 #define _KERNEL_H_
 
 #include "config.h"
+#include <stdbool.h>
 #include <stdint.h>
 
 struct timeout;
@@ -39,8 +40,16 @@ struct timeout
     long            expires; /* expiration tick */
 };
 
-void timeout_register(struct timeout *tmo, timeout_cb_type callback,
+struct timeout_stats
+{
+    unsigned int active;
+    unsigned int high_watermark;
+    unsigned int registration_failures;
+};
+
+bool timeout_register(struct timeout *tmo, timeout_cb_type callback,
                       int ticks, intptr_t data);
 void timeout_cancel(struct timeout *tmo);
+void timeout_get_stats(struct timeout_stats *stats);
 
 #endif /* _KERNEL_H_ */

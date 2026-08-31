@@ -543,11 +543,13 @@ static void car_adapter_mode_processing(bool inserted)
             {
                 /* delay resume a bit while the engine is cranking */
                 waiting_to_resume_play = true;
-                timeout_register(&car_adapter_timeout,
-                                 car_adapter_resume_timeout,
-                                 MAX(1, HZ *
-                                     global_settings.car_adapter_mode_delay),
-                                 0);
+                if (!timeout_register(&car_adapter_timeout,
+                                      car_adapter_resume_timeout,
+                                      MAX(1, HZ * global_settings.
+                                          car_adapter_mode_delay), 0))
+                {
+                    car_adapter_resume_timeout(&car_adapter_timeout);
+                }
             }
         }
         else

@@ -10,10 +10,13 @@
 #include "kernel.h"
 #include "timeout.h"
 #include "general.h"
+#include <limits.h>
 
 /* list of active timeout events */
 static struct timeout *tmo_list[MAX_NUM_TIMEOUTS+1];
 static long next_tmo_check;
+static unsigned int timeout_high_watermark;
+static unsigned int timeout_registration_failures;
 
 /* Recalculate after registration/cancellation, which are infrequent compared
  * with the 100 Hz tick. Keeping a deadline avoids walking every active timer
@@ -95,14 +98,15 @@ void timeout_cancel(struct timeout *tmo)
 
 /* Adds a timeout callback - calling with an active timeout resets the
    interval - can be called from the ISR */
-void timeout_register(struct timeout *tmo, timeout_cb_type callback,
+bool timeout_register(struct timeout *tmo, timeout_cb_type callback,
                       int ticks, intptr_t data)
 {
     int oldlevel;
     void **arr, **p;
+    bool registered = false;
 
     if(tmo == NULL)
-        return;
+        return false;
 
     oldlevel = disable_irq_save();
 
@@ -122,13 +126,37 @@ void timeout_register(struct timeout *tmo, timeout_cb_type callback,
             }
 
             *p = tmo;
+            unsigned int active = p - arr + 1;
+            if (active > timeout_high_watermark)
+                timeout_high_watermark = active;
         }
 
         tmo->callback = callback;
         tmo->data = data;
         tmo->expires = current_tick + ticks;
         timeout_recalc_next();
+        registered = true;
     }
+    else if (timeout_registration_failures < UINT_MAX)
+        timeout_registration_failures++;
 
+    restore_irq(oldlevel);
+    return registered;
+}
+
+void timeout_get_stats(struct timeout_stats *stats)
+{
+    if (stats == NULL)
+        return;
+
+    int oldlevel = disable_irq_save();
+    unsigned int active = 0;
+
+    while (active < MAX_NUM_TIMEOUTS && tmo_list[active] != NULL)
+        active++;
+
+    stats->active = active;
+    stats->high_watermark = timeout_high_watermark;
+    stats->registration_failures = timeout_registration_failures;
     restore_irq(oldlevel);
 }

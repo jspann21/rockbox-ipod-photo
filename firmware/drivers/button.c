@@ -142,8 +142,12 @@ static void check_audio_peripheral_state(void)
     {
         /* Use the autoresetting oneshot to debounce the detection signal */
         phones_present = !phones_present;
-        timeout_register(&hp_detect_timeout, hp_detect_callback,
-                         HZ/2, phones_present);
+        if (!timeout_register(&hp_detect_timeout, hp_detect_callback,
+                              HZ/2, phones_present))
+        {
+            hp_detect_timeout.data = phones_present;
+            hp_detect_callback(&hp_detect_timeout);
+        }
     }
 #endif
 #if defined(HAVE_LINEOUT_DETECTION)
@@ -154,8 +158,12 @@ static void check_audio_peripheral_state(void)
     {
         /* Use the autoresetting oneshot to debounce the detection signal */
         lineout_present = !lineout_present;
-        timeout_register(&lo_detect_timeout, lo_detect_callback,
-                         HZ/2, lineout_present);
+        if (!timeout_register(&lo_detect_timeout, lo_detect_callback,
+                              HZ/2, lineout_present))
+        {
+            lo_detect_timeout.data = lineout_present;
+            lo_detect_callback(&lo_detect_timeout);
+        }
     }
 #endif
 }
