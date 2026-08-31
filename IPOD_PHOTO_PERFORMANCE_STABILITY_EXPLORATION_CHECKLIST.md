@@ -47,7 +47,7 @@
 - [ ] **P1:** establish reproducible workloads and fixed content sets rather than comparing casual use.
 - [ ] **P1:** emit build/configuration identifiers in every device-generated result so logs cannot be attributed to the wrong binary.
 - [ ] **P1:** keep routine telemetry RAM-only and persist only by explicit action or as a bounded part of an already-active diagnostic run.
-- [x] **P2:** add a host-side comparison tool that accepts two snapshots and reports deltas, rates, tail latency, and pass/fail thresholds. Implemented in [`tools/pp5020/compare_perf.py`](tools/pp5020/compare_perf.py), including built-in correctness gates and configurable absolute/relative thresholds.
+- [ ] **P2:** add a host-side comparison tool that accepts two snapshots and reports deltas, rates, tail latency, and pass/fail thresholds.
 - [ ] **P2:** track measurement overhead with instrumentation disabled/enabled; reject counters that materially perturb the path under test.
 - [ ] **EXP:** investigate a GPIO or audio-marker timing mode for oscilloscope/logic-analyzer correlation of LCD, ATA, PCM, and power events.
 

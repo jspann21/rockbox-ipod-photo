@@ -2041,11 +2041,7 @@ static bool pp5020_perf_save_snapshot(void)
     ata_get_dma_recovery_stats(&recovery);
 #endif
     fdprintf(fd, "\n--- PP5020 performance snapshot ---\n");
-    fdprintf(fd, "snapshot_format=1\n");
     fdprintf(fd, "build=%s\n", rbversion);
-    fdprintf(fd, "target=%s\n", MODEL_NAME);
-    fdprintf(fd, "memory_mb=%d\n", MEMORYSIZE);
-    fdprintf(fd, "tick_hz=%d\n", HZ);
     fdprintf(fd, "uptime=%lu\n", current_tick / HZ);
     fdprintf(fd, "ata_model=%s\n", perf.ata_model);
     fdprintf(fd, "ata_is_ssd=%d\n", perf.ata_is_ssd);
