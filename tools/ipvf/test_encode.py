@@ -568,6 +568,18 @@ class IPVFEncodeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ipvf.key_interval_frames(30, 0)
 
+    def test_source_audio_probe_distinguishes_silent_input(self) -> None:
+        present = mock.Mock(returncode=0, stdout="1\n", stderr="")
+        silent = mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.object(ipvf.subprocess, "run", return_value=present):
+            self.assertTrue(ipvf.probe_source_has_audio(
+                Path("source.fake"), "ffprobe"
+            ))
+        with mock.patch.object(ipvf.subprocess, "run", return_value=silent):
+            self.assertFalse(ipvf.probe_source_has_audio(
+                Path("source.fake"), "ffprobe"
+            ))
+
 
 if __name__ == "__main__":
     unittest.main()

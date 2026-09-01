@@ -1088,6 +1088,33 @@ def probe_source_metadata(source: Path, ffprobe: str) -> dict[str, str]:
     return metadata
 
 
+def probe_source_has_audio(source: Path, ffprobe: str) -> bool:
+    """Return whether the source has a first audio stream."""
+    result = subprocess.run(
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=index",
+            "-of",
+            "csv=p=0",
+            str(source),
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode:
+        raise RuntimeError(
+            f"ffprobe could not inspect source audio: {result.stderr.strip()}"
+        )
+    return bool(result.stdout.strip())
+
+
 def profile_settings(
     source: Path,
     profile: str,
@@ -1320,6 +1347,7 @@ def encode(
     color_depth: str = "rgb565",
     *,
     metadata: dict[str, str] | None = None,
+    source_has_audio: bool | None = None,
 ) -> None:
     fps = frame_rate(fps)
     if video_mode in ("motion", "auto") and keyint == 0:
@@ -1356,7 +1384,8 @@ def encode(
         )
         os.close(fd)
         audio_temp = Path(name)
-        decode_audio(source, audio_temp, ffmpeg)
+        if source_has_audio is not False:
+            decode_audio(source, audio_temp, ffmpeg)
         audio_size = audio_temp.stat().st_size
         if audio_size % AUDIO_FRAME_BYTES:
             raise RuntimeError("ffmpeg produced a partial PCM sample frame")
@@ -1583,6 +1612,7 @@ def main() -> None:
         fps, color_depth, source_fps = profile_settings(
             ns.source, ns.profile, ns.fps, ns.color_depth, ns.ffprobe
         )
+        source_has_audio = probe_source_has_audio(ns.source, ns.ffprobe)
     except (OSError, RuntimeError, ValueError) as error:
         ap.error(str(error))
     if not MIN_FPS <= fps <= MAX_FPS:
@@ -1625,7 +1655,7 @@ def main() -> None:
     )
     encode(ns.source, ns.output, fps, keyint, ns.ffmpeg,
            ns.video_mode, ns.max_rects, ns.lz4_mode, color_depth,
-           metadata=metadata)
+           metadata=metadata, source_has_audio=source_has_audio)
 
 
 if __name__ == "__main__":

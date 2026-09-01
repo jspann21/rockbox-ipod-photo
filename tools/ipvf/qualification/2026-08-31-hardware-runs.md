@@ -392,3 +392,21 @@ seconds. No special EOF clamp or diagnostic build is retained.
   showed correct picture and sound with working volume, pause/resume, Details,
   rapid forward/back seeking, MENU/reopen, and persistent resume. No stutter,
   visual corruption, audio issue, or unexpected exit was observed.
+
+## Pass 16 - silent sources and native 30/60 motion
+
+- The creator probes for an audio stream before invoking FFmpeg audio decode.
+  A source with no audio now produces exact zero-payload silence records rather
+  than failing the required audio map; decoded timing remains 44.1-kHz stereo.
+- One eight-second native-60 high-motion source was encoded at matched native
+  cadence outputs. The 30-fps file contains 240 frames, 216 motion records, no
+  stored audio, and 3,587,632 bytes. The 60-fps file contains 480 spatial
+  frames, no stored audio, and 7,865,536 bytes.
+- Strict validation reconstructed every output frame from the source. Final
+  framebuffer CRCs are `5b2183e9` at 30 fps and `d9a00934` at 60 fps; every
+  audio mode is exact silence.
+- Both files passed A1099 playback and control checks without stutter,
+  corruption, noise, or unexpected exit. The 60-fps presentation felt
+  faster/more immediate than 30 fps. Both files retain the same exact
+  eight-second duration, so this is a motion-perception result rather than a
+  playback-clock speed difference.

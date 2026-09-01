@@ -94,6 +94,11 @@ video takes the raw fallback. If decoded audio is longer than the converted
 video, it is trimmed. If it is shorter, the encoder appends silence so video and
 audio have exactly the same duration.
 
+Sources with no audio stream are accepted directly. The creator detects the
+absence with FFprobe, skips the FFmpeg audio map, and emits exact zero-payload
+silence records while retaining the same 44.1-kHz decoded timeline and audio-
+clock contract. No synthetic PCM needs to be stored.
+
 ## File layout
 
 All integers are little-endian. The first record begins at byte 512.
@@ -440,6 +445,13 @@ slot plus a compile-time size assertion. Its exact-cadence test file indexed
 frames `0,119,...,1071`; strict source reconstruction passed, and A1099
 playback, volume, pause/details, rapid seeking, MENU/reopen, and resume showed
 no regression.
+
+The native-rate/silent-source batch used one eight-second native-60 motion
+source. Matched output passed strict source reconstruction at 30 fps (240
+frames, 3,587,632 bytes, 216 motion records) and 60 fps (480 frames, 7,865,536
+bytes, spatial mode). Every record carried zero audio bytes. Both played cleanly
+on A1099 with normal silent output and controls; 60 fps felt faster/more
+immediate than 30 fps while both retained the same exact eight-second duration.
 
 Broader qualification still includes a long drift run, line out, deliberate
 storage stalls, Menu stop, USB insertion, and repeat-heavy audio content.

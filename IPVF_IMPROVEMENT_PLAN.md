@@ -490,9 +490,14 @@ only the physical click/eject/reconnect actions remain manual.
 - [x] Worst cases: seeded noise, full-screen cuts, flashes, fades, alternating
       frames, one-pixel and odd/even boundary changes.
 - [ ] Source shapes: 4:3, widescreen, vertical, letterboxed, 23.976/24/25/30/60,
-      VFR, and interlaced sources.
+      VFR, and interlaced sources. Native-60 high motion converted and
+      source-verified at matched 30/60 output; the remaining shapes/rates stay
+      open.
 - [x] Audio: silence, mono, stereo ID, impulses, tones, clipping, audio shorter
       and longer than video.
+- [x] Inputs with no audio stream are first-class: the creator detects absence
+      with FFprobe, skips audio decoding, preserves the exact 44.1-kHz timeline,
+      and emits zero-payload silence for every record.
 - [ ] Long: 5 minutes, 30 minutes, one hour, and two hours.
 
 ### Qualification telemetry
@@ -942,8 +947,13 @@ Do these in order:
 - [x] P2.4: implement and device-qualify bounded wheel volume control. Ordinary
       playback, IPVF playback, volume changes, and uninterrupted A/V passed
       together; OSD and explicit clamping stress remain separate follow-ups.
-- [ ] P4.3: run matched native-30/native-60 real-motion files and a separate
-      24-to-60 host-interpolated candidate before defining high-rate profiles.
+- [x] P4.3 native-rate gate: matched 8-second native-motion output passed at
+      30 fps (240 frames, 3,587,632 bytes) and 60 fps (480 frames, 7,865,536
+      bytes), with exact source reconstruction and zero-payload silence. A1099
+      playback was clean at both rates; 60 fps felt faster/more immediate while
+      retaining the same exact duration.
+- [ ] P4.3 interpolation gate: separately test a 24-to-60 host-interpolated
+      candidate before deciding whether interpolation belongs in a profile.
 - [x] P3.2: implement IPVF's bounded metadata and appended keyframe index.
       The 45.08-second real-motion encode contains 1,082 frames, 10 indexed
       keys, a 160-byte index, and 37 metadata bytes; strict WSL validation and
