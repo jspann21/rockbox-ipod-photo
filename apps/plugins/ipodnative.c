@@ -76,11 +76,12 @@
 #define IPVF_RUN_JOURNAL_PREVIOUS  ROCKBOX_DIR "/ipvf-runs.previous.tsv"
 #define IPVF_RUN_JOURNAL_MAX_BYTES (32u * 1024u)
 #define IPVF_RUN_JOURNAL_HEADER \
-    "tick\telapsed_ticks\tbuild\tstatus\tfps_num\tfps_den\t" \
+    "tick\telapsed_ticks\thz\tbuild\tstatus\tfps_num\tfps_den\t" \
     "frames\ttotal_frames\tactive_frame\tlate\taudio_gaps\t" \
     "audio_rebuffers\tfirst_rebuffer_frame\tlast_rebuffer_frame\t" \
-    "audio_capacity_frames\tseek_count\tseek_reconstructed_frames\t" \
-    "max_seek_ticks\terror\terror_frame\n"
+    "audio_capacity_frames\taudio_low_water_frames\t" \
+    "audio_buffer_callbacks\tstartup_ticks\tseek_count\t" \
+    "seek_reconstructed_frames\tmax_seek_ticks\terror\terror_frame\n"
 
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
 #define IPVF_QUALIFICATION_LOG \
@@ -159,6 +160,9 @@ struct ipvf_stats
     unsigned long first_audio_rebuffer_frame;
     unsigned long last_audio_rebuffer_frame;
     unsigned long audio_capacity_frames;
+    unsigned long audio_low_water_frames;
+    unsigned long audio_buffer_callbacks;
+    unsigned long startup_ticks;
     unsigned long seek_count;
     unsigned long seek_reconstructed_frames;
     unsigned long max_seek_ticks;
@@ -248,7 +252,10 @@ struct ipvf_audio_state
     volatile uint32_t completed_frames;
     volatile uint32_t current_frames;
     volatile unsigned long underruns;
+    volatile unsigned long buffer_callbacks;
+    volatile uint32_t low_water_frames;
     volatile bool source_eof;
+    volatile bool expect_playback;
     unsigned int old_frequency;
     bool buffer_acquired;
     bool configured;

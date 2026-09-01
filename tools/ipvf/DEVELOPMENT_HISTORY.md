@@ -1579,3 +1579,37 @@
   callback appeared only during the seek-heavy sequence. The candidate is
   promoted; anonymous evidence is retained in
   `qualification/2026-09-01-seek-reconstruction-runs.tsv`.
+
+## 58. Clean underrun and audio-margin telemetry candidate
+
+- The production `audio_gaps` counter previously incremented whenever the
+  mixer requested data from an empty channel before source EOF. A callback
+  issued as part of an intentional seek, MENU stop, teardown, or failure stop
+  could therefore look identical to actual playback starvation even when no
+  audible gap or rebuffer occurred.
+- The audio state now explicitly tracks whether output is expected. Playback
+  enables that state immediately before starting the mixer and disables it,
+  with a memory barrier, before every deliberate channel stop. Naturally
+  exhausted playback remains countable and still enters the existing bounded
+  rebuffer path.
+- The mixer callback samples decoded frames remaining whenever it requests its
+  next DMA block. This catches brief dips that a once-per-video-frame sampler
+  can miss, adds no playback-loop work, and excludes expected EOF drain. Only
+  an in-RAM minimum and callback count are retained. The bounded teardown row
+  reports ring capacity, callback-boundary low-water, scheduler `HZ`, and the
+  ticks from playback setup to the first successful mixer start.
+- The first hardware run of the coarse sampler had no visible issue, late
+  presentation, rebuffer, or error. Four seeks produced one mixer-empty callback
+  and the coarse sampler reported 1,837 frames remaining, demonstrating why the
+  callback-boundary minimum is necessary. The refined build is installed for
+  one final short gate.
+- The format, decoder, audio cushion, and scheduling policy are unchanged. All
+  focused host tests pass and the A1099 production target builds warning-free
+  in WSL.
+- The refined A1099 run covered 1,005 frames and two seeks. Across 929 mixer
+  refill callbacks, exact low-water reached zero once and produced one counted
+  gap, while startup measured 66 ticks at 100 Hz. The run had zero late frames,
+  rebuffers, errors, or visible issues. This promotes the telemetry while
+  preserving the brief control-heavy empty boundary as actionable evidence.
+  The anonymous row is retained in
+  `qualification/2026-09-01-audio-margin-runs.tsv`.

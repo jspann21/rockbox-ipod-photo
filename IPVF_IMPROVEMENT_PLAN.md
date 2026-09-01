@@ -81,7 +81,10 @@ The plan is evidence-driven:
       non-USB runs after teardown when at least one frame decoded, without
       filenames, hashes, or hot-path writes. It rotates at 32 KiB, rotates
       automatically when its schema changes, and now includes seek and rebuffer
-      evidence. Zero-frame and USB-takeover exits intentionally do not journal.
+      evidence, initial-start latency, and decoded-audio ring low-water. Mixer
+      callbacks caused by deliberate control/teardown stops are excluded from
+      the audio-gap count. Zero-frame and USB-takeover exits intentionally do
+      not journal.
 - [ ] Verify journal behavior across forced power interruption.
 - [x] Five-minute lifecycle/checkpoint qualification.
 - Longer duration gates remain in Phase 7.
@@ -535,8 +538,12 @@ only the physical click/eject/reconnect actions remain manual.
 - [ ] Add rotation/size bounding to the marker-gated detailed qualification TSV;
       the separate production run journal is already bounded and rotating.
 - [ ] Include run/build/clip IDs, record offset, last frame, stage/error code,
-      mode counts, stage timing histograms, ring low-water, gaps, lateness,
+      mode counts, stage timing histograms, gaps, lateness,
       final audio count, final framebuffer CRC, battery voltage, and stop reason.
+- [x] Record decoded-audio ring capacity and mixer-boundary low-water in the
+      bounded production journal without playback-loop I/O. Also record
+      callback count, scheduler `HZ`, and initial-start ticks so startup
+      prebuffer alternatives can be compared on identical files.
 - [x] Update the retained crash record at startup, slot wait, read, queue,
       render, drain, reconciliation, and idle stages so a reset before file
       logging remains diagnosable.
@@ -669,8 +676,8 @@ Goal: qualify the strongest measured lossless high-motion candidate.
       local, music, and high-motion clips.
 - [ ] Extend that matrix to pan/scroll, cuts, grain, and seeded noise.
 - [ ] Log residual decode, XOR/reconstruction, slot copy, queue, LCD, ring
-      low-water, late, and gaps separately. The current player has stage totals/maxima; ring
-      low-water and distributions remain.
+      low-water, late, and gaps separately. Production now records whole-run
+      callback-boundary ring low-water; per-mode/stage distributions remain.
 - [x] Confirm every final CRC and normal lifecycle exit in the first matrix.
 - [x] Apply the acceptance gate by complete sector cost and device timing:
       temporal XOR is retained only through 30 fps and 60 fps remains spatial.
@@ -964,6 +971,16 @@ Reference bitrates:
       follow-up completed five seeks with correct output, zero late frames,
       rebuffers, or errors, and a subjectively responsive result. Worst seek
       time fell from 209 to 111 ticks across the two interaction runs.
+- [x] Qualify the clean underrun/low-water journal candidate. The mixer now
+      counts an empty callback only while output is expected; seek, MENU,
+      teardown, and failure cleanup disable accounting before deliberately
+      stopping the channel under the PCM lock. The mixer callback records exact
+      remaining decoded frames whenever it requests its next DMA block, plus a
+      sample count; EOF drain is excluded. The journal records that low-water,
+      scheduler `HZ`, and first-start ticks. The exact hardware run observed 929
+      callback boundaries, 66 startup ticks at 100 Hz, and one brief zero-water
+      callback during two seeks. It had zero late frames, rebuffers, errors, or
+      visible issues. Host tests and the warning-free WSL target build pass.
 - [ ] Measure whether startup's audio prebuffer scan/reread should be replaced by
       an index-assisted or multi-record read.
 - [ ] Profile frame catch-up under injected stalls: current pause, timed silence,
@@ -1041,8 +1058,9 @@ work is:
    and framebuffer evidence (Phase 7).
 3. Measure index-assisted or multi-record startup prebuffer/read-ahead and retain
    it only if it improves latency or storage-stall tolerance (Phase 6).
-4. Complete qualification telemetry distributions/ring low-water and the
-   malformed/mutation corpus before broader codec work (Phase 0).
+4. Complete qualification timing distributions and the malformed/mutation
+   corpus before broader codec work; production ring low-water is complete
+   (Phase 0).
 5. Sweep scene-cut-aware/time-based keyframe policy and the exact seek/resume
    interruption matrix (Phases 1 and 3).
 6. Profile IMA, LZ4, CPU boost, storage behavior, and battery before making any

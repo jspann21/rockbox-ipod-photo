@@ -29,6 +29,13 @@ static void audio_get_more(const void **start, size_t *size)
 
     written = audio.written_frames;
     available = written - completed;
+    if (audio.expect_playback && !audio.source_eof)
+    {
+        audio.buffer_callbacks++;
+        if (available <= audio.capacity_frames &&
+            available < audio.low_water_frames)
+            audio.low_water_frames = available;
+    }
     if (available != 0 && available <= audio.capacity_frames)
     {
         offset = completed & audio.frame_mask;
@@ -46,7 +53,7 @@ static void audio_get_more(const void **start, size_t *size)
         return;
     }
 
-    if (!audio.source_eof)
+    if (audio.expect_playback && !audio.source_eof)
         audio.underruns++;
     *start = NULL;
     *size = 0;
@@ -66,6 +73,8 @@ static bool audio_restart(void)
     if (audio_used_frames() == 0)
         return false;
 
+    audio.expect_playback = true;
+    membarrier();
     rb->mixer_channel_set_amplitude(IPVF_AUDIO_CHANNEL, MIX_AMP_UNITY);
     rb->mixer_channel_play_data(IPVF_AUDIO_CHANNEL, &audio_mixer_cbs,
                                 NULL, 0);
@@ -219,6 +228,8 @@ static bool audio_start(void)
         return false;
 
     audio.started = true;
+    audio.expect_playback = true;
+    membarrier();
     rb->mixer_channel_set_amplitude(IPVF_AUDIO_CHANNEL, MIX_AMP_UNITY);
     rb->mixer_channel_play_data(IPVF_AUDIO_CHANNEL, &audio_mixer_cbs,
                                 NULL, 0);
@@ -298,7 +309,13 @@ static void audio_stop_playback(void)
     if (!audio.configured)
         return;
 
+    /* A mixer callback caused by an intentional stop is a control transition,
+     * not a playback underrun. Disable gap accounting before stopping the
+     * channel so seek, MENU, teardown, and failure cleanup stay out of the
+     * steady-playback counter. */
     rb->pcm_play_lock();
+    audio.expect_playback = false;
+    membarrier();
     if (rb->mixer_channel_status(IPVF_AUDIO_CHANNEL) != CHANNEL_STOPPED)
         rb->mixer_channel_stop(IPVF_AUDIO_CHANNEL);
     rb->pcm_play_unlock();
@@ -404,6 +421,7 @@ static bool ipodnative_audio_init(bool needs_video_reference)
     audio.buffer = (unsigned char *)aligned;
     audio.capacity_frames = ring_bytes / IPVF_AUDIO_FRAME_BYTES;
     audio.frame_mask = audio.capacity_frames - 1;
+    audio.low_water_frames = audio.capacity_frames;
     audio.old_frequency = rb->mixer_get_frequency();
 
     rb->pcm_play_lock();

@@ -167,16 +167,20 @@ static void write_run_journal(const struct ipvf_info *info,
     if (new_file)
         rb->fdprintf(journal_fd, "%s", IPVF_RUN_JOURNAL_HEADER);
     rb->fdprintf(journal_fd,
-        "%lu\t%lu\t%s\t%s\t%u\t%u\t%lu\t%lu\t%lu\t%lu\t%lu\t"
-        "%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\n",
+        "%lu\t%lu\t%d\t%s\t%s\t%u\t%u\t%lu\t%lu\t%lu\t%lu\t"
+        "%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t"
+        "%lu\t%lu\t%lu\n",
         started_tick, (unsigned long)(*rb->current_tick - started_tick),
-        rb->rbversion, status, info->fps_num, info->fps_den,
+        HZ, rb->rbversion, status, info->fps_num, info->fps_den,
         stats->frames, info->frame_count, (unsigned long)active_frame,
         stats->late_frames, stats->audio_underruns,
         stats->audio_rebuffers,
         stats->first_audio_rebuffer_frame,
         stats->last_audio_rebuffer_frame,
         stats->audio_capacity_frames,
+        stats->audio_low_water_frames,
+        stats->audio_buffer_callbacks,
+        stats->startup_ticks,
         stats->seek_count, stats->seek_reconstructed_frames,
         stats->max_seek_ticks,
         stats->first_error, stats->first_error_frame);
@@ -744,6 +748,7 @@ static enum plugin_status play_file(const char *filename)
     int pending_seek_steps = 0;
     bool pending_details = false;
     bool startup_resume = false;
+    bool initial_audio_started = false;
     bool seeking = false;
     bool seek_timing_active = false;
     long playback_start_tick;
@@ -1376,6 +1381,12 @@ static enum plugin_status play_file(const char *filename)
                 failed = true;
                 break;
             }
+            if (!initial_audio_started)
+            {
+                stats.startup_ticks = (unsigned long)
+                    (*rb->current_tick - playback_start_tick);
+                initial_audio_started = true;
+            }
 #ifdef IPVF_NATIVE_PIPELINE
             if (seeking)
             {
@@ -1696,6 +1707,8 @@ static enum plugin_status play_file(const char *filename)
 
     stats.audio_underruns = audio.underruns;
     stats.audio_capacity_frames = audio.capacity_frames;
+    stats.audio_low_water_frames = audio.low_water_frames;
+    stats.audio_buffer_callbacks = audio.buffer_callbacks;
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
     stats.elapsed_ticks = (unsigned long)
         (*rb->current_tick - playback_start_tick);

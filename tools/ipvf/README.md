@@ -468,9 +468,13 @@ retains no interpolation option; native source cadence remains preferred.
 Broader qualification still includes longer drift runs, line out, deliberate
 storage stalls, USB insertion, and repeat-heavy audio content. Production
 playback appends one small teardown-only row to `.rockbox/ipvf-runs.tsv`; the
-row contains timing/outcome counters but no media filename, title, or hash. The
-file rotates at 32 KiB and retains one bounded predecessor. It performs no I/O
-in the playback loop and displays no diagnostic frame counters. Full
+row contains timing/outcome counters, scheduler `HZ`, initial-start ticks, and
+decoded-audio ring capacity/callback count/low-water, but no media filename,
+title, or hash. A mixer-empty
+callback is counted as a gap only while output is expected, so deliberate seek,
+MENU, and teardown stops do not inflate it. The file rotates at 32 KiB and
+retains one bounded predecessor. It performs no I/O in the playback loop and
+displays no diagnostic frame counters. Full
 qualification telemetry remains compile-time opt-in: define
 `IPVF_ENABLE_QUALIFICATION_TELEMETRY=1` only for an instrumented build.
 
@@ -501,3 +505,18 @@ cushion, the follow-up completed five seeks with a 111-tick worst result, zero
 late frames, rebuffers, or errors, and no visible or audible issue. Startup and
 true starvation recovery retain four seconds. Evidence is retained in
 `qualification/2026-09-01-seek-reconstruction-runs.tsv`.
+
+The next short device gate adds no codec or buffering-policy change. The mixer
+callback records decoded frames remaining whenever it requests its next DMA
+block, while excluding expected EOF drain. The teardown journal records the
+lowest value, sample count, scheduler `HZ`, and first-start ticks, and deliberate
+mixer stops are excluded from the underrun counter under the PCM lock. This
+makes a future startup/read-ahead comparison and true starvation directly
+measurable without detailed qualification logging.
+
+The exact callback-boundary gate observed 929 mixer refill callbacks, a
+zero-frame low-water once during two seeks, and 66 startup ticks at 100 Hz. It
+completed with zero late frames, rebuffers, errors, or visible issues. This
+confirms both that deliberate stops no longer inflate the counter and that the
+one remaining empty callback is a brief real control-heavy boundary worth
+retaining in evidence rather than hiding.

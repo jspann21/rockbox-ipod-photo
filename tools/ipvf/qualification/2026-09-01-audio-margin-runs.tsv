@@ -1,0 +1,2 @@
+tick	elapsed_ticks	hz	build	status	fps_num	fps_den	frames	total_frames	active_frame	late	audio_gaps	audio_rebuffers	first_rebuffer_frame	last_rebuffer_frame	audio_capacity_frames	audio_low_water_frames	audio_buffer_callbacks	startup_ticks	seek_count	seek_reconstructed_frames	max_seek_ticks	error	error_frame
+561218	4539	100	-260901	stopped	24	1	1005	7202	1005	0	1	0	0	0	262144	0	929	66	2	94	156	0	0
