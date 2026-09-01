@@ -80,6 +80,14 @@ Use `--video-mode current` for the single-bounding-rectangle path or
 `--video-mode spatial` to disable dependencies. Explicit `--video-mode auto`
 also adds experimental dense temporal XOR+LZ4.
 
+Motion search memoizes every bounded translation score within a frame. This
+does not change candidate ordering or output bytes; on the repeatable 192-frame
+creator corpus it reduced normal wall time from 30.951 to 28.295 seconds
+(8.6%). A profile attributes most remaining host time to the exhaustive pure-
+Python LZ4 match search. `best` and `builtin` happened to produce the same
+4,269,600-byte file and nearly identical time on this workload, so `best`
+remains the size-oriented default rather than inferring a universal result.
+
 IPVF requires at least 4 fps. Every stored record is limited to 192 sectors (96
 KiB), so it fits the player's dedicated read buffer even when incompressible
 video takes the raw fallback. If decoded audio is longer than the converted

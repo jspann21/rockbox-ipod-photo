@@ -560,9 +560,15 @@ changing the proven player.
 - [ ] Evaluate per-record palettes/RGB332 only for content classes where the
       selector proves a win.
 - [x] Publish a Pareto table: total sectors versus estimated device operations.
-- [ ] Profile host creator wall/CPU time by scaling, rectangle analysis,
-      built-in LZ4, and LZ4HC. The complete native profile currently takes
-      305.05 seconds for 224.71 seconds of media.
+- [x] Profile the qualified motion creator. On the repeatable 192-frame
+      24000/1001 corpus, normal wall time fell from 30.951 to 28.295 seconds
+      (8.6%) after memoizing bounded translation scores; output remained
+      byte-identical. Instrumented cumulative time is dominated by the pure-
+      Python LZ4 search (52.76 of 70.25 profiler seconds), followed by motion
+      estimation (7.64 seconds); scaling/FFmpeg is not the current bottleneck.
+- [x] Compare `best` with built-in LZ4 on that corpus. Both produced the same
+      4,269,600-byte file byte-for-byte and took 28.295/28.329 seconds, so no
+      label/default change is justified by this workload.
 - [ ] Skip compressors that cannot cross the next whole-sector threshold and
       evaluate deterministic bounded worker parallelism. Preserve byte-for-byte
       output determinism and do not trade device decode speed for host speed.

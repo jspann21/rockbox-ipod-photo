@@ -812,7 +812,12 @@ def estimate_translation(
     if not 0 <= max_shift < min(W, H) or sample_step <= 0:
         raise ValueError("invalid translation search bounds")
 
+    score_cache: dict[tuple[int, int], tuple[int, int]] = {}
+
     def score(dx: int, dy: int) -> tuple[int, int]:
+        cached = score_cache.get((dx, dy))
+        if cached is not None:
+            return cached
         x0 = max(0, dx)
         x1 = min(W, W + dx)
         y0 = max(0, dy)
@@ -829,7 +834,9 @@ def estimate_translation(
                 count += 1
                 current_offset += sample_step * 2
                 previous_offset += sample_step * 2
-        return total, count
+        result = total, count
+        score_cache[(dx, dy)] = result
+        return result
 
     def better(candidate: tuple[int, int], best: tuple[int, int]) -> bool:
         candidate_score, candidate_count = score(*candidate)
