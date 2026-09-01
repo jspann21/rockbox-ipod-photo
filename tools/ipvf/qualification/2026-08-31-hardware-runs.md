@@ -354,3 +354,23 @@ seconds. No special EOF clamp or diagnostic build is retained.
   treated as a decoder failure. The corrected file produced expected silence,
   centered mono, audible stereo, and clean transitions; the 45-second exact-
   cadence file also played and operated correctly.
+
+## Pass 14 - whole-frame motion prediction
+
+- The canonical translated-residual record stores signed `dx`/`dy`, a
+  Rockbox CRC32 of the compressed residual, and one independent raw LZ4 block.
+- The encoder compares complete sector-rounded costs and retains motion only
+  when it beats the best spatial candidate. Forced true keys bound every
+  dependency chain and remain the only index entries.
+- The 45.09-second 24000/1001-fps real-footage candidate used 573 motion
+  records among 1,081 frames. It measured 24,687,264 bytes versus 27,835,040
+  bytes for the matched spatial control: 3,147,776 bytes or 11.3% smaller for
+  the whole file, including identical adaptive audio behavior.
+- Strict host validation reconstructed all 1,081 RGB565 frames exactly and
+  verified the record chain, CRCs, padding, audio blocks, metadata, media
+  identity, and keyframe index. Nineteen focused host tests and the production
+  WSL A1099 build passed.
+- Matched A1099 comparison found no visible or operational difference. The
+  motion file played correctly with working volume, pause/resume, and repeated
+  indexed seeking. Motion is accepted as the creator default through 30 fps;
+  output above 30 fps continues to default to spatial records.

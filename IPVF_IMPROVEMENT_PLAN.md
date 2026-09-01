@@ -1,8 +1,8 @@
 # IPVF improvement and qualification plan
 
 Last research/implementation pass: 2026-08-31
-Code baseline: `main` at `c5b5295cbc`, plus the working-tree deterministic
-corpus, compression-lab, adaptive LZ4HC, and production-telemetry changes below
+Code baseline: current `main` through the motion-compression research checkpoint,
+plus the qualified canonical motion-record implementation below
 Target: iPod Photo/Color A1099, PP5020, Rockbox, 220x176 RGB565SWAPPED
 
 Detailed 2026-08-31 hardware evidence and pass-by-pass decisions:
@@ -39,6 +39,9 @@ The plan is evidence-driven:
       record modes.
 - [x] Adaptive CRC-bearing temporal XOR+LZ4 records with bounded keyframe
       dependency chains and a header capability bit.
+- [x] CRC-bearing whole-frame translation+LZ4 records. The encoder performs
+      bounded offline motion search and selects a motion record only when its
+      complete sector cost beats the best spatial record.
 - [x] Bounded multi-rectangle encoder candidate; the existing player already
       accepts and renders multiple native-aligned rectangles.
 - [x] One sector-aligned, bounded read unit containing video plus matching
@@ -708,8 +711,10 @@ still exceed the desired storage budget.
 - [ ] Chroma reduction: compare YUV420 or host chroma smoothing only after a
       bounded device conversion benchmark; RGB444/454 preprocessing is the
       current zero-decoder-cost approximation.
-- [ ] Motion prediction: begin with whole-frame translations, then bounded
-      block vectors and residuals; keep one previous reference only.
+- [x] Motion prediction begins with qualified whole-frame translations and one
+      previous reference.
+- [ ] Extend motion prediction to bounded block vectors and residuals only if
+      host evidence clears a worthwhile complete-file savings gate.
 - [ ] Transform/quantization: test whether a tiny reversible or deliberately
       quantized residual transform beats direct RGB565 Sub/XOR without adding
       an expensive inverse transform.
@@ -727,16 +732,27 @@ still exceed the desired storage budget.
 
 ### Low-complexity temporal prediction
 
-- [ ] Start with whole-frame even-pixel translations for pans/scrolling.
+- [x] Whole-frame signed-pixel translations for pans/scrolling are implemented
+      losslessly. On the 45.09-second real-footage corpus, the matched output
+      fell from 27,835,040 to 24,687,264 bytes (11.3% whole-file savings), with
+      573 motion records among 1,081 frames. Exact host reconstruction passed;
+      A1099 playback, volume, pause/resume, seeking, and visual comparison had
+      no detectable difference from the spatial control.
 - [ ] Then compare bounded integer 16x16, 16x8, and 8x8 motion vectors against
       one previous reference frame.
-- [ ] Store skip/copy vectors plus optional XOR/residual literals; keep decoder
+- [x] Store one translation vector plus an XOR/LZ4 residual; device decode is
+      bounded to in-place translation, payload CRC, LZ4, XOR, and one render
+      copy.
+- [ ] Store block skip/copy vectors plus optional XOR/residual literals; keep decoder
       operations to bounded copies, XOR/add, and LZ4.
-- [ ] Use expensive offline motion search freely; device decode must remain
+- [x] Use expensive offline motion search freely; device decode remains
       deterministic and simple.
-- [ ] Reset at scene cuts/keyframes; never allow an unbounded dependency chain.
-- [ ] Test overlap-safe block copies, reference corruption, catch-up, seek, and
-      frame skipping explicitly.
+- [x] Reset at forced keyframes and index only true keyframes, keeping every
+      prediction chain bounded to at most the configured key interval.
+- [x] Test overlap-safe whole-frame copies, exact reconstruction, payload
+      corruption, pause/resume, and indexed seeking.
+- [ ] Test overlap-safe block copies, catch-up, and frame skipping explicitly
+      if block motion is promoted.
 
 ### Lossy movie profiles
 

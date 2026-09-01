@@ -39,6 +39,7 @@ TYPE_REPEAT = 2
 TYPE_KEY_LZ4 = 3
 TYPE_RECTS_LZ4 = 4
 TYPE_XOR_LZ4 = 5
+TYPE_MOTION_LZ4 = 6
 AUDIO_FORMAT_IMA_ADPCM = 2
 AUDIO_CHANNELS = 2
 AUDIO_BITS_PER_SAMPLE = 16
@@ -1218,8 +1219,10 @@ def choose_video_record(
     lz4_mode: str = "best",
 ):
     """Choose a video record by final sector count, with bounded tie costs."""
-    if video_mode not in ("current", "spatial", "auto"):
-        raise ValueError("video_mode must be current, spatial, or auto")
+    if video_mode not in ("current", "spatial", "motion", "auto"):
+        raise ValueError(
+            "video_mode must be current, spatial, motion, or auto"
+        )
     if prev is None or force_key:
         return _compress_record_if_smaller(
             TYPE_KEY, 0, cur, audio_size, lz4_mode
@@ -1239,7 +1242,7 @@ def choose_video_record(
         )
     selected_sectors = record_sectors(len(selected[2]), audio_size)
 
-    if video_mode in ("spatial", "auto"):
+    if video_mode in ("spatial", "motion", "auto"):
         rectangles = multi_rect_diff(prev, cur, max_rects=max_rects)
         if len(rectangles) > 1:
             multi_payload = rects_payload(cur, rectangles)
@@ -1254,6 +1257,20 @@ def choose_video_record(
                 if candidate_sectors < selected_sectors:
                     selected = candidate
                     selected_sectors = candidate_sectors
+
+    if video_mode in ("motion", "auto"):
+        dx, dy = estimate_translation(prev, cur)
+        prediction = translate_frame(prev, dx, dy)
+        residual = compress_lz4(xor_frames(prediction, cur), lz4_mode)
+        motion_payload = struct.pack(
+            "<bbI", dx, dy, rockbox_crc32(residual)
+        ) + residual
+        motion_sectors = record_sectors(len(motion_payload), audio_size)
+        if ((video_mode == "motion" or (dx, dy) != (0, 0)) and
+                len(motion_payload) < FRAME_BYTES and
+                motion_sectors < selected_sectors):
+            selected = TYPE_MOTION_LZ4, 0, motion_payload, FRAME_BYTES
+            selected_sectors = motion_sectors
 
     if video_mode == "auto":
         temporal = compress_lz4(xor_frames(prev, cur), lz4_mode)
@@ -1282,9 +1299,9 @@ def encode(
     metadata: dict[str, str] | None = None,
 ) -> None:
     fps = frame_rate(fps)
-    if video_mode == "auto" and keyint == 0:
+    if video_mode in ("motion", "auto") and keyint == 0:
         raise ValueError("temporal mode requires a bounded keyframe interval")
-    if video_mode == "auto" and fps > 30:
+    if video_mode in ("motion", "auto") and fps > 30:
         raise ValueError("temporal mode is hardware-qualified only at <=30 fps")
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.name + ".tmp")
@@ -1293,6 +1310,7 @@ def encode(
     counts = {
         TYPE_KEY: 0, TYPE_RECTS: 0, TYPE_REPEAT: 0,
         TYPE_KEY_LZ4: 0, TYPE_RECTS_LZ4: 0, TYPE_XOR_LZ4: 0,
+        TYPE_MOTION_LZ4: 0,
     }
     audio_counts = {"silence": 0, "mono": 0, "stereo": 0}
     video_payload_total = 0
@@ -1424,7 +1442,7 @@ def encode(
                 )
             f.write(index_data)
             flags = FLAGS
-            if counts[TYPE_XOR_LZ4] != 0:
+            if counts[TYPE_XOR_LZ4] != 0 or counts[TYPE_MOTION_LZ4] != 0:
                 flags |= FLAG_TEMPORAL_XOR
             write_header(
                 f,
@@ -1455,7 +1473,8 @@ def encode(
         f"  key={counts[TYPE_KEY]} delta={counts[TYPE_RECTS]} "
         f"repeat={counts[TYPE_REPEAT]} key-lz4={counts[TYPE_KEY_LZ4]} "
         f"delta-lz4={counts[TYPE_RECTS_LZ4]} "
-        f"xor-lz4={counts[TYPE_XOR_LZ4]} mode={video_mode} "
+        f"xor-lz4={counts[TYPE_XOR_LZ4]} "
+        f"motion-lz4={counts[TYPE_MOTION_LZ4]} mode={video_mode} "
         f"lz4={lz4_mode} color={color_depth}"
     )
     print(
@@ -1517,10 +1536,11 @@ def main() -> None:
     ap.add_argument("--ffprobe", default="ffprobe")
     ap.add_argument(
         "--video-mode",
-        choices=("current", "spatial", "auto"),
-        default="spatial",
+        choices=("current", "spatial", "motion", "auto"),
         help=("current=bounds only; spatial=bounded multi-rectangle; "
-              "auto=spatial plus temporal XOR+LZ4"),
+              "motion=spatial plus translated residuals; "
+              "auto=motion plus full-frame XOR+LZ4; default is motion at "
+              "up to 30 fps and spatial above 30 fps"),
     )
     ap.add_argument(
         "--max-rects",
@@ -1544,12 +1564,14 @@ def main() -> None:
         ap.error(str(error))
     if not MIN_FPS <= fps <= MAX_FPS:
         ap.error(f"--fps must be {MIN_FPS}..{MAX_FPS}")
+    if ns.video_mode is None:
+        ns.video_mode = "motion" if fps <= 30 else "spatial"
     if ns.keyint < 0:
         ap.error("--keyint must be >= 0")
-    if ns.video_mode == "auto" and ns.keyint == 0:
-        ap.error("--video-mode auto requires --keyint > 0")
-    if ns.video_mode == "auto" and fps > 30:
-        ap.error("--video-mode auto is hardware-qualified only at <=30 fps")
+    if ns.video_mode in ("motion", "auto") and ns.keyint == 0:
+        ap.error("temporal video modes require --keyint > 0")
+    if ns.video_mode in ("motion", "auto") and fps > 30:
+        ap.error("temporal video modes are hardware-qualified only at <=30 fps")
     if not 1 <= ns.max_rects <= 255:
         ap.error("--max-rects must be 1..255")
     metadata = {

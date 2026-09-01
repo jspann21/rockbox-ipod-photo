@@ -55,7 +55,8 @@ recomputes it while walking records; the player uses it to key resume state.
 
 The encoder preserves aspect ratio, letterboxes to 220x176, and adaptively
 chooses among full keyframes, repeats, lossless rectangular patches, bounded
-multi-rectangle patches, and temporal XOR+LZ4. A more expensive representation
+multi-rectangle patches, whole-frame translation residuals, and temporal
+XOR+LZ4. A more expensive representation
 is selected only when the complete record, including audio and 512-byte
 rounding, becomes at least one sector smaller. Temporal records carry the
 Rockbox CRC32 of their compressed residual payload. The built-in compressor
@@ -69,11 +70,13 @@ temporal `auto` mode rejects `--keyint 0` so dependency chains stay bounded.
 It also rejects rates above 30 fps because hardware lower-bound testing proved
 that dense full-frame temporal reconstruction cannot meet the 60 fps budget.
 
-The default `--video-mode spatial` evaluates the hardware-proven current
-representation plus bounded multi-rectangle patches and selects a spatial
-candidate only when it removes at least one complete sector. Use
-`--video-mode current` for the original single-bounding-rectangle path.
-Explicit `--video-mode auto` also adds experimental temporal XOR+LZ4.
+The one-command creator defaults to qualified `motion` mode at up to 30 fps.
+It evaluates the hardware-proven spatial representations plus a bounded
+whole-frame translation residual and selects the motion candidate only when it
+removes at least one complete sector. Above 30 fps it defaults to `spatial`.
+Use `--video-mode current` for the single-bounding-rectangle path or
+`--video-mode spatial` to disable dependencies. Explicit `--video-mode auto`
+also adds experimental dense temporal XOR+LZ4.
 
 IPVF requires at least 4 fps. Every stored record is limited to 192 sectors (96
 KiB), so it fits the player's dedicated read buffer even when incompressible
@@ -118,7 +121,7 @@ Each video frame is one whole-sector record:
 
 | Record offset | Size | Meaning |
 | ---: | ---: | --- |
-| 0 | 1 | type: key raw `0`, rectangles raw `1`, repeat `2`, key LZ4 `3`, rectangles LZ4 `4`, temporal XOR+LZ4 `5` |
+| 0 | 1 | type: key raw `0`, rectangles raw `1`, repeat `2`, key LZ4 `3`, rectangles LZ4 `4`, temporal XOR+LZ4 `5`, translated residual+LZ4 `6` |
 | 1 | 1 | rectangle count |
 | 2 | 2 | next record size in sectors; zero only for the final frame |
 | 4 | 4 | stored video bytes |
@@ -142,6 +145,15 @@ player verifies the smaller stored payload before LZ4 decoding, reconstructs
 into a cached persistent reference, then copies the frame once into the
 uncached render slot. Only true type-0/type-3 keys reset the dependency chain
 and act as reconciliation or future seek anchors.
+
+A type-6 video payload begins with signed one-byte `dx` and `dy` translation
+components, followed by a four-byte little-endian Rockbox CRC32 and an
+independent raw LZ4 block. The block expands to 77,440 bytes of
+`translate(previous_frame, dx, dy) XOR current_frame`; uncovered prediction
+pixels are black. The player translates the persistent reference in place with
+overlap-safe row moves, verifies and decodes the residual, then performs the
+same XOR/render-copy path as type 5. Forced true keys bound reconstruction,
+seeking, and resume work.
 
 The keyframe index immediately follows the final sector-aligned media record.
 Every 16-byte `<frame_u32, absolute_offset_u64, sectors_u16, flags_u16>` entry
@@ -400,6 +412,15 @@ motion 30 fps playback with exact output and zero audio gaps. Payload checking
 cost 0.34--5.96 ms per temporal record and aligned XOR about 6.22 ms. Temporal
 `auto` is now the checked short-form 30 fps option; it remains non-default until
 long-duration drift and lifecycle testing is complete.
+
+Whole-frame motion prediction subsequently passed its matched real-footage
+qualification. The 45.09-second 24000/1001-fps file used 573 translated records
+among 1,081 frames and shrank from 27,835,040 to 24,687,264 bytes: 11.3% for
+the complete file including unchanged adaptive audio. Strict validation
+reconstructed every RGB565 frame exactly. On A1099, the motion file was
+indistinguishable from the spatial control during playback, volume changes,
+pause/resume, and repeated seeking. Motion is therefore the creator default at
+up to 30 fps; dense XOR remains the separate experimental `auto` extension.
 
 Broader qualification still includes a long drift run, line out, deliberate
 storage stalls, Menu stop, USB insertion, and repeat-heavy audio content.

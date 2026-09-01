@@ -30,6 +30,7 @@ static void write_qualification_log(const char *filename,
             "late_gt_500us\tmax_late_us\t"
             "audio_gaps\ttype_key\ttype_rect\ttype_repeat\t"
             "type_key_lz4\ttype_rect_lz4\ttype_xor_lz4\t"
+            "type_motion_lz4\t"
             "read_us\tmax_read_us\tvideo_decode_us\t"
             "max_video_decode_us\tlz4_decode_us\tmax_lz4_decode_us\t"
             "temporal_check_us\tmax_temporal_check_us\t"
@@ -46,7 +47,7 @@ static void write_qualification_log(const char *filename,
     }
     rb->fdprintf(log_fd,
         "%s\t%s\t%s\t%s\t%lu\t%d\t%lu\t%lu\t%lu\t%u\t%u\t%ld\t"
-        "%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t"
+        "%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t"
         "%llu\t%lu\t%llu\t%lu\t%llu\t%lu\t%llu\t%lu\t%llu\t%lu\t"
         "%llu\t%lu\t%llu\t%lu\t%llu\t%llu\t%lu\t"
         "%llu\t%lu\t%lu\t%lu\t%lu\t%llu\t%llu\t%llu\t%llu\t%llu\t"
@@ -63,6 +64,7 @@ static void write_qualification_log(const char *filename,
         stats->type_counts[IPVF_TYPE_KEY_LZ4],
         stats->type_counts[IPVF_TYPE_RECTS_LZ4],
         stats->type_counts[IPVF_TYPE_XOR_LZ4],
+        stats->type_counts[IPVF_TYPE_MOTION_LZ4],
         (unsigned long long)stats->read_us, stats->max_read_us,
         (unsigned long long)stats->video_decode_us,
         stats->max_video_decode_us,

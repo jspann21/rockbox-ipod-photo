@@ -43,7 +43,10 @@ class IPVFEncodeTests(unittest.TestCase):
     def parse_records(self, data: bytes):
         self.assertEqual(struct.unpack_from("<H", data, 4)[0],
                          ipvf.HEADER_SIZE)
-        self.assertEqual(struct.unpack_from("<I", data, 20)[0], 0x0B)
+        self.assertIn(
+            struct.unpack_from("<I", data, 20)[0],
+            (ipvf.FLAGS, ipvf.FLAGS | ipvf.FLAG_TEMPORAL_XOR),
+        )
         fps_num, fps_den = struct.unpack_from("<HH", data, 10)
         fps = ipvf.Fraction(fps_num, fps_den)
         frame_count = struct.unpack_from("<I", data, 16)[0]
@@ -73,6 +76,12 @@ class IPVFEncodeTests(unittest.TestCase):
             elif kind == ipvf.TYPE_XOR_LZ4:
                 self.assertGreaterEqual(len(video), 5)
                 video = ipvf.lz4_decompress(video[4:], decoded_video_size)
+            elif kind == ipvf.TYPE_MOTION_LZ4:
+                self.assertGreaterEqual(len(video), 7)
+                motion = video[:2]
+                video = motion + ipvf.lz4_decompress(
+                    video[6:], decoded_video_size
+                )
             else:
                 self.assertEqual(len(video), decoded_video_size)
             self.assertEqual(
@@ -129,6 +138,12 @@ class IPVFEncodeTests(unittest.TestCase):
                 current = bytes(current_bytes)
             elif kind == ipvf.TYPE_XOR_LZ4:
                 current = bytes(a ^ b for a, b in zip(previous, payload))
+            elif kind == ipvf.TYPE_MOTION_LZ4:
+                dx, dy = struct.unpack_from("<bb", payload)
+                prediction = ipvf.translate_frame(previous, dx, dy)
+                current = bytes(
+                    a ^ b for a, b in zip(prediction, payload[2:])
+                )
             else:
                 self.fail(f"unknown record type {kind}")
             self.assertEqual(len(current), ipvf.FRAME_BYTES)
@@ -323,6 +338,26 @@ class IPVFEncodeTests(unittest.TestCase):
              (ipvf.lz4_decompress(first[2], first[3])
               if first[0] == ipvf.TYPE_KEY_LZ4 else first[2]), b""),
             (second[0], second[1], decoded_second, b""),
+        ]
+        self.assertEqual(self.reconstruct_records(records), [base, current])
+
+    def test_motion_record_roundtrip(self) -> None:
+        base = bytes(((i * 73 + i // 251 * 19) & 0xff)
+                     for i in range(ipvf.FRAME_BYTES))
+        current = ipvf.translate_frame(base, 4, -2)
+        second = ipvf.choose_video_record(
+            base, current, 1480, False, "motion", 8
+        )
+        self.assertEqual(second[0], ipvf.TYPE_MOTION_LZ4)
+        dx, dy, expected_crc = struct.unpack_from("<bbI", second[2])
+        self.assertEqual((dx, dy), (4, -2))
+        compressed = second[2][6:]
+        self.assertEqual(expected_crc, ipvf.rockbox_crc32(compressed))
+        residual = ipvf.lz4_decompress(compressed, second[3])
+        records = [
+            (ipvf.TYPE_KEY, 0, base, b""),
+            (second[0], second[1], bytes((dx & 0xff, dy & 0xff)) + residual,
+             b""),
         ]
         self.assertEqual(self.reconstruct_records(records), [base, current])
 

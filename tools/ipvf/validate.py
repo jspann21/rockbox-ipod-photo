@@ -22,6 +22,7 @@ TYPE_NAMES = {
     ipvf.TYPE_KEY_LZ4: "key_lz4",
     ipvf.TYPE_RECTS_LZ4: "rect_lz4",
     ipvf.TYPE_XOR_LZ4: "xor_lz4",
+    ipvf.TYPE_MOTION_LZ4: "motion_lz4",
 }
 
 
@@ -232,19 +233,23 @@ def inspect_file(
                 ipvf.TYPE_KEY_LZ4,
                 ipvf.TYPE_RECTS_LZ4,
                 ipvf.TYPE_XOR_LZ4,
+                ipvf.TYPE_MOTION_LZ4,
             )
             expected_temporal_crc = None
             if compressed:
                 _require(0 < stored_size < decoded_size,
                          f"frame {frame}: invalid compressed sizes")
                 compressed_payload = stored
-                if kind == ipvf.TYPE_XOR_LZ4:
+                if kind in (ipvf.TYPE_XOR_LZ4, ipvf.TYPE_MOTION_LZ4):
                     _require(temporal_flag and stored_size >= 5,
                              f"frame {frame}: temporal flag/size mismatch")
+                    crc_offset = 2 if kind == ipvf.TYPE_MOTION_LZ4 else 0
+                    _require(stored_size >= crc_offset + 5,
+                             f"frame {frame}: temporal payload too small")
                     expected_temporal_crc = struct.unpack_from(
-                        "<I", stored
+                        "<I", stored, crc_offset
                     )[0]
-                    compressed_payload = stored[4:]
+                    compressed_payload = stored[crc_offset + 4:]
                     _require(
                         ipvf.rockbox_crc32(compressed_payload) ==
                         expected_temporal_crc,
@@ -272,11 +277,18 @@ def inspect_file(
                          stored_size == 0 and decoded_size == 0,
                          f"frame {frame}: invalid repeat")
                 current = previous
-            else:
+            elif kind == ipvf.TYPE_XOR_LZ4:
                 _require(previous is not None and rect_count == 0 and
                          decoded_size == ipvf.FRAME_BYTES,
                          f"frame {frame}: invalid temporal record")
                 current = bytes(a ^ b for a, b in zip(previous, payload))
+            else:
+                _require(previous is not None and rect_count == 0 and
+                         decoded_size == ipvf.FRAME_BYTES,
+                         f"frame {frame}: invalid motion record")
+                dx, dy = struct.unpack_from("<bb", stored)
+                prediction = ipvf.translate_frame(previous, dx, dy)
+                current = bytes(a ^ b for a, b in zip(prediction, payload))
 
             _require(len(current) == ipvf.FRAME_BYTES,
                      f"frame {frame}: reconstructed size mismatch")

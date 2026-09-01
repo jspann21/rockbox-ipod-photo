@@ -51,7 +51,8 @@
 #define IPVF_TYPE_KEY_LZ4           3u
 #define IPVF_TYPE_RECTS_LZ4         4u
 #define IPVF_TYPE_XOR_LZ4           5u
-#define IPVF_TYPE_COUNT              6u
+#define IPVF_TYPE_MOTION_LZ4        6u
+#define IPVF_TYPE_COUNT              7u
 #define IPVF_MAX_FPS                240u
 #define IPVF_FRAME_BYTES \
     ((size_t)LCD_WIDTH * LCD_HEIGHT * sizeof(fb_data))
@@ -77,7 +78,7 @@
     ROCKBOX_DIR "/ipvf-qualification-v5.tsv"
 #define IPVF_QUALIFICATION_MARKER \
     ROCKBOX_DIR "/ipvf-qualification.enable"
-#define IPVF_DECODER_REV             "xor-payloadcrc-4"
+#define IPVF_DECODER_REV             "motion-1"
 #endif
 
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
@@ -314,6 +315,53 @@ static void ipvf_xor_frame(unsigned char *frame,
     for (i = 0; i < IPVF_FRAME_BYTES; i++)
         frame[i] ^= residual[i];
 #endif
+}
+
+/* Shift the reference frame in place onto a black canvas. Vertical rows are
+ * moved in dependency-safe order; memmove handles horizontal overlap. */
+static void ipvf_translate_reference(unsigned char *frame, int dx, int dy)
+{
+    const size_t row_bytes = (size_t)LCD_WIDTH * sizeof(fb_data);
+    int y;
+
+    if (dy > 0)
+    {
+        for (y = LCD_HEIGHT - 1; y >= dy; y--)
+            rb->memmove(frame + (size_t)y * row_bytes,
+                        frame + (size_t)(y - dy) * row_bytes, row_bytes);
+        rb->memset(frame, 0, (size_t)dy * row_bytes);
+    }
+    else if (dy < 0)
+    {
+        for (y = 0; y < LCD_HEIGHT + dy; y++)
+            rb->memmove(frame + (size_t)y * row_bytes,
+                        frame + (size_t)(y - dy) * row_bytes, row_bytes);
+        rb->memset(frame + (size_t)(LCD_HEIGHT + dy) * row_bytes, 0,
+                   (size_t)(-dy) * row_bytes);
+    }
+
+    if (dx > 0)
+    {
+        const size_t moved = (size_t)(LCD_WIDTH - dx) * sizeof(fb_data);
+        const size_t blank = (size_t)dx * sizeof(fb_data);
+        for (y = 0; y < LCD_HEIGHT; y++)
+        {
+            unsigned char *row = frame + (size_t)y * row_bytes;
+            rb->memmove(row + blank, row, moved);
+            rb->memset(row, 0, blank);
+        }
+    }
+    else if (dx < 0)
+    {
+        const size_t blank = (size_t)(-dx) * sizeof(fb_data);
+        const size_t moved = row_bytes - blank;
+        for (y = 0; y < LCD_HEIGHT; y++)
+        {
+            unsigned char *row = frame + (size_t)y * row_bytes;
+            rb->memmove(row, row + blank, moved);
+            rb->memset(row + moved, 0, blank);
+        }
+    }
 }
 
 #include "ipodnative_lz4.inc"
@@ -679,8 +727,10 @@ static bool parse_record(const unsigned char *record,
         return false;
     record_info->compressed = source_type == IPVF_TYPE_KEY_LZ4 ||
                               source_type == IPVF_TYPE_RECTS_LZ4 ||
-                              source_type == IPVF_TYPE_XOR_LZ4;
-    record_info->temporal = source_type == IPVF_TYPE_XOR_LZ4;
+                              source_type == IPVF_TYPE_XOR_LZ4 ||
+                              source_type == IPVF_TYPE_MOTION_LZ4;
+    record_info->temporal = source_type == IPVF_TYPE_XOR_LZ4 ||
+                            source_type == IPVF_TYPE_MOTION_LZ4;
     record_info->keyframe = source_type == IPVF_TYPE_KEY ||
                             source_type == IPVF_TYPE_KEY_LZ4;
 
@@ -729,7 +779,8 @@ static bool parse_record(const unsigned char *record,
             record_info->decoded_video_bytes != 0 || record_info->compressed)
             return false;
     }
-    else if (source_type == IPVF_TYPE_XOR_LZ4)
+    else if (source_type == IPVF_TYPE_XOR_LZ4 ||
+             source_type == IPVF_TYPE_MOTION_LZ4)
     {
         /* Temporal XOR reconstructs a full renderable frame, but remains
          * dependent on the immediately preceding reconstructed frame. */
@@ -737,7 +788,9 @@ static bool parse_record(const unsigned char *record,
         if (record_info->rect_count != 0 ||
             record_info->decoded_video_bytes != IPVF_FRAME_BYTES ||
             !record_info->compressed || frame == 0 ||
-            !info->temporal_xor || record_info->stored_video_bytes < 5u)
+            !info->temporal_xor ||
+            record_info->stored_video_bytes <
+                (source_type == IPVF_TYPE_MOTION_LZ4 ? 7u : 5u))
             return false;
     }
     else
@@ -793,6 +846,8 @@ static bool decode_record_video(const unsigned char *record,
 #endif
     uint32_t stored_bytes = record_info->stored_video_bytes;
     uint32_t expected_crc = 0;
+    int motion_dx = 0;
+    int motion_dy = 0;
 
 #if !IPVF_ENABLE_QUALIFICATION_TELEMETRY
     (void)stats;
@@ -802,6 +857,16 @@ static bool decode_record_video(const unsigned char *record,
     {
         if (record_info->temporal)
         {
+            if (record_info->source_type == IPVF_TYPE_MOTION_LZ4)
+            {
+                motion_dx = (signed char)source[0];
+                motion_dy = (signed char)source[1];
+                if (motion_dx <= -LCD_WIDTH || motion_dx >= LCD_WIDTH ||
+                    motion_dy <= -LCD_HEIGHT || motion_dy >= LCD_HEIGHT)
+                    return false;
+                source += 2u;
+                stored_bytes -= 2u;
+            }
             expected_crc = get_le32(source);
             source += sizeof(uint32_t);
             stored_bytes -= sizeof(uint32_t);
@@ -842,6 +907,8 @@ static bool decode_record_video(const unsigned char *record,
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             operation_started = USEC_TIMER;
 #endif
+            if (record_info->source_type == IPVF_TYPE_MOTION_LZ4)
+                ipvf_translate_reference(reference, motion_dx, motion_dy);
             ipvf_xor_frame(reference, scratch);
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             operation_us = USEC_TIMER - operation_started;
