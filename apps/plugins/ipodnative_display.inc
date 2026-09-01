@@ -450,6 +450,7 @@ static bool reconcile_framebuffer(int fd, const struct ipvf_info *info,
     uint32_t current_sectors = key_record_sectors;
     off_t position = key_offset;
     unsigned long frame;
+    bool recovering = false;
     bool passed = key_offset >= (off_t)IPVF_DATA_OFFSET &&
                   key_frame < displayed_frames &&
                   rb->lseek(fd, key_offset, SEEK_SET) == key_offset;
@@ -458,6 +459,7 @@ static bool reconcile_framebuffer(int fd, const struct ipvf_info *info,
     {
         struct ipvf_record_info record_info;
         uint32_t record_bytes;
+        bool video_ok;
 
         if (current_sectors == 0 ||
             current_sectors > IPVF_RECORD_MAX_SECTORS)
@@ -471,25 +473,42 @@ static bool reconcile_framebuffer(int fd, const struct ipvf_info *info,
             !read_exact(fd, record, record_bytes) ||
             !parse_record(record, current_sectors, frame, info,
                           &record_info) ||
-            !decode_record_video(record, &record_info, decoded_record,
-                                 scratch, audio.video_reference, true, true,
-                                 NULL) ||
             (frame == key_frame && !record_info.keyframe))
         {
             passed = false;
             break;
         }
 
-        if (record_info.type == IPVF_TYPE_KEY)
-            rb->memcpy(fb, decoded_record + IPVF_FRAME_HEADER_SIZE,
-                       IPVF_FRAME_BYTES);
-        else if (record_info.type == IPVF_TYPE_RECTS &&
-                 !apply_rects(decoded_record + IPVF_FRAME_HEADER_SIZE,
-                              record_info.decoded_video_bytes,
-                              record_info.rect_count, fb, false))
+        if (recovering && !record_info.keyframe)
+            video_ok = false;
+        else
+            video_ok = decode_record_video(
+                record, &record_info, decoded_record, scratch,
+                audio.video_reference, true, true, NULL);
+        if (!video_ok)
         {
-            passed = false;
-            break;
+            if (frame == key_frame)
+            {
+                passed = false;
+                break;
+            }
+            recovering = true;
+        }
+        else
+        {
+            if (record_info.keyframe)
+                recovering = false;
+            if (record_info.type == IPVF_TYPE_KEY)
+                rb->memcpy(fb, decoded_record + IPVF_FRAME_HEADER_SIZE,
+                           IPVF_FRAME_BYTES);
+            else if (record_info.type == IPVF_TYPE_RECTS &&
+                     !apply_rects(decoded_record + IPVF_FRAME_HEADER_SIZE,
+                                  record_info.decoded_video_bytes,
+                                  record_info.rect_count, fb, false))
+            {
+                passed = false;
+                break;
+            }
         }
 
         position += record_bytes;

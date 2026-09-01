@@ -1,0 +1,5 @@
+case	frames	total_frames	late	audio_gaps	audio_rebuffers	audio_low_water_frames	index_cached	index_entries	index_valid	index_scans	audio_recovery_blocks	video_recovery_frames	seek_count	seek_reconstructed_frames	max_seek_ticks	error
+control	416	720	1	0	0	1588	1	15	1	0	0	0	7	141	96	0
+audio_recovery	448	720	0	0	0	1837	1	15	1	0	1	0	0	0	0	0
+video_recovery	600	720	0	0	0	1837	1	15	1	0	0	12	1	2	28	0
+index_recovery	664	720	0	0	0	1837	0	15	0	4	0	0	4	92	105	0

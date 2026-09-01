@@ -10,9 +10,9 @@ from fractions import Fraction
 from pathlib import Path
 
 try:
-    from . import encode as ipvf
+    from . import reference as ipvf
 except ImportError:  # Direct script execution.
-    import encode as ipvf
+    import reference as ipvf
 
 
 TYPE_NAMES = {
@@ -251,7 +251,7 @@ def inspect_file(
                     )[0]
                     compressed_payload = stored[crc_offset + 4:]
                     _require(
-                        ipvf.rockbox_crc32(compressed_payload) ==
+                        rockbox_crc32(compressed_payload) ==
                         expected_temporal_crc,
                         f"frame {frame}: temporal payload CRC mismatch",
                     )

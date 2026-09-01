@@ -169,7 +169,7 @@ static void write_run_journal(const struct ipvf_info *info,
     rb->fdprintf(journal_fd,
         "%lu\t%lu\t%d\t%s\t%s\t%u\t%u\t%lu\t%lu\t%lu\t%lu\t"
         "%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t"
-        "%lu\t%lu\t%lu\n",
+        "%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\n",
         started_tick, (unsigned long)(*rb->current_tick - started_tick),
         HZ, rb->rbversion, status, info->fps_num, info->fps_den,
         stats->frames, info->frame_count, (unsigned long)active_frame,
@@ -181,6 +181,12 @@ static void write_run_journal(const struct ipvf_info *info,
         stats->audio_low_water_frames,
         stats->audio_buffer_callbacks,
         stats->startup_ticks,
+        stats->index_cached,
+        stats->index_entries,
+        stats->index_valid,
+        stats->index_scans,
+        stats->audio_recovery_blocks,
+        stats->video_recovery_frames,
         stats->seek_count, stats->seek_reconstructed_frames,
         stats->max_seek_ticks,
         stats->first_error, stats->first_error_frame);
@@ -650,7 +656,8 @@ static bool audio_prebuffer_records(int fd, const struct ipvf_info *info,
                                     off_t first_position,
                                     uint32_t first_sectors,
                                     uint32_t target_frames,
-                                    unsigned long *end_frame)
+                                    unsigned long *end_frame,
+                                    struct ipvf_stats *stats)
 {
     unsigned long scan_frame = first_frame;
     off_t scan_position = first_position;
@@ -693,8 +700,7 @@ static bool audio_prebuffer_records(int fd, const struct ipvf_info *info,
 
         audio_payload = read_buffer + IPVF_FRAME_HEADER_SIZE +
                         record_info.stored_video_bytes;
-        if (!audio_write_ima_block(audio_payload, record_info.audio_bytes,
-                                   record_info.audio_frames))
+        if (!audio_write_record_block(audio_payload, &record_info, stats))
             return false;
 
         scan_position += record_bytes;
@@ -715,9 +721,11 @@ static enum plugin_status play_file(const char *filename)
     uintptr_t decoded_address;
     uintptr_t read_address;
     uintptr_t required_end;
+    size_t index_bytes;
     unsigned char *buf;
     unsigned char *decoded_buffer;
     unsigned char *read_buffer;
+    unsigned char *index_cache = NULL;
     struct viewport *vp;
     fb_data *fb;
     uint32_t current_sectors;
@@ -751,6 +759,7 @@ static enum plugin_status play_file(const char *filename)
     bool initial_audio_started = false;
     bool seeking = false;
     bool seek_timing_active = false;
+    bool video_recovering = false;
     long playback_start_tick;
     int fd;
     struct ipvf_system_cleanup system_cleanup;
@@ -803,7 +812,7 @@ static enum plugin_status play_file(const char *filename)
             return PLUGIN_USB_CONNECTED;
         }
         if (answer == YESNO_YES &&
-            find_seek_entry(fd, &info, saved_resume.frame,
+            find_seek_entry(fd, &info, NULL, saved_resume.frame, &stats,
                             &startup_seek_entry))
         {
             resume_frame = saved_resume.frame;
@@ -850,6 +859,28 @@ static enum plugin_status play_file(const char *filename)
 
     decoded_buffer = (unsigned char *)decoded_address;
     read_buffer = (unsigned char *)read_address;
+    index_bytes = 0;
+    if ((size_t)info.index_count <=
+        (size_t)-1 / IPVF_INDEX_ENTRY_SIZE)
+        index_bytes = (size_t)info.index_count * IPVF_INDEX_ENTRY_SIZE;
+    if (info.index_valid && index_bytes != 0 &&
+        index_bytes <= (size_t)(buffer_end - required_end))
+    {
+        unsigned char *candidate = (unsigned char *)required_end;
+
+        if (load_index_cache(fd, &info, candidate))
+            index_cache = candidate;
+        else if (rb->lseek(fd, IPVF_DATA_OFFSET, SEEK_SET) !=
+                 (off_t)IPVF_DATA_OFFSET)
+        {
+            rb->close(fd);
+            rb->splash(HZ * 2, "IPVF seek failed");
+            return PLUGIN_ERROR;
+        }
+    }
+    stats.index_cached = index_cache != NULL;
+    stats.index_entries = info.index_count;
+    stats.index_valid = info.index_valid;
 
     rb->lcd_set_viewport(NULL);
     if (rb->screens[SCREEN_MAIN] == NULL ||
@@ -921,8 +952,14 @@ static enum plugin_status play_file(const char *filename)
             save_resume(&info, 0, IPVF_RESUME_DISMISSED);
             startup_resume = false;
             resume_frame = 0;
-            audio_reset_to(0);
-            rb->lseek(fd, IPVF_DATA_OFFSET, SEEK_SET);
+            if (!audio_reset_to(0) ||
+                rb->lseek(fd, IPVF_DATA_OFFSET, SEEK_SET) !=
+                    (off_t)IPVF_DATA_OFFSET)
+            {
+                IPVF_NOTE_QUALIFICATION_ERROR(
+                    &stats, IPVF_ERROR_SEEK, stats.frames);
+                failed = true;
+            }
         }
         else
         {
@@ -945,7 +982,7 @@ static enum plugin_status play_file(const char *filename)
             render_epoch_start_frame = resume_frame;
         }
     }
-    while (frame < info.frame_count)
+    while (!failed && frame < info.frame_count)
     {
         unsigned char *decoded_record;
         unsigned char *record;
@@ -1090,9 +1127,8 @@ static enum plugin_status play_file(const char *filename)
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             operation_started = USEC_TIMER;
 #endif
-            audio_ok = audio_write_ima_block(
-                audio_payload, record_info.audio_bytes,
-                record_info.audio_frames);
+            audio_ok = audio_write_record_block(
+                audio_payload, &record_info, &stats);
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             operation_us = USEC_TIMER - operation_started;
             add_qualification_timing(&stats.audio_feed_us,
@@ -1114,38 +1150,51 @@ static enum plugin_status play_file(const char *filename)
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
         operation_started = USEC_TIMER;
 #endif
-        if (!decode_record_video(record, &record_info, decoded_record,
-                                 audio.video_scratch,
-                                 audio.video_reference,
-#ifdef IPVF_NATIVE_PIPELINE
-                                 true,
-#else
-                                 false,
-#endif
-                                 !seeking || frame >= seek_target,
-                                 &stats))
         {
+            bool video_ok;
+
+            if (!seeking && video_recovering && !record_info.keyframe)
+                video_ok = false;
+            else
+                video_ok = decode_record_video(
+                    record, &record_info, decoded_record,
+                    audio.video_scratch, audio.video_reference,
+#ifdef IPVF_NATIVE_PIPELINE
+                    true,
+#else
+                    false,
+#endif
+                    !seeking || frame >= seek_target, &stats);
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             operation_us = USEC_TIMER - operation_started;
             add_qualification_timing(&stats.video_decode_us,
                                      &stats.max_video_decode_us,
                                      operation_us);
 #endif
+            if (!video_ok && (seeking || frame == 0))
+            {
 #ifdef IPVF_NATIVE_PIPELINE
-            if (render_slot_acquired)
-                render_abandon();
+                if (render_slot_acquired)
+                    render_abandon();
 #endif
-            IPVF_NOTE_QUALIFICATION_ERROR(&stats,
-                                          IPVF_ERROR_VIDEO_DECODE, frame);
-            failed = true;
-            break;
+                IPVF_NOTE_QUALIFICATION_ERROR(
+                    &stats, IPVF_ERROR_VIDEO_DECODE, frame);
+                failed = true;
+                break;
+            }
+            if (!video_ok)
+            {
+                video_recovering = true;
+                stats.video_recovery_frames++;
+                record_info.type = IPVF_TYPE_REPEAT;
+                record_info.rect_count = 0;
+                record_info.decoded_video_bytes = 0;
+            }
+            else if (record_info.keyframe)
+            {
+                video_recovering = false;
+            }
         }
-#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
-        operation_us = USEC_TIMER - operation_started;
-        add_qualification_timing(&stats.video_decode_us,
-                                 &stats.max_video_decode_us,
-                                 operation_us);
-#endif
 
         /* Rebuild the full decoded-audio cushion after a true mixer
          * starvation. The current video is already decoded, so the shared
@@ -1159,16 +1208,15 @@ static enum plugin_status play_file(const char *filename)
 
             if (rebuffer_ok)
             {
-                rebuffer_ok = audio_write_ima_block(
-                    audio_payload, record_info.audio_bytes,
-                    record_info.audio_frames);
+                rebuffer_ok = audio_write_record_block(
+                    audio_payload, &record_info, &stats);
             }
             if (rebuffer_ok)
             {
                 rebuffer_ok = audio_prebuffer_records(
                     fd, &info, record, frame + 1, next_position,
                     next_sectors, IPVF_AUDIO_PREBUFFER_FRAMES,
-                    &prebuffer_end_frame);
+                    &prebuffer_end_frame, &stats);
             }
             if (rebuffer_ok && frame + 1 < info.frame_count)
             {
@@ -1194,7 +1242,7 @@ static enum plugin_status play_file(const char *filename)
             stats.audio_rebuffers++;
         }
 #ifdef IPVF_NATIVE_PIPELINE
-        if (record_info.keyframe && !seeking)
+        if (record_info.keyframe && !video_recovering && !seeking)
         {
             last_key_offset = frame_offset;
             last_key_sectors = current_sectors;
@@ -1366,7 +1414,7 @@ static enum plugin_status play_file(const char *filename)
                 frame1_sectors,
                 completed_seek ? IPVF_AUDIO_SEEK_PREBUFFER_FRAMES :
                                  IPVF_AUDIO_PREBUFFER_FRAMES,
-                &prebuffer_end_frame);
+                &prebuffer_end_frame, &stats);
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             stats.prebuffer_us += USEC_TIMER - operation_started;
 #endif
@@ -1583,13 +1631,15 @@ static enum plugin_status play_file(const char *filename)
                 {
                     /* The request was clamped at a file boundary. */
                 }
-                else if (!find_seek_entry(fd, &info, target_frame, &entry) ||
-                    !audio_reset_to(audio_frame_boundary(&info,
-                                                         target_frame))
+                else if (!audio_reset_to(audio_frame_boundary(&info,
+                                                               target_frame))
 #ifdef IPVF_NATIVE_PIPELINE
                     || !render_finish(&stats)
                     || !render_start(decoded_buffer)
 #endif
+                    || !find_seek_entry(fd, &info, index_cache, target_frame,
+                                        &stats,
+                                        &entry)
                     || rb->lseek(fd, entry.offset, SEEK_SET) != entry.offset)
                 {
                     IPVF_NOTE_QUALIFICATION_ERROR(

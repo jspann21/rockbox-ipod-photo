@@ -185,6 +185,17 @@ static bool audio_write_ima_block(const unsigned char *source,
                     codes >> 4, &state.right_predictor,
                     &state.right_index);
             }
+            if (audio.seek_ramp_frames != 0)
+            {
+                uint32_t gain = IPVF_AUDIO_SEEK_RAMP_FRAMES -
+                                audio.seek_ramp_frames + 1u;
+
+                left = (int16_t)((int32_t)left * (int32_t)gain /
+                                 (int32_t)IPVF_AUDIO_SEEK_RAMP_FRAMES);
+                right = (int16_t)((int32_t)right * (int32_t)gain /
+                                  (int32_t)IPVF_AUDIO_SEEK_RAMP_FRAMES);
+                audio.seek_ramp_frames--;
+            }
             destination[2u * i] = left;
             destination[2u * i + 1u] = right;
         }
@@ -351,14 +362,38 @@ static bool audio_reset_to(uint32_t sample_frame)
     if (!audio.configured)
         return false;
 
-    audio_stop_playback();
+    /* Stop the callback and rebase its absolute counters under one PCM lock.
+     * The short ramp on the newly decoded samples suppresses a discontinuity
+     * click when a seek lands at an arbitrary waveform phase. */
+    rb->pcm_play_lock();
+    audio.expect_playback = false;
+    membarrier();
+    if (rb->mixer_channel_status(IPVF_AUDIO_CHANNEL) != CHANNEL_STOPPED)
+        rb->mixer_channel_stop(IPVF_AUDIO_CHANNEL);
     audio.completed_frames = sample_frame;
     audio.current_frames = 0;
     audio.written_frames = sample_frame;
     audio.source_eof = false;
     audio.started = false;
+    audio.seek_ramp_frames = IPVF_AUDIO_SEEK_RAMP_FRAMES;
     membarrier();
+    rb->pcm_play_unlock();
     return true;
+}
+
+static bool audio_write_record_block(
+    const unsigned char *source,
+    const struct ipvf_record_info *record_info,
+    struct ipvf_stats *stats)
+{
+    if (record_info == NULL)
+        return false;
+    if (!record_info->audio_valid && stats != NULL)
+        stats->audio_recovery_blocks++;
+    return audio_write_ima_block(
+        source,
+        record_info->audio_valid ? record_info->audio_bytes : 0,
+        record_info->audio_frames);
 }
 
 static void audio_shutdown(void)

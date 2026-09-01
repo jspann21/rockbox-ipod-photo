@@ -68,6 +68,7 @@
 #define IPVF_AUDIO_DMA_MAX_BYTES     (16u * 1024u)
 #define IPVF_AUDIO_DMA_MAX_FRAMES \
     (IPVF_AUDIO_DMA_MAX_BYTES / IPVF_AUDIO_FRAME_BYTES)
+#define IPVF_AUDIO_SEEK_RAMP_FRAMES  256u
 #define IPVF_AUDIO_CHANNEL           PCM_MIXER_CHAN_PLAYBACK
 #define IPVF_DECODED_SLOT_STRIDE      0x18000u
 #define IPVF_LATE_THRESHOLD_FRAMES \
@@ -80,7 +81,9 @@
     "frames\ttotal_frames\tactive_frame\tlate\taudio_gaps\t" \
     "audio_rebuffers\tfirst_rebuffer_frame\tlast_rebuffer_frame\t" \
     "audio_capacity_frames\taudio_low_water_frames\t" \
-    "audio_buffer_callbacks\tstartup_ticks\tseek_count\t" \
+    "audio_buffer_callbacks\tstartup_ticks\tindex_cached\tindex_entries\t" \
+    "index_valid\tindex_scans\taudio_recovery_blocks\t" \
+    "video_recovery_frames\tseek_count\t" \
     "seek_reconstructed_frames\tmax_seek_ticks\terror\terror_frame\n"
 
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
@@ -149,6 +152,7 @@ struct ipvf_info
     char artist[IPVF_METADATA_TEXT_SIZE];
     char album[IPVF_METADATA_TEXT_SIZE];
     bool temporal_xor;
+    bool index_valid;
 };
 
 struct ipvf_stats
@@ -163,6 +167,12 @@ struct ipvf_stats
     unsigned long audio_low_water_frames;
     unsigned long audio_buffer_callbacks;
     unsigned long startup_ticks;
+    unsigned long index_cached;
+    unsigned long index_entries;
+    unsigned long index_valid;
+    unsigned long index_scans;
+    unsigned long audio_recovery_blocks;
+    unsigned long video_recovery_frames;
     unsigned long seek_count;
     unsigned long seek_reconstructed_frames;
     unsigned long max_seek_ticks;
@@ -231,6 +241,7 @@ struct ipvf_record_info
     bool compressed;
     bool temporal;
     bool keyframe;
+    bool audio_valid;
 };
 
 struct ipvf_index_entry
@@ -256,6 +267,7 @@ struct ipvf_audio_state
     volatile uint32_t low_water_frames;
     volatile bool source_eof;
     volatile bool expect_playback;
+    uint32_t seek_ramp_frames;
     unsigned int old_frequency;
     bool buffer_acquired;
     bool configured;
@@ -552,17 +564,20 @@ static bool read_header(int fd, struct ipvf_info *info)
         if (h[i] != 0)
             return false;
 
-    if (rb->lseek(fd, info->index_offset, SEEK_SET) != info->index_offset)
-        return false;
+    info->index_valid =
+        rb->lseek(fd, info->index_offset, SEEK_SET) == info->index_offset;
     index_crc = 0xffffffffu;
-    for (i = 0; i < info->index_count; i++)
+    for (i = 0; info->index_valid && i < info->index_count; i++)
     {
         uint32_t indexed_frame;
         uint64_t indexed_offset;
         uint32_t indexed_sectors;
 
         if (!read_exact(fd, entry, sizeof(entry)))
-            return false;
+        {
+            info->index_valid = false;
+            break;
+        }
         index_crc = rb->crc_32(entry, sizeof(entry), index_crc);
         indexed_frame = get_le32(entry);
         indexed_offset = get_le64(entry + 4);
@@ -582,31 +597,27 @@ static bool read_header(int fd, struct ipvf_info *info)
             (get_le16(entry + 14) & ~IPVF_INDEX_FLAG_KEY_LZ4) != 0 ||
             (i != 0 && (indexed_frame <= previous_frame ||
                         indexed_offset <= previous_offset)))
-            return false;
+        {
+            info->index_valid = false;
+            break;
+        }
         previous_frame = indexed_frame;
         previous_offset = indexed_offset;
     }
-    if (index_crc != info->index_crc)
-        return false;
+    if (info->index_valid && index_crc != info->index_crc)
+        info->index_valid = false;
 
     return rb->lseek(fd, IPVF_DATA_OFFSET, SEEK_SET) ==
            (off_t)IPVF_DATA_OFFSET;
 }
 
-static bool read_index_entry(int fd, const struct ipvf_info *info,
-                             uint32_t index,
-                             struct ipvf_index_entry *entry)
+static bool decode_index_entry(const struct ipvf_info *info,
+                               const unsigned char *data,
+                               struct ipvf_index_entry *entry)
 {
-    unsigned char data[IPVF_INDEX_ENTRY_SIZE];
-    off_t position;
     uint64_t offset;
 
-    if (info == NULL || entry == NULL || index >= info->index_count)
-        return false;
-    position = info->index_offset + (off_t)index * IPVF_INDEX_ENTRY_SIZE;
-    if (position < info->index_offset ||
-        rb->lseek(fd, position, SEEK_SET) != position ||
-        !read_exact(fd, data, sizeof(data)))
+    if (info == NULL || data == NULL || entry == NULL)
         return false;
 
     offset = get_le64(data + 4);
@@ -629,14 +640,151 @@ static bool read_index_entry(int fd, const struct ipvf_info *info,
            (entry->flags & ~IPVF_INDEX_FLAG_KEY_LZ4) == 0;
 }
 
-static bool find_seek_entry(int fd, const struct ipvf_info *info,
+static bool validate_index_cache(const struct ipvf_info *info,
+                                 const unsigned char *index_cache)
+{
+    struct ipvf_index_entry entry;
+    unsigned long previous_frame = 0;
+    off_t previous_offset = 0;
+    uint32_t crc = 0xffffffffu;
+    uint32_t i;
+
+    if (info == NULL || !info->index_valid || index_cache == NULL ||
+        info->index_count == 0)
+        return false;
+    for (i = 0; i < info->index_count; i++)
+    {
+        const unsigned char *data =
+            index_cache + (size_t)i * IPVF_INDEX_ENTRY_SIZE;
+
+        crc = rb->crc_32(data, IPVF_INDEX_ENTRY_SIZE, crc);
+        if (!decode_index_entry(info, data, &entry) ||
+            (i == 0 && (entry.frame != 0 ||
+                        entry.offset != (off_t)IPVF_DATA_OFFSET)) ||
+            (i != 0 && (entry.frame <= previous_frame ||
+                        entry.offset <= previous_offset)))
+            return false;
+        previous_frame = entry.frame;
+        previous_offset = entry.offset;
+    }
+    return crc == info->index_crc;
+}
+
+static bool read_index_entry(int fd, const struct ipvf_info *info,
+                             const unsigned char *index_cache,
+                             uint32_t index,
+                             struct ipvf_index_entry *entry)
+{
+    unsigned char data[IPVF_INDEX_ENTRY_SIZE];
+    off_t position;
+
+    if (info == NULL || entry == NULL || index >= info->index_count)
+        return false;
+    if (index_cache != NULL)
+        return decode_index_entry(
+            info, index_cache + (size_t)index * IPVF_INDEX_ENTRY_SIZE, entry);
+
+    position = info->index_offset + (off_t)index * IPVF_INDEX_ENTRY_SIZE;
+    if (position < info->index_offset ||
+        rb->lseek(fd, position, SEEK_SET) != position ||
+        !read_exact(fd, data, sizeof(data)))
+        return false;
+    return decode_index_entry(info, data, entry);
+}
+
+static bool load_index_cache(int fd, const struct ipvf_info *info,
+                             unsigned char *index_cache)
+{
+    size_t bytes;
+    bool loaded = false;
+    bool restored;
+
+    if (info == NULL || !info->index_valid || index_cache == NULL ||
+        info->index_count == 0)
+        return false;
+    if ((size_t)info->index_count >
+        (size_t)-1 / IPVF_INDEX_ENTRY_SIZE)
+        return false;
+    bytes = (size_t)info->index_count * IPVF_INDEX_ENTRY_SIZE;
+    if (rb->lseek(fd, info->index_offset, SEEK_SET) == info->index_offset &&
+        read_exact(fd, index_cache, bytes))
+        loaded = validate_index_cache(info, index_cache);
+    restored = rb->lseek(fd, IPVF_DATA_OFFSET, SEEK_SET) ==
+               (off_t)IPVF_DATA_OFFSET;
+    return loaded && restored;
+}
+
+static bool parse_record_header(const unsigned char *record,
+                                uint32_t current_sectors,
+                                unsigned long frame,
+                                const struct ipvf_info *info,
+                                struct ipvf_record_info *record_info);
+
+/* A damaged optional index must not make otherwise sequential media
+ * unplayable. This recovery path reads only bounded 16-byte record headers,
+ * follows the validated sector chain, and retains the last true key at or
+ * before the requested frame. Normal files always use the resident index. */
+static bool scan_seek_entry(int fd, const struct ipvf_info *info,
                             unsigned long target,
+                            struct ipvf_index_entry *entry)
+{
+    unsigned char header[IPVF_FRAME_HEADER_SIZE];
+    struct ipvf_record_info record_info;
+    off_t position = IPVF_DATA_OFFSET;
+    uint32_t sectors;
+    unsigned long frame;
+    bool found = false;
+
+    if (info == NULL || entry == NULL || target >= info->frame_count)
+        return false;
+    sectors = info->first_record_sectors;
+    for (frame = 0; frame <= target; frame++)
+    {
+        uint32_t record_bytes;
+
+        if (sectors == 0 || sectors > IPVF_RECORD_MAX_SECTORS)
+            return false;
+        record_bytes = sectors * IPVF_RECORD_SECTOR_SIZE;
+        if (position > info->media_end_offset ||
+            (off_t)record_bytes > info->media_end_offset - position ||
+            rb->lseek(fd, position, SEEK_SET) != position ||
+            !read_exact(fd, header, sizeof(header)) ||
+            !parse_record_header(header, sectors, frame, info, &record_info))
+            return false;
+
+        if (record_info.keyframe)
+        {
+            entry->frame = frame;
+            entry->offset = position;
+            entry->sectors = sectors;
+            entry->flags = record_info.source_type == IPVF_TYPE_KEY_LZ4 ?
+                           IPVF_INDEX_FLAG_KEY_LZ4 : 0;
+            found = true;
+        }
+        position += record_bytes;
+        sectors = record_info.next_sectors;
+    }
+    return found;
+}
+
+static bool find_seek_entry(int fd, const struct ipvf_info *info,
+                            const unsigned char *index_cache,
+                            unsigned long target,
+                            struct ipvf_stats *stats,
                             struct ipvf_index_entry *entry)
 {
     uint32_t low = 0;
     uint32_t high;
 
-    if (info == NULL || info->index_count == 0 || entry == NULL)
+    if (info == NULL || entry == NULL)
+        return false;
+    if (!info->index_valid)
+    {
+        if (stats != NULL)
+            stats->index_scans++;
+        return scan_seek_entry(fd, info, target, entry);
+    }
+    if (info->index_count == 0)
         return false;
     high = info->index_count;
     while (low + 1u < high)
@@ -644,14 +792,14 @@ static bool find_seek_entry(int fd, const struct ipvf_info *info,
         uint32_t middle = low + (high - low) / 2u;
         struct ipvf_index_entry candidate;
 
-        if (!read_index_entry(fd, info, middle, &candidate))
+        if (!read_index_entry(fd, info, index_cache, middle, &candidate))
             return false;
         if (candidate.frame <= target)
             low = middle;
         else
             high = middle;
     }
-    return read_index_entry(fd, info, low, entry) &&
+    return read_index_entry(fd, info, index_cache, low, entry) &&
            entry->frame <= target;
 }
 
@@ -725,18 +873,14 @@ static void update_reference_rects(const unsigned char *payload,
     }
 }
 
-static bool parse_record(const unsigned char *record,
-                         uint32_t current_sectors,
-                         unsigned long frame,
-                         const struct ipvf_info *info,
-                         struct ipvf_record_info *record_info)
+static bool parse_record_header(const unsigned char *record,
+                                uint32_t current_sectors,
+                                unsigned long frame,
+                                const struct ipvf_info *info,
+                                struct ipvf_record_info *record_info)
 {
-    struct ipvf_ima_state ima_state;
-    const unsigned char *audio_payload;
     uint64_t used_bytes;
-    uint32_t record_bytes;
     uint32_t expected_sectors;
-    size_t i;
     unsigned int source_type;
 
     if (record == NULL || record_info == NULL || current_sectors == 0 ||
@@ -751,6 +895,7 @@ static bool parse_record(const unsigned char *record,
     record_info->decoded_video_bytes = get_le32(record + 8);
     record_info->audio_bytes = get_le32(record + 12);
     record_info->audio_frames = record_audio_frames(info, frame);
+    record_info->audio_valid = true;
     if (record_info->audio_frames == 0)
         return false;
     if (record_info->audio_bytes != 0 &&
@@ -844,6 +989,28 @@ static bool parse_record(const unsigned char *record,
         return false;
     }
 
+    return true;
+}
+
+static bool parse_record(const unsigned char *record,
+                         uint32_t current_sectors,
+                         unsigned long frame,
+                         const struct ipvf_info *info,
+                         struct ipvf_record_info *record_info)
+{
+    struct ipvf_ima_state ima_state;
+    const unsigned char *audio_payload;
+    uint64_t used_bytes;
+    uint32_t record_bytes;
+    size_t i;
+
+    if (!parse_record_header(record, current_sectors, frame, info,
+                             record_info))
+        return false;
+
+    used_bytes = IPVF_FRAME_HEADER_SIZE +
+                 (uint64_t)record_info->stored_video_bytes +
+                 record_info->audio_bytes;
     record_bytes = current_sectors * IPVF_RECORD_SECTOR_SIZE;
     for (i = (size_t)used_bytes; i < record_bytes; i++)
         if (record[i] != 0)
@@ -855,11 +1022,14 @@ static bool parse_record(const unsigned char *record,
         return true;
     if (record_info->audio_bytes ==
         record_mono_audio_bytes(record_info->audio_frames))
-        return ipvf_ima_parse_mono_header(
+        record_info->audio_valid = ipvf_ima_parse_mono_header(
             audio_payload, record_info->audio_bytes,
             record_info->audio_frames, &ima_state);
-    return ipvf_ima_parse_header(audio_payload, record_info->audio_bytes,
-                                 record_info->audio_frames, &ima_state);
+    else
+        record_info->audio_valid = ipvf_ima_parse_header(
+            audio_payload, record_info->audio_bytes,
+            record_info->audio_frames, &ima_state);
+    return true;
 }
 
 static bool decode_record_video(const unsigned char *record,
@@ -929,8 +1099,10 @@ static bool decode_record_video(const unsigned char *record,
         }
         else if (record_info->type == IPVF_TYPE_KEY && reference != NULL)
         {
-            /* Decode cached keys directly into the canonical reference. */
-            decode_target = reference;
+            /* A malformed block may partially write its destination. Decode
+             * keys in scratch so the last good reference remains available
+             * for bounded hold-until-keyframe recovery. */
+            decode_target = scratch != NULL ? scratch : destination;
         }
         else
         {

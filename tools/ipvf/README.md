@@ -239,11 +239,17 @@ On PP5020 hardware, the player preserves the qualified three-slot pipeline:
    commits it once so Rockbox resumes with coherent state.
 7. Play pauses/resumes the dedicated mixer channel without changing ring
    counters, so decoded audio remains the clock. Left and Right seek ten
-   seconds through the keyframe index. Seeking rebases audio, drains and
-   restarts the render worker, reconstructs from the preceding keyframe without
+   seconds through the keyframe index. The validated raw index is cached in
+   spare plugin-buffer memory when it fits, so ordinary runtime binary searches
+   issue no index reads; a bounded disk fallback remains. The cache copy is
+   independently CRC/order/bounds checked and failure only disables the cache.
+   Seeking atomically stops and rebases audio after accepting the request,
+   drains and restarts the render worker before fallback storage lookup, and
+   reconstructs from the preceding keyframe without
    acquiring render slots or producing throwaway output for intermediate
    frames, promotes the exact target to one full-frame LCD update, prebuffers
-   one second from that sample boundary, and restarts the mixer.
+   one second from that sample boundary, applies a 256-sample (5.8 ms) fade-in
+   to suppress seek-boundary clicks, and restarts the mixer.
    Distinct rapid clicks accumulate instead of collapsing into one jump, and
    clicks received during reconstruction carry into the next target. Seeking
    beyond EOF clamps to the final frame and completes playback normally.
@@ -259,6 +265,12 @@ On PP5020 hardware, the player preserves the qualified three-slot pipeline:
    renderer has definitely presented, run every 30 seconds and on pause,
    details, seek completion, clean stop, USB, poweroff, or reboot, and ask
    whether to resume when the same content is opened under any filename.
+10. Detected corruption has bounded behavior. A malformed IMA header feeds the
+    exact record duration as silence. A failed LZ4 or temporal-CRC decode holds
+    the last valid picture until the next successfully decoded true keyframe.
+    An invalid optional index does not block sequential playback; seeking uses
+    a bounded scan of structural record headers. Broken chains, reads, or the
+    first video frame still stop safely, and no recovery path retries forever.
 
 The target driver retains the per-word LCD2 readiness handshake. The player
 does not use raw plugin MMIO, cache invalidation, invented LCD DMA requests, or
@@ -286,7 +298,9 @@ adaptive silence/mono/stereo IMA sizing and predictors, silence padding,
 trimming to the
 converted video duration, and the 96 KiB record bound.
 
-`validate.py` is the strict streaming file validator. It walks sector links,
+`validate.py` is the strict streaming file validator. Its format, metadata,
+cadence, IMA, LZ4, motion, and FFmpeg reference code lives in `reference.py`
+and does not import the production encoder or its decode helpers. It walks sector links,
 checks all bounds and zero padding, decodes every LZ4 and IMA block,
 reconstructs every video mode, verifies temporal payload and keyframe-index
 CRCs, confirms every index entry names the exact keyframe record, and can
@@ -295,6 +309,17 @@ compare every frame byte-for-byte with fresh FFmpeg output:
 ```sh
 python3 tools/ipvf/validate.py --source input.mp4 output.ipvf
 ```
+
+Create the bounded device-recovery control and three deterministic corrupt
+cases from one strict-valid temporal file with:
+
+```sh
+python3 tools/ipvf/make_recovery_cases.py input.ipvf recovery-cases
+```
+
+The generator first requires a strict-valid source, gives every media mutation
+a fresh content identity, and confirms that the independent inspector rejects
+each malformed output for the intended reason.
 
 When source-verifying an experimental reduced-color encode, pass its host color
 cleanup as well. Everyday and compact both use the validator's RGB565 default:

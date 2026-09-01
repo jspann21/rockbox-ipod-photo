@@ -1646,3 +1646,89 @@
   zero payload. All focused WSL host tests pass.
 - Anonymous benchmark rows are retained in
   `qualification/2026-09-01-host-compression-runs.tsv`.
+
+## 60. Resident seek index and boundary hardening
+
+- Header validation already read every 16-byte key entry, checked ordering and
+  bounds, and verified the table CRC. Each later seek nevertheless performed a
+  binary search by repeatedly seeking to and reading individual entries from
+  storage while audio was still expected to run.
+- After reserving the existing render slots and 96-KiB record buffer, the player
+  now uses remaining plugin-buffer bytes for one raw copy of the key
+  table when it fits. The current five-minute file needs only 976 bytes for its
+  61 entries; a two-hour file at five-second keys is about 23 KiB. Oversized
+  tables retain the validated disk lookup rather than failing playback.
+- The cache reread is independently checked against the stored CRC plus all
+  entry bounds and ordering before publication. Allocation proves the entry
+  multiplication and trailing-buffer fit. A failed optional load restores the
+  media position and leaves disk lookup active instead of aborting playback.
+- Runtime binary search decodes entries directly from the cached bytes. Startup
+  resume may use the original disk lookup before plugin-buffer layout, when no
+  audio is running. Loading the cache restores the movie descriptor to the
+  first media record.
+- An accepted runtime seek now stops and rebases audio under one PCM lock, then
+  drains queued render work before any fallback index lookup. This prevents a
+  callback race and prevents queued pre-seek frames from being presented while
+  storage is searched. Startup resume now also checks restoration of the first
+  media position before entering the playback loop.
+- The bounded journal adds cache-active and entry-count fields. The hardware run
+  used a 61-entry resident table across five seeks, reconstructed 223
+  intermediate frames, and measured a 148-tick maximum seek. It logged zero
+  late frames, mixer gaps, rebuffers, or errors, and controls completed normally.
+  A tiny possible seek-boundary noise was not correlated with starvation.
+- To suppress an abrupt waveform-phase transition, the first 256 decoded sample
+  frames after reset now receive a 5.8 ms linear fade-in. Ordinary playback PCM
+  is untouched. The A1099 target builds warning-free and all 29 focused host
+  tests pass.
+- The transition follow-up exercised 16 seeks and reconstructed 655
+  intermediate frames. It logged zero mixer gaps, rebuffers, or errors, with a
+  1,345-frame callback low-water mark. Three late video presentations during
+  the dense interaction remained bounded. A very small transition sound could
+  be provoked only at one repeated-click cadence; it is accepted rather than
+  trading normal seek responsiveness for a longer mute or delay.
+- Anonymous evidence is retained in
+  `qualification/2026-09-01-index-cache-runs.tsv`.
+
+## 61. Independent inspection and bounded corruption recovery
+
+- The strict streaming inspector no longer imports the production encoder.
+  `reference.py` independently defines the canonical constants and implements
+  metadata parsing, rational cadence, IMA decode, raw LZ4 decode, motion
+  translation, and source-frame conversion. Existing tests therefore compare
+  production output against a separate decode implementation rather than
+  accepting it through shared helpers.
+- Device record parsing now separates structural validity from IMA-header
+  validity. A structurally bounded record with a malformed mono/stereo IMA
+  header contributes its exact timeline duration as zero PCM and playback
+  continues. Stored bytes and chain geometry remain unchanged.
+- Compressed keys decode into cached scratch before publication, preserving the
+  last good canonical reference if LZ4 fails. During ordinary playback, a
+  detected video decode or temporal-CRC failure emits repeat presentations
+  until a true keyframe decodes successfully. Seek reconstruction and a bad
+  first frame still fail instead of claiming an exact target without a valid
+  reference. Exit-time framebuffer reconciliation follows the same hold policy.
+- The optional key index is now a performance structure rather than a playback
+  prerequisite. A bad CRC/order/bounds result disables caching and binary
+  search but leaves sequential media available. A requested seek then follows
+  the already bounded sector chain using only 16-byte structural headers and
+  retains the latest true key at or before the target.
+- The bounded teardown journal records index validity/scans, substituted audio
+  blocks, and held video frames. `make_recovery_cases.py` reproducibly creates
+  one control plus malformed-audio, temporal-CRC, and index-CRC device cases,
+  assigns distinct media identities where media changed, and verifies every
+  mutation is rejected by the independent strict inspector for its intended
+  reason.
+- A 30-second/720-frame temporal source produced a 9.9-MiB control and three
+  equal-size cases. The malformed audio and temporal records occur at frame 180
+  and the index case retains a structurally valid media chain. The warning-free
+  A1099 build and all 31 focused host tests pass.
+- Hardware qualification closed every intended path. The control completed
+  seven resident-index seeks. The audio case substituted one malformed block.
+  The video case held 12 frames and resumed at the next true key. The invalid
+  index remained uncached and completed four seeks through four bounded scans.
+  Every run logged zero mixer gaps, rebuffers, and fatal errors. The apparently
+  unchanged seek picture was traced to the qualification source repeating at
+  exactly the ten-second control interval; the seek and reconstruction counters
+  prove that each request completed.
+- Anonymous evidence is retained in
+  `qualification/2026-09-01-recovery-runs.tsv`.

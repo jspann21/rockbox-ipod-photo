@@ -490,8 +490,10 @@ only the physical click/eject/reconnect actions remain manual.
 
 ### Independent host inspector
 
-- [ ] Add a standalone `inspect/validate` path that does not call the production
-      encoder's decode helpers.
+- [x] Add a standalone `inspect/validate` path that does not call the production
+      encoder's decode helpers. `validate.py` now uses independent format,
+      metadata, cadence, IMA, LZ4, motion, and FFmpeg reference routines from
+      `reference.py`.
 - [x] Walk every record, verify sizes/offsets/padding/EOF, decode every mode and
       all audio, and compare reconstructed frames with an optional fresh source.
 - [ ] Bind validation runs to corpus-manifest expected frame/audio identities
@@ -502,6 +504,9 @@ only the physical click/eject/reconnect actions remain manual.
       validator JSONL and generated Markdown remain.
 - [ ] Add deterministic mutation/fuzz inputs for headers, record sizes,
       rectangles, LZ4 lengths/offsets, IMA headers, truncation, padding, and EOF.
+      The reusable device subset is complete: `make_recovery_cases.py` emits
+      strict-rejected malformed-audio, temporal-CRC, and index-CRC cases plus a
+      control from any suitable strict-valid temporal IPVF.
 - [x] Keep the existing small unit suite; expand broad testing through the
       corpus/validator rather than creating a second format implementation.
 
@@ -738,7 +743,9 @@ there is one format and no compatibility/version branch.
 - [x] Keep a per-frame paged index out of the canonical format unless measured
       seeking demands it. The implemented 16-byte keyframe-only table costs
       about 14.4 KB/hour at 30 fps or 28.8 KB/hour at 60 fps with a 120-frame
-      interval and does not need to be resident.
+      interval. The player now caches the already validated raw table in spare
+      plugin-buffer memory when it fits and retains bounded disk lookup as a
+      fallback; no larger per-frame table is needed.
 - [x] Include a compact keyframe table for fast coarse navigation. Entries are
       16 bytes, strictly ordered, cover every true keyframe, use 64-bit logical
       offsets, and are protected by one Rockbox CRC32. Segment entries remain.
@@ -749,9 +756,16 @@ there is one format and no compatibility/version branch.
       0.34--5.96 ms per temporal record and avoids another full-frame pass.
 - [ ] Measure remaining index/header checksum cost and avoid redundant hashes
       that cannot be fused with copying or decoding.
-- [ ] Define deterministic recovery: bad audio becomes timed silence; bad delta
-      holds the last valid image until the next keyframe; bad index falls back
-      to a bounded sync scan; no infinite retries.
+- [x] Define deterministic recovery: a malformed IMA header becomes exact timed
+      silence; a detected LZ4/temporal failure holds the last valid image until
+      the next successfully decoded true keyframe; an invalid index leaves
+      sequential playback available and seeks use a bounded structural
+      record-header scan. Structural chain/read failures and a bad first frame
+      still stop safely. Recovery has no retry loop and is journaled. Hardware
+      qualification passed: one malformed audio block became silence, one bad
+      temporal frame held for 12 frames, and four invalid-index seeks used four
+      bounded scans. All four control/recovery runs had zero gaps, rebuffers,
+      or errors.
 
 ### Seeking and resume
 
@@ -999,6 +1013,22 @@ Reference bitrates:
       callback boundaries, 66 startup ticks at 100 Hz, and one brief zero-water
       callback during two seeks. It had zero late frames, rebuffers, errors, or
       visible issues. Host tests and the warning-free WSL target build pass.
+- [x] Qualify the resident key-index seek candidate. After the fixed render and
+      record buffers are reserved, the player uses remaining plugin-buffer
+      memory for an independently CRC/order/bounds-validated copy of the raw
+      16-byte key table. Runtime binary search then performs no index
+      `lseek()`/`read()` calls; oversized or unavailable caches safely retain
+      the disk path. Accepted seeks stop/rebase audio and drain queued render
+      work before any fallback lookup. A seek-heavy device run used all 61
+      cached entries across five seeks and logged zero late frames, audio gaps,
+      rebuffers, or errors; all controls completed normally.
+- [x] Qualify the seek-boundary click suppression candidate. Audio stop and
+      absolute-counter rebase now occur under one PCM lock, and only the first
+      256 decoded sample frames after a seek receive a 5.8 ms linear fade-in.
+      A 16-seek stress run logged zero audio gaps, rebuffers, or errors and kept
+      1,345 decoded frames at its lowest mixer callback. An extremely small
+      transition sound remained reproducible only at one repeated-click cadence
+      and is accepted; adding more muting or seek latency is not justified.
 - [ ] Measure whether startup's audio prebuffer scan/reread should be replaced by
       an index-assisted or multi-record read.
 - [ ] Profile frame catch-up under injected stalls: current pause, timed silence,
@@ -1076,9 +1106,9 @@ work is:
    and framebuffer evidence (Phase 7).
 3. Measure index-assisted or multi-record startup prebuffer/read-ahead and retain
    it only if it improves latency or storage-stall tolerance (Phase 6).
-4. Complete qualification timing distributions and the malformed/mutation
-   corpus before broader codec work; production ring low-water is complete
-   (Phase 0).
+4. Extend the three device-qualified recovery mutations into the complete
+   malformed/mutation corpus; production ring low-water, bounded recovery, and
+   the independent inspector are complete (Phases 0 and 3).
 5. Sweep scene-cut-aware/time-based keyframe policy and the exact seek/resume
    interruption matrix (Phases 1 and 3).
 6. Profile IMA, LZ4, CPU boost, storage behavior, and battery before making any
