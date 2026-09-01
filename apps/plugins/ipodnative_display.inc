@@ -472,7 +472,7 @@ static bool reconcile_framebuffer(int fd, const struct ipvf_info *info,
             !parse_record(record, current_sectors, frame, info,
                           &record_info) ||
             !decode_record_video(record, &record_info, decoded_record,
-                                 scratch, audio.video_reference, true,
+                                 scratch, audio.video_reference, true, true,
                                  NULL) ||
             (frame == key_frame && !record_info.keyframe))
         {

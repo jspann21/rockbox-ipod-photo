@@ -1,12 +1,15 @@
 # IPVF improvement and qualification plan
 
-Last research/implementation pass: 2026-08-31
-Code baseline: current `main` through the motion-compression research checkpoint,
-plus the qualified canonical motion-record implementation below
+Last research/implementation pass: 2026-09-01
+Code baseline: current working tree through the qualified off-screen seek
+reconstruction and split seek/startup prebuffer work below
 Target: iPod Photo/Color A1099, PP5020, Rockbox, 220x176 RGB565SWAPPED
 
 Detailed 2026-08-31 hardware evidence and pass-by-pass decisions:
 `tools/ipvf/qualification/2026-08-31-hardware-runs.md`.
+The 2026-09-01 lifecycle, checkpoint, cached-copy, and seek evidence is retained
+as anonymous TSVs under `tools/ipvf/qualification/` and summarized in
+`tools/ipvf/DEVELOPMENT_HISTORY.md` sections 53--57.
 
 ## Purpose
 
@@ -51,7 +54,9 @@ The plan is evidence-driven:
       one-channel exact dual mono, and the stereo baseline, all decoded to the
       Rockbox stereo PCM mixer.
 - [x] Decoded audio consumption is the video clock.
-- [x] About one second of audio is prebuffered before playback starts.
+- [x] Startup and true starvation recovery prebuffer about four seconds of
+      audio; completed seeks and startup resume reconstruction use a separate
+      one-second cushion for responsiveness.
 - [x] Three-slot CPU/COP pipeline with target-driver-owned LCD updates.
 - [x] Exact final-frame reconstruction from the last keyframe at exit.
 - [x] MENU stop and USB exit paths exist.
@@ -72,10 +77,14 @@ The plan is evidence-driven:
       counters; genuine playback failures retain a concise error.
 - [x] Persistent playback position, resume/start-over choice, and completion
       handling are implemented and qualified on A1099.
-- [ ] Durable production-quality run journal. The bounded teardown-only TSV
-      recorded stopped and completed hardware runs without filenames/hashes or
-      hot-path writes. Rotation and power-interruption checks remain.
-- [ ] Long-duration and lifecycle qualification.
+- [x] A bounded teardown-only production run journal records stopped/completed
+      non-USB runs after teardown when at least one frame decoded, without
+      filenames, hashes, or hot-path writes. It rotates at 32 KiB, rotates
+      automatically when its schema changes, and now includes seek and rebuffer
+      evidence. Zero-frame and USB-takeover exits intentionally do not journal.
+- [ ] Verify journal behavior across forced power interruption.
+- [x] Five-minute lifecycle/checkpoint qualification.
+- Longer duration gates remain in Phase 7.
 
 ### Current measurements
 
@@ -201,10 +210,10 @@ RGB444/20 remains named `compact` because of its storage target, not because
 grain, rapid camera motion, and duration testing.
 
 This source is 24000/1001 fps, so encoding it at 30 or 60 fps without motion
-interpolation would mostly duplicate frames and would not test true higher-rate
-motion. A separate gate needs native 30- and 60-fps real footage. Host motion
-interpolation from 24 to 30/60 is a separate lossy experiment whose artifacts,
-storage, and device workload must be measured.
+interpolation mostly duplicates frames and does not test true higher-rate
+motion. A separate native-motion gate subsequently passed at 30 and 60 fps;
+native high-rate real footage remains open. Host 24-to-60 interpolation was
+measured separately and rejected for both size and device smoothness.
 
 The follow-up viewer drains a bounded burst of wheel events per frame, applies
 one clamped Rockbox volume update, and retains MENU and USB handling. A combined
@@ -330,7 +339,8 @@ numbered files are installed under `Videos/IPVF Qualification 2`.
 ### 2026-08-31 spatial promotion and temporal pass-2 result
 
 The second device pass completed all 12 files with matching final CRCs and no
-decoder/render errors. Spatial mode is promoted as the encoder default:
+decoder/render errors. At this checkpoint spatial mode became the encoder
+default; qualified whole-frame motion later superseded it through 30 fps:
 
 - high-motion 30 fps saved 9.1%, reduced decode from 13.73 to 11.63 ms/frame,
   reduced render from 11.18 to 8.95 ms/frame, and retained zero gaps;
@@ -371,9 +381,9 @@ the package is `dist/package-ipvf-qualification-v5-20260831`.
 Pass 5 completed successfully. All three 30 fps files had exact final CRCs,
 zero decoder/render errors, and zero audio gaps; the music file looked and
 sounded correct. Payload CRC cost 0.34--5.96 ms per temporal record and aligned
-XOR about 6.22 ms. This is the checked temporal implementation, while spatial
-remains the default until long-duration qualification is complete. Device test
-material and logging were removed after evidence collection.
+XOR about 6.22 ms. This became the checked temporal implementation; spatial was
+still the default at this checkpoint, before whole-frame motion qualified.
+Device test material and logging were removed after evidence collection.
 
 ### Known hardware boundaries to preserve
 
@@ -438,12 +448,15 @@ full scorecard is exploratory, not promotable.
 - [x] Adaptive selection prevents file-size expansion on non-target content.
 - [x] A new lossless video mode saves at least 10% total bytes on its target
       high-motion class before paying for device complexity.
-- [ ] 30 fps: zero audio gaps, zero dropped frames, no visible defect, no fatal
-      error, and no regression from current timing.
-- [ ] 60 fps: zero audio gaps/dropped frames, no visible defect, and no worse
-      lateness than the identical current baseline.
-- [ ] MENU, USB, replay, and final framebuffer restoration pass after every
-      device experiment.
+- [x] Promoted 30-fps candidates pass the short hardware gate with zero audio
+      gaps, no visible defect, no fatal error, and no timing regression.
+- [x] Promoted 60-fps spatial output passes the short hardware gate on a native
+      60-fps motion source; whole-frame motion records and dense temporal XOR
+      remain capped at 30 fps.
+- [x] MENU, replay, and final framebuffer restoration pass the promoted
+      experiment matrix.
+- [ ] USB interruption passes every relevant lifecycle stage; attempted USB
+      stress exists, but the full matrix is not complete.
 - [ ] Battery/power cost is measured before a CPU-heavier mode becomes the
       default.
 
@@ -454,8 +467,9 @@ only the physical click/eject/reconnect actions remain manual.
 
 ### Reproducibility
 
-- [x] Record the exact command and compressor that produced the existing files
-      named `suds-lz4hc-ima-*`; current `encode.py` has no `--lz4hc` option.
+- [ ] Recover or supersede the exact command/compressor provenance for the
+      historical 30/60 LZ4HC/IMA baseline artifacts. The current creator has
+      reproducible `--lz4-mode` choices but no historical `--lz4hc` option.
 - [x] Create a corpus manifest with `clip_id`, deterministic source identity,
       duration, source FPS, target FPS, audio properties, motion class,
       encoder settings, and
@@ -474,9 +488,10 @@ only the physical click/eject/reconnect actions remain manual.
 
 - [ ] Add a standalone `inspect/validate` path that does not call the production
       encoder's decode helpers.
-- [x] Walk every record, verify sizes/offsets/padding/EOF, decode every mode,
-      reconstruct every frame, decode all audio, and compare with the corpus
-      manifest.
+- [x] Walk every record, verify sizes/offsets/padding/EOF, decode every mode and
+      all audio, and compare reconstructed frames with an optional fresh source.
+- [ ] Bind validation runs to corpus-manifest expected frame/audio identities
+      and emit a manifest-level pass/fail result.
 - [ ] Emit machine-readable `encode-results.jsonl`, `size.csv`,
       `host-validation.jsonl`, and one Markdown summary. The lab now emits the
       first two plus `summary.csv`, `timing.csv`, `pareto.csv`, and provenance;
@@ -508,38 +523,44 @@ only the physical click/eject/reconnect actions remain manual.
       The repeatable hiccup was isolated to synchronous FAT work at the first
       30-second checkpoint; the in-place-slot fix crossed the next checkpoint
       for 71 seconds with zero gaps, rebuffers, or errors.
-- [ ] Long: 30 minutes, one hour, and two hours.
+- Long-duration corpus gates are tracked once in Phase 7.
 
 ### Qualification telemetry
 
-- [x] Compile-gate qualification telemetry; enabled qualification builds still
-      require `.rockbox/ipvf-qualification.enable` before writing a TSV.
+- [x] Compile-gate detailed qualification telemetry; enabled qualification
+      builds still require `.rockbox/ipvf-qualification.enable` before writing
+      their TSV.
 - [x] In qualification mode, accumulate counters in RAM and append one bounded
-      completed TSV row only after playback teardown.
+      completed row only after playback teardown.
+- [ ] Add rotation/size bounding to the marker-gated detailed qualification TSV;
+      the separate production run journal is already bounded and rotating.
 - [ ] Include run/build/clip IDs, record offset, last frame, stage/error code,
       mode counts, stage timing histograms, ring low-water, gaps, lateness,
       final audio count, final framebuffer CRC, battery voltage, and stop reason.
-- [ ] Continue updating the retained crash record at meaningful stages so a
-      reset before file logging is still diagnosable.
+- [x] Update the retained crash record at startup, slot wait, read, queue,
+      render, drain, reconciliation, and idle stages so a reset before file
+      logging remains diagnosable.
 - [x] Avoid per-frame `write()`/CSV logging in the hot path.
-- [x] Compile qualification telemetry out by default. The production plugin
-      contains no TSV/marker strings, timer reads, 64-bit timing accumulation,
-      record accounting, or final framebuffer CRC scan; an explicit build
-      macro restores the complete qualification path. The integrated
-      production plugin is 13,924 bytes versus 17,080 bytes for the v5
-      qualification plugin.
+- [x] Compile detailed qualification telemetry out by default: its marker/log
+      strings, 64-bit stage accumulation, record accounting, and final
+      framebuffer CRC scan require the explicit build macro. Production retains
+      the bounded teardown journal and normal playback timer reads. The
+      earlier compile-gating checkpoint measured 13,924 bytes for production
+      versus 17,080 bytes for the v5 qualification plugin; these are historical
+      comparison sizes, not the current feature-complete plugin size.
 
 ### Install/run/collect loop
 
 - [ ] One WSL command builds, encodes, validates, packages, and writes a test
       manifest/instruction sheet.
-- [x] Installer verifies `.rockbox`, target `ipodcolor`, free
-      space, and hashes; it backs up replaced files and copies only an allowlist.
+- [ ] Implement one IPVF installer that verifies `.rockbox`, target `ipodcolor`,
+      free space, and an explicit copy allowlist. Current installation remains a
+      manually verified PowerShell/device operation.
 - [x] User receives a numbered list of files/actions and only clicks hardware.
 - [ ] Collector finds the remounted device, pulls logs/crash state/build info,
       hashes them, and runs the WSL analyzer automatically.
-- [ ] Never delete device material until its exact resolved path and manifest
-      ownership are verified.
+- [ ] Automate device cleanup with exact resolved-path and test-manifest
+      ownership checks. Continue applying those checks manually until then.
 
 ## Phase 1 - Sector-accurate offline compression laboratory
 
@@ -556,10 +577,11 @@ changing the proven player.
       at 24000/1001, 150 at 30 fps, and 300 at 60 fps.
 - [ ] Sweep alternate time-based and scene-cut-aware keyframe intervals before
       changing the qualified five-second default.
-- [x] Compare the current 32-candidate LZ4 search with official LZ4HC levels,
-      `--best`, optimal parsing, and decode-speed-favoring output. All use the
-      same block decoder. Fast and HC levels 3/9/12 were measured; HC12 is now
-      an adaptive host-only encoder candidate.
+- [x] Compare the current 32-candidate LZ4 search with official fast and HC
+      levels 3/9/12. Current `--lz4-mode best` adaptively selects the built-in
+      result or HC12, both using the same device block decoder.
+- [ ] Compare official optimal-parsing and favor-decompression-speed variants;
+      neither is present in the current lab or creator.
 - [x] Try RGB565 byte-plane split, 16/32-bit word ordering, XOR, horizontal
       `Sub`, vertical `Up`, and simple Paeth-like reversible predictors before
       LZ4.
@@ -567,8 +589,13 @@ changing the proven player.
       runs, and greedy rectangle merging capped initially at 4/8 rectangles.
 - [x] Score rectangle candidates on both sectors and LCD calls/pixels; extra
       rectangles can save storage while costing display setup time.
-- [ ] Compare 8x8, 16x8, and 16x16 maps with raw, solid-color, palette, XOR, and
-      LZ4 tile payloads.
+- [x] Compare 8x8, 16x8, and 16x16 maps with raw and LZ4 tile payloads in the
+      sector-count lab.
+- [ ] Correct `lab.py`'s component accounting to subtract the canonical 16-byte
+      record header rather than 12 bytes, then regenerate padding reports. Total
+      sector/record bytes and candidate ranking are already computed correctly.
+- [ ] Extend tile payload experiments to solid-color, palette, and XOR variants
+      only where a content-class result can beat the current selector.
 - [ ] Add compact repeat runs and silence runs to measure sector-padding savings
       on animation/static material. Do not assume grouping is important until
       measured; padding is not the current music-video bottleneck.
@@ -584,16 +611,23 @@ changing the proven player.
 - [x] Compare `best` with built-in LZ4 on that corpus. Both produced the same
       4,269,600-byte file byte-for-byte and took 28.295/28.329 seconds, so no
       label/default change is justified by this workload.
-- [ ] Skip compressors that cannot cross the next whole-sector threshold and
-      evaluate deterministic bounded worker parallelism. Preserve byte-for-byte
-      output determinism and do not trade device decode speed for host speed.
-- [ ] Reject standalone PackBits for natural high-motion video unless a current
-      sector-accurate corpus reverses the existing loss to LZ4.
+- [x] Benchmark simple whole-sector compressor-pruning bounds. Two shortcuts
+      were removed after pruning zero calls and producing no creator-time or
+      file-size benefit.
+- [ ] Evaluate deterministic bounded worker parallelism or stronger compressor
+      bounds while preserving byte-for-byte output determinism.
+- [x] Keep standalone PackBits rejected for natural high-motion video unless a
+      current sector-accurate corpus reverses its measured loss to LZ4.
 
 Decision gate:
 
-- [ ] Select a small set of modes that wins across distinct classes; do not put
-      every explored codec into the device decoder.
+- [x] Keep the device mode set small and adaptive: qualified whole-frame motion
+      is the creator default through 30 fps, spatial video with adaptive
+      `--lz4-mode best` is the default above 30 fps, dense temporal XOR is capped
+      at 30 fps and remains explicit, and weaker experiments stay host-only or
+      rejected.
+- [x] Defer Sub16 below the 10% promotion gate: it saved 4.3617% beyond adaptive
+      spatial/LZ4HC, has no timed inverse, and may force full-frame display work.
 
 ## Phase 2 - Temporal XOR+LZ4 hardware experiment
 
@@ -604,9 +638,10 @@ Goal: qualify the strongest measured lossless high-motion candidate.
 - [x] Add a full-frame `previous XOR current` residual candidate with ordinary
       key/raw/LZ4 fallback.
 - [x] Reset dependency at forced keyframes; scene-cut-aware key insertion is
-      still pending.
-- [ ] Store an explicit base/dependency distance so corruption and seeking are
-      bounded.
+      still pending under the single keyframe-policy task in Phase 1.
+- [x] Keep temporal dependencies explicitly defined as the immediately previous
+      frame and bound every chain by forced true keyframes and the keyframe
+      index; a separate base-distance field is unnecessary for this design.
 - [x] Maintain one persistent 77,440-byte decoded reference frame.
 - [x] Decode LZ4 residual into cached scratch, XOR/reconstruct in cached memory,
       then copy once to the acquired uncached render slot.
@@ -637,8 +672,10 @@ Goal: qualify the strongest measured lossless high-motion candidate.
       low-water, late, and gaps separately. The current player has stage totals/maxima; ring
       low-water and distributions remain.
 - [x] Confirm every final CRC and normal lifecycle exit in the first matrix.
-- [ ] Accept only if sector savings survive current-format overhead and device
-      timing/power gates.
+- [x] Apply the acceptance gate by complete sector cost and device timing:
+      temporal XOR is retained only through 30 fps and 60 fps remains spatial.
+      Qualified whole-frame motion is the current through-30-fps default;
+      battery measurement remains required before further CPU-heavier promotion.
 
 ## Phase 3 - Indexed container, seek, pause, and resume
 
@@ -662,23 +699,31 @@ there is one format and no compatibility/version branch.
 ### Canonical layout
 
 - [x] One 512-byte superblock carries rational FPS fields, 64-bit media/index
-      locations, bounded metadata, and an index CRC. Widened logical frame/audio
-      counts plus file/segment identity remain before segmentation/resume.
+      locations, bounded metadata, a content-derived media identity, and an
+      index CRC. Wider logical frame/audio counts and segment identity remain
+      part of the unresolved large-file/segmentation design.
 - [x] Sector-aligned media records retain bounded video+audio reads unchanged.
-- [ ] Store the current record's size, mode, frame number, audio start/count,
-      dependency/keyframe state, stored/decoded sizes, and bounded checksums.
-- [x] Replace the current next-record-size chain as the only navigation source:
-      IPVF appends a validated keyframe index while retaining the chain for the
-      fastest sequential path.
-- [ ] A per-frame paged index remains optional. The implemented 16-byte
-      keyframe-only table costs about 14.4 KB/hour at 30 fps or 28.8 KB/hour at
-      60 fps with a 120-frame interval and does not need to be resident.
+- [x] Each record stores bounded size/mode, video/audio payload sizes, and mode
+      details; temporal and motion payloads carry their required CRC internally.
+      Frame number, audio boundary, and previous-frame dependency are derived
+      deterministically from the rational timeline and sequential record
+      position rather than duplicated on disk.
+- [x] Add a validated keyframe index for seeks alongside the retained
+      next-record-size chain used by the fastest sequential path.
+- [x] Keep a per-frame paged index out of the canonical format unless measured
+      seeking demands it. The implemented 16-byte keyframe-only table costs
+      about 14.4 KB/hour at 30 fps or 28.8 KB/hour at 60 fps with a 120-frame
+      interval and does not need to be resident.
 - [x] Include a compact keyframe table for fast coarse navigation. Entries are
       16 bytes, strictly ordered, cover every true keyframe, use 64-bit logical
       offsets, and are protected by one Rockbox CRC32. Segment entries remain.
-- [ ] Measure CRC/checksum CPU cost. Prefer header plus stored-payload checking
-      that can be fused with copying/decoding; do not spend the frame budget on
-      redundant hashes without evidence.
+      The qualification encode contained 1,082 frames, 10 indexed keys, a
+      160-byte index, and 37 metadata bytes; strict validation passed.
+- [x] Measure temporal integrity alternatives: reconstructed-frame CRC, a no-CRC
+      lower bound, and compressed-payload CRC. The retained payload CRC measured
+      0.34--5.96 ms per temporal record and avoids another full-frame pass.
+- [ ] Measure remaining index/header checksum cost and avoid redundant hashes
+      that cannot be fused with copying or decoding.
 - [ ] Define deterministic recovery: bad audio becomes timed silence; bad delta
       holds the last valid image until the next keyframe; bad index falls back
       to a bounded sync scan; no infinite retries.
@@ -690,8 +735,10 @@ there is one format and no compatibility/version branch.
       forward without LCD presentation, promote the exact target to a full
       frame, prebuffer from its exact sample boundary, and restart the mixer;
       the A1099 control pass completed with stable picture, sound, and sync.
-- [ ] Test 0/10/50/90/99%, immediately before/after keyframes, rapid repeated
-      seeks, and segment boundaries.
+- [x] Qualify ordinary and rapid repeated forward/backward seeks, including
+      multi-click accumulation and reconstruction across indexed keyframes.
+- [ ] Complete the exact 0/10/50/90/99%, immediately-before/after-keyframe, and
+      future segment-boundary seek matrix.
 - [x] Play pause/resume and Left/Right ten-second seek controls are implemented
       and A1099-qualified. Persistent resume/start-over choice is implemented
       and A1099-qualified.
@@ -709,8 +756,8 @@ there is one format and no compatibility/version branch.
       pause/details, after seek activation, on clean exit, and before Rockbox
       USB/power/reboot takeover. The combined 45-second A1099 run crossed the
       periodic checkpoint without an observed gap.
-- [ ] Resume correctly after MENU, reboot, USB, and an interrupted prior run.
-      MENU resume passed; reboot, USB, and forced-interruption cases remain.
+- [x] Resume correctly after MENU stop/reopen.
+- [ ] Qualify resume after reboot, USB takeover, and a forced-interruption run.
 
 ### Metadata
 
@@ -735,8 +782,10 @@ still exceed the desired storage budget.
 - [x] Variable bitrate equivalent: choose every record adaptively by complete
       sector cost instead of assigning a fixed byte budget.
 - [ ] Chroma reduction: compare YUV420 or host chroma smoothing only after a
-      bounded device conversion benchmark; RGB444/454 preprocessing is the
-      current zero-decoder-cost approximation.
+      bounded device conversion benchmark. Existing host results show modest
+      high-motion residual savings, while device conversion could consume the
+      small 60-fps CPU margin. RGB444/454 preprocessing was measured and rejected
+      for everyday use because visible banding outweighed its savings.
 - [x] Motion prediction begins with qualified whole-frame translations and one
       previous reference.
 - [ ] Extend motion prediction to bounded block vectors and residuals only if
@@ -746,15 +795,16 @@ still exceed the desired storage budget.
       an expensive inverse transform.
 - [ ] Entropy coding: evaluate stronger host parsing and small ARM-decodable
       coders, but retain LZ4 unless both sector size and device time improve.
-- [ ] GOP/keyframe policy: express dependency limits in time, add scene-cut
-      keys and an index, and never use unbounded prediction chains.
+- Keyframe interval and scene-cut policy are tracked once in Phase 1; the index
+  and bounded time-based dependency chains are complete.
 - [x] Frame-rate profiles: real 24/20/15-fps footage was measured by complete
       IPVF size; preserve source cadence up to 30 fps for the everyday profile,
       retain 20 fps as a valid compact output, and do not infer a quality defect
       from the frame-rate label alone. Treat 15 fps as a separate stronger
       cadence experiment.
-- [ ] Quality remains an LCD decision: SSIM/PSNR rank candidates but cannot
-      approve judder, banding, small text, faces, fades, or dark gradients.
+- [x] Make quality an LCD decision: SSIM/PSNR rank candidates but do not approve
+      judder, banding, small text, faces, fades, or dark gradients. The RGB444,
+      RGB454, and RGB555 A/B results were rejected on this basis.
 
 ### Low-complexity temporal prediction
 
@@ -791,13 +841,18 @@ still exceed the desired storage budget.
 
 - [x] Preserve exact rational source cadence up to 30 fps, including
       24000/1001, 24, 25, and 30000/1001. Integer 24/20/15 testing remains the
-      measured profile comparison; native 30/60 source testing remains.
-- [ ] Test native 30- and 60-fps real footage rather than judging those rates
-      from duplicated 23.976-fps frames; compare motion feel, CPU margin,
-      battery, late frames, and complete sector-rounded size on the A1099.
-- [ ] Separately test bounded host motion interpolation from 23.976/24 to
-      30/60 fps. Reject it if visible interpolation artifacts or resulting
-      IPVF size/device cost outweigh the perceived-motion benefit.
+      measured profile comparison; representative native 30/60 real-footage
+      testing remains.
+- [x] Qualify matched output from a native-60 motion source: the 30-fps file used
+      216 whole-frame motion records among 240 frames and measured 3,587,632
+      bytes; the 60-fps file used 480 spatial frames and measured 7,865,536
+      bytes. Both reconstructed exactly and played cleanly; 60 fps felt more
+      immediate.
+- [ ] Repeat the native 30/60 gate with representative real footage and add CPU,
+      battery, lateness, and complete sector-rounded size reporting.
+- [x] Reject bounded host 24-to-60 interpolation. It expanded the matched file
+      from 4,269,600 bytes at source cadence to 10,768,928 bytes and stuttered
+      heavily; duplicated 60 fps was 4,713,504 bytes and slightly stuttered.
 - [x] Compare host-side RGB565 quantization that suppresses visually irrelevant
       low-bit changes before residual/LZ4 coding. RGB555/454/444 at 24 fps saved
       7.0%/16.3%/24.4% on the real-footage sample.
@@ -805,11 +860,9 @@ still exceed the desired storage budget.
 - [x] Compare lower active image resolutions letterboxed in the native frame.
       An 80% image saved 27.6% but SSIM fell to 0.5504; keep this out of the
       everyday default pending LCD review.
-- [ ] Compare YUV420 only with a device conversion benchmark. Existing host
-      results show modest high-motion residual-size improvement, while device
-      YUV-to-RGB cost could consume the small 60-fps CPU budget.
-- [ ] Define quality levels by measured size and LCD A/B results, not labels
-      such as “high” or “low.”
+- [x] Define the current named profiles from measured size and LCD A/B results:
+      everyday/native preserve RGB565 and source cadence up to 30 fps; compact
+      uses RGB565 at 20 fps. Color-reduced profiles remain experiments.
 - [x] Compare mild/strong spatial-temporal denoise before LZ4. It preserved
       SSIM at 0.9985/0.9962 but saved only 1.3%/2.4%, so it is not a priority by
       itself.
@@ -819,9 +872,9 @@ still exceed the desired storage budget.
 - [ ] Benchmark Heatshrink, LZSA, LZO/NRV, static Huffman/Rice, or a tightly
       bounded small-window Zstd only in the host lab; promote only after they
       beat LZ4/XOR on both sectors and an ARM decoder microbenchmark.
-- [ ] Do not begin with Zstd/Brotli/Opus/H.264-class complexity. Better desktop
+- [x] Do not begin with Zstd/Brotli/Opus/H.264-class complexity. Better desktop
       ratios do not establish PP5020 RAM, cache, or deadline fitness.
-- [ ] Do not revisit MJPEG/general MPEG decode paths without a new fact that
+- [x] Do not revisit MJPEG/general MPEG decode paths without a new fact that
       changes the previously measured decode-cost boundary.
 
 ## Phase 5 - Audio size and quality
@@ -833,14 +886,16 @@ the working audio clock.
       decodable records, zero gaps in current qualification.
 - [x] Zero-payload exact silence and one-channel exact dual-mono IMA are
       implemented per record with no threshold/downmix. Silence-to-mono-to-
-      stereo transitions passed A1099 qualification without audible gaps.
+      stereo transitions passed A1099 qualification without audible gaps. The
+      exact transition file contained 359 frames at 24000/1001: 119 silence,
+      120 mono, and 120 stereo records.
 - [x] Host bakeoff: current IMA against MP2 96/128/160 and MP3 96/128.
       MP2 and MP3 were effectively equal in size at equal CBR; bounded
       delta/Rice remains a separate experiment.
 - [x] Report whole-IPVF savings, not only audio ratio. A complete 128-kbps MP2
       candidate reduced the present real-footage file by about 5.1%; 96 kbps
       improved the whole-file result by only another 0.7 percentage point.
-- [ ] Correct premise: Rockbox's libmad path supports MPEG Layer II as well as
+- [x] Correct premise: Rockbox's libmad path supports MPEG Layer II as well as
       Layer III, but the IPVF plugin cannot simply invoke `mpa.codec`; an MP2
       experiment needs a bounded private wrapper/extraction and RAM accounting.
 - [x] Prototype MP2 at 128 kbps first. A bounded Layer-II-only libmad build,
@@ -855,10 +910,11 @@ the working audio clock.
       playback.
 - [ ] Use impulse+flash and left/right ID clips to measure physical line-out to
       LCD synchronization, not only the software mixer clock.
-- [ ] Do not assume 22.05 kHz hardware output: the current target advertises
-      44.1 kHz. Probe the driver/hardware separately or measure resampling cost.
-- [ ] Do not move audio decode to the COP while it owns display unless profiling
-      proves audio CPU contention and a safe schedule exists.
+- [x] Do not assume 22.05 kHz hardware output: the current target advertises
+      44.1 kHz.
+- [ ] Probe alternate output rates separately and measure any resampling cost.
+- [x] Keep audio decode off the COP while it owns display unless profiling proves
+      audio CPU contention and a safe schedule exists.
 
 Reference bitrates:
 
@@ -876,14 +932,14 @@ Reference bitrates:
 - [ ] Compare current CPU boost with normal/controlled boost on identical files.
 - [ ] Compare battery voltage/load traces for 24/30/60 fps, raw/LZ4/XOR, IMA/MP2,
       backlight levels, and headphones/line out.
-- [ ] Do not claim temperature without an external sensor; the current model is
+- [x] Do not claim temperature without an external sensor; the current model is
       voltage-based and has no coulomb/current/temperature measurement.
 - [ ] Test HDD and iFlash, contiguous and deliberately fragmented files,
       near-full storage, and repeated cold/warm reads.
 - [ ] Instrument requested `rb->read()` versus actual ATA request/DMA behavior;
       one plugin read does not prove one physical DMA transfer.
-- [ ] Keep storage spindown disabled for the baseline, then test bounded
-      prefetch/spindown policies for low-bitrate movies.
+- [x] Keep storage spindown disabled for the qualification baseline.
+- [ ] Test bounded prefetch/spindown policies for low-bitrate movies.
 - [ ] Add an IPVF-owned read-ahead queue only if measured stalls/fragmentation
       starve the current one-record path. Use MPEGPlayer's private disk buffer as
       architectural reference, not the global playback buffer.
@@ -896,6 +952,18 @@ Reference bitrates:
       seek-associated mixer-empty callback did not rebuffer. A separate
       untouched 1,148-frame run logged zero late frames, gaps, rebuffers, and
       errors.
+- [x] Qualify off-screen seek reconstruction without render-slot traffic.
+      Intermediate frames still read, validate, and update the complete cached
+      reference, but do not acquire an uncached slot or copy throwaway render
+      output. Only the target frame acquires and queues a full-frame slot. The
+      completed seek target, including startup resume reconstruction, uses a
+      one-second audio cushion; fresh startup and true starvation recovery
+      retain the qualified four-second cushion. The
+      bounded teardown journal now records seek count, reconstructed frames,
+      and maximum seek ticks; older journal schemas rotate automatically. The
+      follow-up completed five seeks with correct output, zero late frames,
+      rebuffers, or errors, and a subjectively responsive result. Worst seek
+      time fell from 209 to 111 ticks across the two interaction runs.
 - [ ] Measure whether startup's audio prebuffer scan/reread should be replaced by
       an index-assisted or multi-record read.
 - [ ] Profile frame catch-up under injected stalls: current pause, timed silence,
@@ -905,7 +973,19 @@ Reference bitrates:
 
 ### Duration and drift
 
-- [ ] 5-minute smoke for every promoted mode.
+- [x] Canonical five-minute lifecycle/checkpoint gate: a
+      300.08-second/7,202-frame spatial/IMA file completed with controls and
+      resume working. The first complete run showed three or four small stutters
+      and logged 11 late presentations and 3 mixer underruns. Four-second
+      recovery reduced the cascade to one bounded pause; a separate ordinary
+      run completed with zero gaps/rebuffers. Four recoveries during repeated,
+      unrecognized USB connection attempts are classified as USB/storage stress.
+      A 2-MiB/eight-second cushion was rejected after lengthening the same single
+      hotspot. The deterministic frame-720 stall was traced to synchronous FAT
+      work at the first 30-second resume checkpoint; preallocated in-place slots
+      removed it, and a 71-second targeted rerun crossed the next checkpoint
+      with zero underruns, rebuffers, or errors.
+- [ ] Five-minute smoke for every other promoted mode/profile.
 - [ ] 30-minute drift/endurance run.
 - [ ] One-hour run across the 2-GiB boundary plan.
 - [ ] Two-hour movie/loop with segment rollover where required.
@@ -916,7 +996,8 @@ Reference bitrates:
 
 - [ ] Early/middle/late MENU stop followed by immediate replay.
 - [ ] Early/middle/late USB insertion during read, decode, audio, and display.
-- [ ] Pause/resume, rapid seek, and persistent resume/start-over.
+- [x] Pause/resume, rapid seek, and persistent resume/start-over on the canonical
+      lifecycle file.
 - [ ] Ten full play/stop/reopen cycles.
 - [ ] One hundred short cycles for leaks, stuck mixer channels, slot ownership,
       CPU boost, backlight, spindown, and plugin-buffer restoration.
@@ -928,116 +1009,52 @@ Reference bitrates:
 
 ### Release gate
 
-- [ ] Host corpus and malformed corpus pass.
+- [x] Deterministic host corpus generation and sector-count lab pass.
+- [ ] Run manifest-driven strict reconstruction/audio validation for every
+      corpus encode and retain its machine-readable report.
+- [ ] Malformed/mutation corpus passes.
 - [ ] 30 fps general-movie corpus passes with zero gaps/drops.
-- [ ] 60 fps support is labeled by measured content/profile capability.
-- [ ] Seeking/resume and segment rollover pass their full matrix.
+- [x] 60 fps support is labeled by measured capability: spatial records are the
+      qualified 60-fps path; whole-frame motion and dense temporal XOR records
+      are limited to 30 fps.
+- [ ] Seeking/resume passes the remaining exact-position, reboot, USB, and
+      forced-interruption matrix.
+- [ ] Segment rollover passes its full matrix after the 2-GiB decision.
 - [ ] Long drift, lifecycle, storage, and battery reports are complete.
-- [ ] Qualification logging is compiled out and production timing/file size are
-      rechecked.
+- [x] Detailed qualification telemetry is compiled out of the production
+      plugin; the bounded teardown journal intentionally remains.
+- [ ] Recheck production timing and file size at the final release gate.
 - [ ] README, development history, encoder help, creator workflow, and this plan
       match the code.
-- [ ] Friendly command remains one step:
+- [x] Friendly creator command remains one step:
       `python3 tools/ipvf/encode.py input-anything.mp4 output.ipvf`.
 
-## Immediate next batch
+## Active priorities
 
-Do these in order:
+Completed milestone results now live once in their owning phases above instead
+of being repeated in a second chronological checklist. The highest-return open
+work is:
 
-- [x] P0.1: capture reproducible current 30/60 LZ4/IMA baselines and exact
-      compressor provenance.
-- [x] P0.2: build the strict streaming inspector and sector-accurate size
-      report. Independent external-LZ4 decoding remains a hardening item.
-- [x] P0.3: generate the deterministic corpus and bulk host matrix.
-- [x] P1.1: run current LZ4, official LZ4HC/optimal, predictors,
-      multi-rectangle, tiles, and current-format XOR+LZ4 offline.
-- [x] P1.2: choose modes by total sectors and decoder-operation budget.
-- [x] P2.1: the conservative 96-KiB three-slot stride is A1099-qualified without
-      changing the pipeline's ownership model, freeing 96 KiB versus 128-KiB
-      slots. The exact 80-KiB stride remains optional and ungated by need.
-- [x] P2.2: build one bounded XOR+LZ4 qualification player with sparse logging.
-- [x] P2.3: install via the standard WSL package/Windows device loop; run 30 fps
-      first, then 60 fps; pull and analyze logs after each gate.
-- [ ] P1.3: Sub16 is deferred below the 10% promotion gate: its exact aggregate
-      gain over adaptive spatial/LZ4HC is 4.3617%, no inverse exists or is timed,
-      and full-frame display work is a risk. Implement only a host inverse
-      round-trip/timing benchmark before reconsidering a device record type.
-- [x] P4.1: create matched native-24, native-20, RGB454-24, RGB444-24, and
-      RGB444-20 device files from the same real scenes and perform an A1099 LCD
-      A/B. All were smooth with no immediate visible defect. No objective 20 fps
-      defect was established; the `compact` name denotes its size target.
-- [x] P4.2: expose friendly named creator profiles and encode/validate the
-      complete `suds` source. RGB444/24 was 23.72% below native but showed
-      strong gradient banding; RGB454/24 was 15.83% below native but still
-      showed noticeable banding; RGB555/24 saved only 8.40% and was also
-      noticeable. Everyday remains RGB565. Compact is now RGB565/20, saving
-      15.52% without reducing color precision.
-- [x] P2.4: implement and device-qualify bounded wheel volume control. Ordinary
-      playback, IPVF playback, volume changes, and uninterrupted A/V passed
-      together; OSD and explicit clamping stress remain separate follow-ups.
-- [x] P4.3 native-rate gate: matched 8-second native-motion output passed at
-      30 fps (240 frames, 3,587,632 bytes) and 60 fps (480 frames, 7,865,536
-      bytes), with exact source reconstruction and zero-payload silence. A1099
-      playback was clean at both rates; 60 fps felt faster/more immediate while
-      retaining the same exact duration.
-- [x] P4.3 interpolation gate: reject 24-to-60 host interpolation. On the same
-      eight-second source, source cadence was 4,269,600 bytes, duplicated 60
-      fps was 4,713,504 bytes, and motion-interpolated 60 fps was 10,768,928
-      bytes. Duplicated 60 showed slight A1099 stutter; interpolated 60 stuttered
-      heavily throughout. No interpolation option is retained in the creator.
-- [x] P3.2: implement IPVF's bounded metadata and appended keyframe index.
-      The 45.08-second real-motion encode contains 1,082 frames, 10 indexed
-      keys, a 160-byte index, and 37 metadata bytes; strict WSL validation and
-      all 21 host tests pass.
-- [x] P3.3: A1099 pause/seek, rapid multi-click accumulation, volume,
-      MENU/reopen, completion, and A/V sync passed. USB during active seek
-      remains in the broader lifecycle matrix.
-- [x] P3.4: add atomic persistent resume only after P3.3 proves the seek reset
-      path; key it by stable media identity rather than a mutable filename.
-      The combined A1099 resume/reopen/start-over/completion/details/checkpoint
-      test passed.
-- [x] P5.1: qualify the canonical 16-byte record header, exact rational cadence,
-      zero-payload silence, exact dual-mono IMA, and stereo fallback together.
-      Host validation and A1099 playback pass a 359-frame 24000/1001 transition
-      file containing 119 silence, 120 mono, and 120 stereo records.
-- [x] P5.2: prototype and reject canonical 128-kbps MP2 on A1099. Host size and
-      correctness checks passed, but hardware playback regressed at 30 fps,
-      failed at 60 fps, and slowed seek response. No MP2 implementation or
-      format change is retained; adaptive IMA remains the working baseline.
-- [x] P7.1: five-minute lifecycle behavior passed: volume, details, pause,
-      rapid seeking, MENU/resume, and natural completion all worked, with zero
-      fatal errors. Smoothness remains open because three or four small
-      stutters were visible and the final run logged 11 late presentations and
-      3 mixer underruns. Four-second recovery reduced a cascade to one bounded
-      pause and one uninterrupted completion logged zero gaps/rebuffers. A
-      separate run recovered four times while repeated USB connections were
-      attempted but not recognized; treat that as USB/storage stress, not
-      ordinary playback. The 2-MiB/eight-second follow-up still recovered once
-      at the same content position and made the pause longer, so it is rejected.
-      Four seconds is restored while first/last recovery frame and actual ring
-      capacity identified the deterministic hotspot. The rerun
-      located it at frame 720, exactly the first 30-second persistent-resume
-      checkpoint. Resume slots are now preallocated before playback and updated
-      in place from RAM-maintained sequence state. A 71-second targeted run
-      crossed the next periodic checkpoint with zero underruns, rebuffers, or
-      errors; the five-minute lifecycle/checkpoint gate is closed.
-- [x] P6.1: hardware-qualify cached spatial decode/copy reduction. Rapid seek in
-      both directions, pause/details, volume, and playback all behaved normally
-      with no visible corruption or audible hiccup. A separate untouched
-      1,148-frame run logged zero late frames, audio gaps, rebuffers, or errors.
-      Natural completion was already qualified on the same lifecycle file and
-      its unchanged teardown path.
-- [ ] P3.1: settle 2-GiB behavior before final segment/rollover and long-movie
-      resume rules. IPVF stores 64-bit logical media/index offsets but the
-      current A1099 Rockbox file API deliberately rejects offsets above 2 GiB.
-- [x] Update this checklist for the indexed host/device batch; continue after every hardware
-      result.
+1. Settle actual A1099 behavior around the 2-GiB Rockbox file ceiling, then
+   choose widened offsets or transparent segmentation (Phase 3).
+2. Run the 30-minute endurance/drift gate with final audio, A/V, ring, teardown,
+   and framebuffer evidence (Phase 7).
+3. Measure index-assisted or multi-record startup prebuffer/read-ahead and retain
+   it only if it improves latency or storage-stall tolerance (Phase 6).
+4. Complete qualification telemetry distributions/ring low-water and the
+   malformed/mutation corpus before broader codec work (Phase 0).
+5. Sweep scene-cut-aware/time-based keyframe policy and the exact seek/resume
+   interruption matrix (Phases 1 and 3).
+6. Profile IMA, LZ4, CPU boost, storage behavior, and battery before making any
+   CPU-heavier mode a default (Phase 6).
 
 ## Evidence and references
 
 ### Local source and measurements
 
-- `tools/ipvf/encode.py` - current encoder, one bounding rectangle, LZ4, IMA.
+- `tools/ipvf/encode.py` - canonical creator: scaling/letterboxing, metadata,
+  indexed records, adaptive spatial/multi-rectangle/motion/temporal video,
+  LZ4HC selection, and adaptive silence/mono/stereo IMA audio.
 - `tools/ipvf/README.md` - canonical layout and current device results.
 - `tools/ipvf/DEVELOPMENT_HISTORY.md` - measured architecture history.
 - `apps/plugins/ipodnative.c` and `ipodnative_*.inc` - parser, decoder, mixer,

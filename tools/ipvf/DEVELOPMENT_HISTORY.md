@@ -1546,3 +1546,36 @@
   errors. This separates the prior callback from steady playback and promotes
   the cached spatial-copy reduction. Anonymous evidence is retained in
   `qualification/2026-09-01-cached-spatial-copy-runs.tsv`.
+
+## 57. Off-screen seek reconstruction candidate
+
+- The indexed seek loop previously acquired an uncached render slot for every
+  intermediate reconstruction frame, copied decoded payload into it, then
+  immediately abandoned it. None of that output was displayed.
+- Intermediate seek frames now reconstruct only the cached canonical reference.
+  Compressed keys decode into the reference, compressed rectangles decode in
+  cached scratch and update it, raw records update it from the validated record
+  payload, and temporal records preserve their existing reference path. The
+  target frame alone acquires a render slot and emits the same full-frame image
+  used by the qualified seek path.
+- Every failure path abandons a slot only when one was actually acquired. The
+  normal playback/render ownership model and file format are unchanged.
+- The bounded teardown journal adds seek count, total intermediate frames, and
+  worst complete seek duration in scheduler ticks. An existing journal with a
+  different header is rotated before the new row is written. Host tests and the
+  warning-free WSL A1099 build pass.
+- The first hardware run completed four aggregated seeks, reconstructed 218
+  intermediate frames, and reported a 209-tick worst seek with no fatal error
+  or rebuffer. The remaining delay included rebuilding the full four-second
+  audio cushion before playback resumed. Seek/startup policy is now split:
+  completed seeks resume after one second of decoded audio, while initial
+  startup and true mixer-starvation recovery retain the qualified four-second
+  cushion.
+- The follow-up completed five seeks and reconstructed 165 intermediate frames.
+  Worst measured seek time was 111 ticks versus 209 ticks in the first
+  interaction run, a 46.9% lower observed maximum despite different exact
+  targets. It logged zero late frames, rebuffers, or errors, and playback was
+  reported as responsive with no visible or audible issue. One mixer-empty
+  callback appeared only during the seek-heavy sequence. The candidate is
+  promoted; anonymous evidence is retained in
+  `qualification/2026-09-01-seek-reconstruction-runs.tsv`.

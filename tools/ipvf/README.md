@@ -217,7 +217,7 @@ On PP5020 hardware, the player preserves the qualified three-slot pipeline:
 3. The COP sends the prior decoded slot through the target LCD driver while the
    CPU reads and decodes the next record.
 4. After the first frame and its audio are decoded and the image is presented,
-   the CPU scans future records to prebuffer about one second of audio, seeks
+   the CPU scans future records to prebuffer about four seconds of audio, seeks
    back to the second record, and starts Rockbox's playback mixer at 44.1 kHz.
    Consumed PCM samples become the master clock for later video frames.
 5. If storage ever outruns the audio ring, the mixer channel stops and restarts
@@ -230,8 +230,9 @@ On PP5020 hardware, the player preserves the qualified three-slot pipeline:
    counters, so decoded audio remains the clock. Left and Right seek ten
    seconds through the keyframe index. Seeking rebases audio, drains and
    restarts the render worker, reconstructs from the preceding keyframe without
-   presenting intermediate frames, promotes the exact target to one full-frame
-   LCD update, prebuffers from that sample boundary, and restarts the mixer.
+   acquiring render slots or producing throwaway output for intermediate
+   frames, promotes the exact target to one full-frame LCD update, prebuffers
+   one second from that sample boundary, and restarts the mixer.
    Distinct rapid clicks accumulate instead of collapsing into one jump, and
    clicks received during reconstruction carry into the next target. Seeking
    beyond EOF clamps to the final frame and completes playback normally.
@@ -492,3 +493,11 @@ mixer-empty callback appeared only in that control-heavy run. A separate untouch
 1,148-frame run logged zero late presentations, audio gaps, rebuffers, and
 errors. Anonymous rows are retained in
 `qualification/2026-09-01-cached-spatial-copy-runs.tsv`.
+
+Off-screen seek reconstruction and the split seek/startup audio cushion passed
+their A1099 gate. The first control completed four seeks and reported a
+209-tick worst seek while using the four-second cushion. With a one-second seek
+cushion, the follow-up completed five seeks with a 111-tick worst result, zero
+late frames, rebuffers, or errors, and no visible or audible issue. Startup and
+true starvation recovery retain four seconds. Evidence is retained in
+`qualification/2026-09-01-seek-reconstruction-runs.tsv`.

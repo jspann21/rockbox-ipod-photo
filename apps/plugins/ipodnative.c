@@ -75,6 +75,12 @@
 #define IPVF_RUN_JOURNAL           ROCKBOX_DIR "/ipvf-runs.tsv"
 #define IPVF_RUN_JOURNAL_PREVIOUS  ROCKBOX_DIR "/ipvf-runs.previous.tsv"
 #define IPVF_RUN_JOURNAL_MAX_BYTES (32u * 1024u)
+#define IPVF_RUN_JOURNAL_HEADER \
+    "tick\telapsed_ticks\tbuild\tstatus\tfps_num\tfps_den\t" \
+    "frames\ttotal_frames\tactive_frame\tlate\taudio_gaps\t" \
+    "audio_rebuffers\tfirst_rebuffer_frame\tlast_rebuffer_frame\t" \
+    "audio_capacity_frames\tseek_count\tseek_reconstructed_frames\t" \
+    "max_seek_ticks\terror\terror_frame\n"
 
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
 #define IPVF_QUALIFICATION_LOG \
@@ -153,6 +159,9 @@ struct ipvf_stats
     unsigned long first_audio_rebuffer_frame;
     unsigned long last_audio_rebuffer_frame;
     unsigned long audio_capacity_frames;
+    unsigned long seek_count;
+    unsigned long seek_reconstructed_frames;
+    unsigned long max_seek_ticks;
     unsigned long error_count;
     unsigned long first_error;
     unsigned long first_error_frame;
@@ -852,11 +861,13 @@ static bool decode_record_video(const unsigned char *record,
                                 unsigned char *scratch,
                                 unsigned char *reference,
                                 bool native_geometry,
+                                bool produce_output,
                                 struct ipvf_stats *stats)
 {
     const unsigned char *source = record + IPVF_FRAME_HEADER_SIZE;
     unsigned char *destination = decoded_record + IPVF_FRAME_HEADER_SIZE;
-    unsigned char *payload = destination;
+    const unsigned char *payload = destination;
+    unsigned char *decode_target = destination;
     bool valid;
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
     uint32_t operation_started;
@@ -907,22 +918,22 @@ static bool decode_record_video(const unsigned char *record,
         {
             if (scratch == NULL || reference == NULL)
                 return false;
-            payload = scratch;
+            decode_target = scratch;
         }
         else if (record_info->type == IPVF_TYPE_KEY && reference != NULL)
         {
             /* Decode cached keys directly into the canonical reference. */
-            payload = reference;
+            decode_target = reference;
         }
         else
         {
             /* Keep LZ4 match work cached; the render slots are uncached. */
-            payload = scratch != NULL ? scratch : destination;
+            decode_target = scratch != NULL ? scratch : destination;
         }
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
         operation_started = USEC_TIMER;
 #endif
-        valid = ipvf_lz4_decode(source, stored_bytes, payload,
+        valid = ipvf_lz4_decode(source, stored_bytes, decode_target,
                                 record_info->decoded_video_bytes);
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
         operation_us = USEC_TIMER - operation_started;
@@ -948,12 +959,13 @@ static bool decode_record_video(const unsigned char *record,
                     &stats->temporal_reconstruct_us,
                     &stats->max_temporal_reconstruct_us, operation_us);
 #endif
-            payload = reference;
+            decode_target = reference;
         }
+        payload = decode_target;
     }
     else if (record_info->stored_video_bytes != 0)
     {
-        rb->memcpy(destination, source, record_info->stored_video_bytes);
+        payload = source;
     }
 
     if (record_info->type == IPVF_TYPE_KEY)
@@ -973,20 +985,20 @@ static bool decode_record_video(const unsigned char *record,
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
     operation_started = USEC_TIMER;
 #endif
-    if (record_info->temporal)
-        rb->memcpy(destination, reference, IPVF_FRAME_BYTES);
-    else if (payload != destination)
-        rb->memcpy(destination, payload, record_info->decoded_video_bytes);
-
     if (reference != NULL)
     {
         if (record_info->type == IPVF_TYPE_KEY && !record_info->temporal &&
             payload != reference)
-            rb->memcpy(reference, destination, IPVF_FRAME_BYTES);
+        {
+            rb->memcpy(reference, payload, IPVF_FRAME_BYTES);
+            payload = reference;
+        }
         else if (record_info->type == IPVF_TYPE_RECTS)
             update_reference_rects(payload,
                                    record_info->rect_count, reference);
     }
+    if (produce_output && payload != destination)
+        rb->memcpy(destination, payload, record_info->decoded_video_bytes);
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
     operation_us = USEC_TIMER - operation_started;
     if (stats != NULL)
