@@ -690,6 +690,13 @@ static void update_reference_rects(const unsigned char *payload,
         unsigned int row;
 
         p += IPVF_RECT_HEADER_SIZE;
+        if (x == 0 && w == LCD_WIDTH)
+        {
+            rb->memcpy(reference + (size_t)y * LCD_WIDTH * sizeof(fb_data),
+                       p, (size_t)w * h * sizeof(fb_data));
+            p += (size_t)w * h * sizeof(fb_data);
+            continue;
+        }
         for (row = 0; row < h; row++)
         {
             rb->memcpy(reference +
@@ -896,7 +903,22 @@ static bool decode_record_video(const unsigned char *record,
             if (!valid)
                 return false;
         }
-        payload = scratch != NULL ? scratch : destination;
+        if (record_info->temporal)
+        {
+            if (scratch == NULL || reference == NULL)
+                return false;
+            payload = scratch;
+        }
+        else if (record_info->type == IPVF_TYPE_KEY && reference != NULL)
+        {
+            /* Decode cached keys directly into the canonical reference. */
+            payload = reference;
+        }
+        else
+        {
+            /* Keep LZ4 match work cached; the render slots are uncached. */
+            payload = scratch != NULL ? scratch : destination;
+        }
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
         operation_started = USEC_TIMER;
 #endif
@@ -913,8 +935,6 @@ static bool decode_record_video(const unsigned char *record,
             return false;
         if (record_info->temporal)
         {
-            if (scratch == NULL || reference == NULL)
-                return false;
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             operation_started = USEC_TIMER;
 #endif
@@ -955,16 +975,16 @@ static bool decode_record_video(const unsigned char *record,
 #endif
     if (record_info->temporal)
         rb->memcpy(destination, reference, IPVF_FRAME_BYTES);
-    else if (record_info->compressed && scratch != NULL)
-        rb->memcpy(destination, scratch,
-                   record_info->decoded_video_bytes);
+    else if (payload != destination)
+        rb->memcpy(destination, payload, record_info->decoded_video_bytes);
 
     if (reference != NULL)
     {
-        if (record_info->type == IPVF_TYPE_KEY && !record_info->temporal)
+        if (record_info->type == IPVF_TYPE_KEY && !record_info->temporal &&
+            payload != reference)
             rb->memcpy(reference, destination, IPVF_FRAME_BYTES);
         else if (record_info->type == IPVF_TYPE_RECTS)
-            update_reference_rects(destination,
+            update_reference_rects(payload,
                                    record_info->rect_count, reference);
     }
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY

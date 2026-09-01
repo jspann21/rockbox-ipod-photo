@@ -887,6 +887,15 @@ Reference bitrates:
 - [ ] Add an IPVF-owned read-ahead queue only if measured stalls/fragmentation
       starve the current one-record path. Use MPEGPlayer's private disk buffer as
       architectural reference, not the global playback buffer.
+- [x] Qualify the cached spatial-copy reduction candidate. Compressed keys
+      decode directly into the cached canonical reference before one render-slot
+      copy; compressed rectangles update the reference from cached scratch, and
+      full-width rectangles use one contiguous reference copy. The normal LZ4
+      decoder remains off uncached render memory. Host tests and the WSL target
+      build pass. The seek/control run had no visible or audible issue; one
+      seek-associated mixer-empty callback did not rebuffer. A separate
+      untouched 1,148-frame run logged zero late frames, gaps, rebuffers, and
+      errors.
 - [ ] Measure whether startup's audio prebuffer scan/reread should be replaced by
       an index-assisted or multi-record read.
 - [ ] Profile frame catch-up under injected stalls: current pause, timed silence,
@@ -1012,6 +1021,12 @@ Do these in order:
       in place from RAM-maintained sequence state. A 71-second targeted run
       crossed the next periodic checkpoint with zero underruns, rebuffers, or
       errors; the five-minute lifecycle/checkpoint gate is closed.
+- [x] P6.1: hardware-qualify cached spatial decode/copy reduction. Rapid seek in
+      both directions, pause/details, volume, and playback all behaved normally
+      with no visible corruption or audible hiccup. A separate untouched
+      1,148-frame run logged zero late frames, audio gaps, rebuffers, or errors.
+      Natural completion was already qualified on the same lifecycle file and
+      its unchanged teardown path.
 - [ ] P3.1: settle 2-GiB behavior before final segment/rollover and long-movie
       resume rules. IPVF stores 64-bit logical media/index offsets but the
       current A1099 Rockbox file API deliberately rejects offsets above 2 GiB.

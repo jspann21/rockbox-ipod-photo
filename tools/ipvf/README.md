@@ -206,11 +206,14 @@ On PP5020 hardware, the player preserves the qualified three-slot pipeline:
    staging buffer. Video and its matching IMA block arrive in that read.
 2. The CPU decodes the record's IMA samples into a power-of-two mixer ring
    obtained from Rockbox's plugin audio buffer. Raw video is copied directly to
-   an acquired render slot. LZ4 video is expanded into cached scratch and then
-   copied once to that slot, avoiding byte-at-a-time writes to uncached SDRAM.
-   LZ4 literals use Rockbox's bulk copy from the uncached read buffer; short
-   cached match copies stay inline. Temporal residuals are XORed into a cached
-   77,440-byte reference, CRC-checked, and bulk-copied once to the slot.
+   an acquired render slot. Compressed true keys expand directly into the
+   cached canonical reference and are copied once to the slot. Compressed
+   rectangles expand into cached scratch, copy once to the slot, and update the
+   reference from cached scratch; full-width updates use one contiguous copy.
+   This keeps LZ4 match work away from uncached render memory. LZ4 literals use
+   Rockbox's bulk copy from the uncached read buffer; short cached match copies
+   stay inline. Temporal residuals are XORed into the cached reference,
+   CRC-checked, and bulk-copied once to the slot.
 3. The COP sends the prior decoded slot through the target LCD driver while the
    CPU reads and decodes the next record.
 4. After the first frame and its audio are decoded and the image is presented,
@@ -482,3 +485,10 @@ traced to periodic resume slots being reread and truncated on FAT. Resume slots
 are now allocated before playback, sequence/slot selection remains in RAM, and
 checkpoints overwrite fixed slots in place. A targeted 71-second rerun crossed
 the next checkpoint with zero audio gaps, rebuffers, or errors.
+
+The cached spatial-copy reduction then passed its A1099 gate. A seek/control
+run had no visible corruption, audible hiccup, rebuffer, or error; its one
+mixer-empty callback appeared only in that control-heavy run. A separate untouched
+1,148-frame run logged zero late presentations, audio gaps, rebuffers, and
+errors. Anonymous rows are retained in
+`qualification/2026-09-01-cached-spatial-copy-runs.tsv`.

@@ -1517,3 +1517,32 @@
   Anonymous evidence is retained in
   `qualification/2026-09-01-checkpoint-fix-runs.tsv`; 30-minute endurance is
   the next duration gate.
+
+## 56. Cached spatial-copy reduction candidate
+
+- The first proposed shortcut, decoding spatial LZ4 directly into an uncached
+  render slot, was rejected during review before installation. Earlier device
+  evidence showed that uncached LZ4 match work can stutter, so the decoder must
+  remain on cached memory.
+- Compressed true keys now decode directly into the cached canonical reference
+  and require one copy to the acquired render slot instead of scratch-to-slot
+  plus slot-to-reference copies. Compressed rectangle payloads still decode in
+  cached scratch, but reference updates read that cached payload rather than the
+  uncached render slot. Temporal reconstruction is unchanged.
+- Full-width rectangle reference updates are contiguous and now use one bulk
+  copy instead of one call per row. Partial-width updates preserve the proven
+  row-copy path.
+- Two sector-pruning host-encoder shortcuts were benchmarked and removed: one
+  pruned no compressor calls across the short corpus, and the LZ4HC floor check
+  pruned zero calls across 153 real frames. They produced no measured file-size
+  or creator-time benefit worth retaining.
+- All focused host tests pass and the A1099 target plugin builds warning-free in
+  WSL. The first hardware run exercised seeking both directions, pause/details,
+  volume, and continued playback without visible corruption, audible hiccup,
+  rebuffer, or error. It logged one mixer-empty callback during the seek-heavy
+  sequence.
+- A complete Rockbox rebuild was then installed and an untouched 1,148-frame
+  playback run logged zero late presentations, audio gaps, rebuffers, and
+  errors. This separates the prior callback from steady playback and promotes
+  the cached spatial-copy reduction. Anonymous evidence is retained in
+  `qualification/2026-09-01-cached-spatial-copy-runs.tsv`.
