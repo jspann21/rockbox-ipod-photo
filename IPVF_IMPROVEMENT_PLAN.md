@@ -738,8 +738,15 @@ still exceed the desired storage budget.
       573 motion records among 1,081 frames. Exact host reconstruction passed;
       A1099 playback, volume, pause/resume, seeking, and visual comparison had
       no detectable difference from the spatial control.
-- [ ] Then compare bounded integer 16x16, 16x8, and 8x8 motion vectors against
-      one previous reference frame.
+- [x] First bounded-block gate: fixed 16x16 vectors searched around the global
+      translation, with complete vector-table, CRC, LZ4, audio, and sector
+      costs. It added 0.00% savings on the 240-frame local-motion corpus and
+      only 0.18% on the 240-frame high-motion corpus (12 selected records).
+      Reject this design before device implementation; do not spend PP5020 RAM
+      or copy time for a sub-1% result.
+- [ ] Revisit 16x8/8x8 or richer block search only if a substantially different
+      corpus or residual design offers a credible >=5% whole-file gain beyond
+      qualified whole-frame motion.
 - [x] Store one translation vector plus an XOR/LZ4 residual; device decode is
       bounded to in-place translation, payload CRC, LZ4, XOR, and one render
       copy.
