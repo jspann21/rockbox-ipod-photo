@@ -1,5 +1,5 @@
 /*
- * Per-record stereo IMA ADPCM helpers.
+ * Per-record mono/stereo IMA ADPCM helpers.
  *
  * A record starts with one four-byte little-endian header for each channel:
  * signed 16-bit predictor, eight-bit step index, and a reserved zero byte.
@@ -9,6 +9,7 @@
  */
 
 #define IPVF_IMA_HEADER_BYTES 8u
+#define IPVF_IMA_MONO_HEADER_BYTES 4u
 #define IPVF_IMA_MAX_INDEX     88
 
 static const int32_t ipvf_ima_step_table[89] =
@@ -78,6 +79,25 @@ static bool ipvf_ima_parse_header(const unsigned char *block, size_t bytes,
     state->right_predictor = ipvf_ima_read_s16le(block + 4);
     state->left_index = block[2];
     state->right_index = block[6];
+    return true;
+}
+
+static bool ipvf_ima_parse_mono_header(const unsigned char *block,
+                                       size_t bytes, uint32_t frames,
+                                       struct ipvf_ima_state *state)
+{
+    uint64_t expected;
+
+    if (block == NULL || state == NULL || frames == 0)
+        return false;
+    expected = (uint64_t)IPVF_IMA_MONO_HEADER_BYTES + frames / 2u;
+    if ((uint64_t)bytes != expected || block[3] != 0 ||
+        block[2] > IPVF_IMA_MAX_INDEX)
+        return false;
+    state->left_predictor = ipvf_ima_read_s16le(block);
+    state->right_predictor = state->left_predictor;
+    state->left_index = block[2];
+    state->right_index = block[2];
     return true;
 }
 

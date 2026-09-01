@@ -1373,3 +1373,27 @@
   start-over, natural-completion suppression, and a 30-second checkpoint with
   no reported stutter or A/V error. USB/reboot/interruption recovery remains in
   the lifecycle matrix.
+
+## 51. Exact cadence and adaptive audio candidate
+
+- The creator now preserves exact source cadence through the existing rational
+  numerator/denominator fields instead of rounding 24000/1001 or 30000/1001 to
+  an integer. Audio boundaries, FFmpeg conversion, validation, seeking, and the
+  device clock all use the same rational.
+- The canonical per-frame record header is 16 bytes and explicitly stores audio
+  payload length. IPVF is unreleased, so there is no legacy 12-byte reader.
+- Audio storage is selected losslessly per record after conversion to stereo
+  PCM: exact digital silence stores zero bytes, exact dual mono stores one IMA
+  channel, and all other material stores stereo IMA. The device always emits
+  stereo PCM and duplicates decoded mono samples to both channels.
+- A 359-frame 24000/1001 qualification file contains 119 silence, 120 mono, and
+  120 stereo records. Its intentionally audible stereo section measures about
+  -23 dB RMS. Strict source reconstruction passes with final framebuffer CRC
+  `cf0f82d3`; 17 focused host tests and the A1099 target build pass. Hardware
+  playback then confirmed correct silence, centered mono, audible stereo, and
+  clean transitions.
+- The 45-second real-footage candidate uses exact 24000/1001 cadence, produces
+  1,081 frames, identifies eight exact-silence records, validates to the same
+  final framebuffer CRC as the prior integer-24 file, and is 38,912 bytes
+  smaller. This small real-file saving is timing correctness plus lossless audio
+  elision, not a claim of broad video compression improvement.

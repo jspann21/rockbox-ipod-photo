@@ -14,8 +14,9 @@ Install `ffmpeg`, then run:
 python3 tools/ipvf/encode.py input.mp4 output.ipvf
 ```
 
-The default `everyday` profile detects the source cadence, rounds it to the
-nearest integer rate up to 30 fps, and retains full RGB565 precision. The
+The default `everyday` profile preserves the source's exact rational cadence up
+to 30 fps (including 24000/1001 and 30000/1001) and retains full RGB565
+precision. The
 complete 224.71-second file is 153,456,640 bytes. Full-device comparison found
 noticeable gradient banding in RGB454 and very noticeable banding in RGB444,
 while RGB555 remained noticeable for only an 8.40% saving. None is promoted
@@ -34,11 +35,13 @@ test. `encode.py` is the only IPVF encoder; `test_encode.py` and `test_lab.py`
 are small host-only contract suites.
 
 The source must contain an audio stream. The encoder converts the first audio
-stream to 44.1 kHz stereo signed 16-bit PCM, then stores each frame's time slice
-as stereo IMA ADPCM. The stored audio is about 44,100 bytes per second, or 2.65
-MB per minute, plus an eight-byte state header per video frame. Predictors are
-anchored to exact samples at every record boundary, while step indices continue
-across records for better quality. Every block remains independently decodable.
+stream to 44.1 kHz stereo signed 16-bit PCM, then losslessly chooses each
+record's storage mode: zero bytes for exact digital silence, one-channel IMA for
+exact dual mono, or ordinary stereo IMA. No threshold or automatic downmix is
+used. Stereo costs about 44,100 bytes per second (2.65 MB/minute); dual mono is
+about half. Predictors are anchored at every stored block boundary, while step
+indices continue across records for quality. Every stored block remains
+independently decodable.
 
 IPVF also carries bounded UTF-8 `title`, `artist`, and `album` metadata.
 The one-step creator imports those tags from the source when present; use
@@ -120,8 +123,9 @@ Each video frame is one whole-sector record:
 | 2 | 2 | next record size in sectors; zero only for the final frame |
 | 4 | 4 | stored video bytes |
 | 8 | 4 | decoded video bytes |
-| 12 | variable | raw or independent LZ4 video block |
-| after stored video | variable | matching stereo IMA ADPCM block |
+| 12 | 4 | stored audio bytes: zero, mono IMA size, or stereo IMA size |
+| 16 | variable | raw or independent LZ4 video block |
+| after stored video | variable | matching silence, mono IMA, or stereo IMA payload |
 | end | variable | zero padding to a 512-byte boundary |
 
 A key video payload is one 77,440-byte frame. A rectangle payload contains one
@@ -153,13 +157,17 @@ For frame `n`, define the cumulative audio boundary:
 S(n) = round(n * 44100 * fps_den / fps_num)
 ```
 
-For `N = S(n + 1) - S(n)`, the record's audio block is exactly `8 + N - 1`
-bytes. Its eight-byte header stores a signed 16-bit predictor, step index, and
-zero reserved byte for the left channel, followed by the same fields for the
-right channel. Those predictors are decoded sample frame zero. Each remaining
-byte stores the next left code in its low nibble and right code in its high
-nibble. The header's total audio count must be `S(frame_count)`, making record
-sizes and A/V duration independently verifiable without per-record counts.
+For `N = S(n + 1) - S(n)`, stored audio bytes are one of:
+
+- `0` for exact silence;
+- `4 + floor(N / 2)` for exact dual-mono IMA;
+- `8 + N - 1` for stereo IMA.
+
+Mono uses one four-byte predictor/index header and packs two successive sample
+codes per byte; the player duplicates each decoded sample to left and right.
+Stereo uses one four-byte header per channel and stores the next left/right
+codes in each byte. The header's total decoded audio count remains
+`S(frame_count)`, so A/V duration is independently verifiable.
 
 The player accepts only the layout above.
 
@@ -230,9 +238,10 @@ python3 -m unittest -v tools.ipvf.test_encode tools.ipvf.test_lab
 ```
 
 They verify the canonical header, metadata TLVs, content-derived media
-identity, complete keyframe index and CRC, raw/LZ4/repeat sector chaining, LZ4
-roundtrip and malformed-input rejection, IMA block sizing and predictors,
-silence padding, trimming to the
+identity, complete keyframe index and CRC, exact rational cadence,
+raw/LZ4/repeat sector chaining, LZ4 roundtrip and malformed-input rejection,
+adaptive silence/mono/stereo IMA sizing and predictors, silence padding,
+trimming to the
 converted video duration, and the 96 KiB record bound.
 
 `validate.py` is the strict streaming file validator. It walks sector links,

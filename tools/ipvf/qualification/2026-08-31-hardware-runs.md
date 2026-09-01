@@ -339,3 +339,18 @@ seconds. No special EOF clamp or diagnostic build is retained.
 - The 45-second completion run crossed the 30-second periodic checkpoint with no
   reported stutter, desynchronization, wrong frame, or unexpected exit.
 - Reboot, USB-takeover, and forced-interruption recovery remain lifecycle cases.
+
+## Pass 13 - exact cadence and adaptive audio candidate
+
+- Candidate uses the canonical 16-byte media-record header with explicit audio
+  payload length and exact 24000/1001 frame timing.
+- One 15-second file transitions through approximately five seconds each of
+  zero-payload silence, exact dual-mono IMA, and deliberately audible stereo
+  IMA: 119/120/120 records respectively.
+- Strict source validation passes all 359 frames and reports final framebuffer
+  CRC `cf0f82d3`; 17 focused host tests and the production A1099 build pass.
+- Hardware qualification passed. The first generated stereo-control source was
+  effectively inaudible at about -79.5 dB RMS and was replaced rather than
+  treated as a decoder failure. The corrected file produced expected silence,
+  centered mono, audible stereo, and clean transitions; the 45-second exact-
+  cadence file also played and operated correctly.

@@ -80,8 +80,14 @@ static bool audio_write_ima_block(const unsigned char *source,
     long deadline = *rb->current_tick + HZ * 3;
     uint32_t last_completed = audio.completed_frames;
     uint32_t decoded = 0;
+    bool silence = source_bytes == 0;
+    bool mono = source_bytes == record_mono_audio_bytes(frames);
 
-    if (!ipvf_ima_parse_header(source, source_bytes, frames, &state))
+    if (!silence && mono &&
+        !ipvf_ima_parse_mono_header(source, source_bytes, frames, &state))
+        return false;
+    if (!silence && !mono &&
+        !ipvf_ima_parse_header(source, source_bytes, frames, &state))
         return false;
 
     while (decoded < frames)
@@ -131,10 +137,26 @@ static bool audio_write_ima_block(const unsigned char *source,
             int16_t left;
             int16_t right;
 
-            if (decoded == 0)
+            if (silence)
+            {
+                left = 0;
+                right = 0;
+            }
+            else if (decoded == 0)
             {
                 left = (int16_t)state.left_predictor;
                 right = (int16_t)state.right_predictor;
+            }
+            else if (mono)
+            {
+                unsigned int packed =
+                    source[IPVF_IMA_MONO_HEADER_BYTES + (decoded - 1u) / 2u];
+                unsigned int code = (decoded - 1u) & 1u ?
+                                    packed >> 4 : packed & 0x0fu;
+
+                left = ipvf_ima_decode_nibble(
+                    code, &state.left_predictor, &state.left_index);
+                right = left;
             }
             else
             {

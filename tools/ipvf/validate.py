@@ -6,6 +6,7 @@ import argparse
 import json
 import struct
 from collections import Counter
+from fractions import Fraction
 from pathlib import Path
 
 try:
@@ -106,9 +107,10 @@ def inspect_file(
 
         _require(header_size == ipvf.HEADER_SIZE, "invalid logical header size")
         _require((width, height) == (ipvf.W, ipvf.H), "invalid geometry")
-        _require(fps_num > 0 and fps_den == 1, "unsupported frame rate")
-        _require(ipvf.MIN_FPS <= fps_num <= ipvf.MAX_FPS,
-                 "frame rate outside IPVF bounds")
+        _require(fps_num > 0 and fps_den > 0, "unsupported frame rate")
+        rate = Fraction(fps_num, fps_den)
+        _require(ipvf.MIN_FPS <= rate <= ipvf.MAX_FPS,
+                  "frame rate outside IPVF bounds")
         _require(frame_count > 0, "empty IPVF file")
         _require(flags in (ipvf.FLAGS,
                            ipvf.FLAGS | ipvf.FLAG_TEMPORAL_XOR),
@@ -123,7 +125,7 @@ def inspect_file(
             ipvf.AUDIO_BITS_PER_SAMPLE,
             ipvf.AUDIO_SAMPLE_RATE,
         ), "invalid audio format")
-        _require(audio_frames == ipvf.audio_boundary(frame_count, fps_num),
+        _require(audio_frames == ipvf.audio_boundary(frame_count, rate),
                  "audio duration does not match video")
         _require(pre_media_reserved == 0,
                  "nonzero reserved pre-media header field")
@@ -155,10 +157,11 @@ def inspect_file(
 
         if source is not None:
             source_frames = iter(ipvf.ffmpeg_frames(
-                source, fps_num, ffmpeg, color_depth
+                source, rate, ffmpeg, color_depth
             ))
 
         counts: Counter[str] = Counter()
+        audio_modes: Counter[str] = Counter()
         current_sectors = first_sectors
         position = ipvf.DATA_OFFSET
         previous: bytes | None = None
@@ -183,15 +186,22 @@ def inspect_file(
             calculated_media_id = rockbox_crc32(
                 record, calculated_media_id
             )
-            kind, rect_count, next_sectors, stored_size, decoded_size = \
-                struct.unpack_from("<BBHII", record)
+            kind, rect_count, next_sectors, stored_size, decoded_size, \
+                audio_size = struct.unpack_from("<BBHIII", record)
             _require(kind in TYPE_NAMES, f"frame {frame}: unknown type {kind}")
             record_info[record_offset] = (frame, kind, current_sectors)
-            audio_count = (ipvf.audio_boundary(frame + 1, fps_num) -
-                           ipvf.audio_boundary(frame, fps_num))
+            audio_count = (ipvf.audio_boundary(frame + 1, rate) -
+                           ipvf.audio_boundary(frame, rate))
             _require(audio_count > 0, f"frame {frame}: empty audio block")
-            audio_size = 8 + audio_count - 1
-            used_size = 12 + stored_size + audio_size
+            stereo_size = 8 + audio_count - 1
+            mono_size = 4 + audio_count // 2
+            _require(audio_size in (0, mono_size, stereo_size),
+                     f"frame {frame}: invalid adaptive audio size")
+            audio_modes[
+                "silence" if audio_size == 0 else
+                "mono" if audio_size == mono_size else "stereo"
+            ] += 1
+            used_size = ipvf.RECORD_HEADER_SIZE + stored_size + audio_size
             expected_sectors = (
                 used_size + ipvf.RECORD_SECTOR_SIZE - 1
             ) // ipvf.RECORD_SECTOR_SIZE
@@ -205,8 +215,13 @@ def inspect_file(
                      (frame + 1 == frame_count and next_sectors == 0),
                      f"frame {frame}: invalid next-record link")
 
-            stored = record[12:12 + stored_size]
-            audio = record[12 + stored_size:used_size]
+            stored = record[
+                ipvf.RECORD_HEADER_SIZE:
+                ipvf.RECORD_HEADER_SIZE + stored_size
+            ]
+            audio = record[
+                ipvf.RECORD_HEADER_SIZE + stored_size:used_size
+            ]
             if verify_audio:
                 decoded_audio = ipvf.decode_ima_adpcm(audio, audio_count)
                 _require(len(decoded_audio) == audio_count *
@@ -352,11 +367,14 @@ def inspect_file(
         "path": str(path),
         "file_bytes": file_size,
         "frames": frame_count,
-        "fps": fps_num,
-        "duration_seconds": frame_count / fps_num,
+        "fps": fps_num if fps_den == 1 else f"{fps_num}/{fps_den}",
+        "fps_num": fps_num,
+        "fps_den": fps_den,
+        "duration_seconds": frame_count * fps_den / fps_num,
         "counts": dict(sorted(counts.items())),
         "stored_video_bytes": stored_video_total,
         "audio_bytes": audio_total,
+        "audio_modes": dict(sorted(audio_modes.items())),
         "padding_bytes": padding_total,
         "record_bytes": media_end_offset - ipvf.DATA_OFFSET,
         "max_record_sectors": max_record_sectors,
@@ -414,7 +432,7 @@ def main() -> None:
         print(
             f"  types={report['counts']} video="
             f"{report['stored_video_bytes']:,} audio="
-            f"{report['audio_bytes']:,} padding="
+            f"{report['audio_bytes']:,} {report['audio_modes']} padding="
             f"{report['padding_bytes']:,} max-record="
             f"{report['max_record_sectors']} sectors"
         )

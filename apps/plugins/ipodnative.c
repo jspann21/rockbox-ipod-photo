@@ -2,8 +2,8 @@
  * iPod Photo native video and audio viewer (.ipvf)
  *
  * IPVF stores 220x176 RGB565SWAPPED frames as sector-aligned raw, independently
- * LZ4-compressed, or repeat records, followed by matching 44.1 kHz stereo IMA
- * ADPCM. On PP5020 the CPU reads and decodes the next record while the COP sends
+ * LZ4-compressed, or repeat records, followed by matching 44.1 kHz adaptive IMA
+ * audio. On PP5020 the CPU reads and decodes the next record while the COP sends
  * the previous decoded record through the LCD driver.
  ****************************************************************************/
 #include "plugin.h"
@@ -33,7 +33,7 @@
 #define IPVF_RECORD_MAX_SECTORS     192u
 #define IPVF_RECORD_MAX_BYTES \
     (IPVF_RECORD_MAX_SECTORS * IPVF_RECORD_SECTOR_SIZE)
-#define IPVF_FRAME_HEADER_SIZE      12u
+#define IPVF_FRAME_HEADER_SIZE      16u
 #define IPVF_RECT_HEADER_SIZE       8u
 #define IPVF_INDEX_ENTRY_SIZE       16u
 #define IPVF_INDEX_FLAG_KEY_LZ4     0x0001u
@@ -353,9 +353,14 @@ static uint32_t record_audio_frames(const struct ipvf_info *info,
     return end - start;
 }
 
-static uint32_t record_audio_bytes(uint32_t frames)
+static uint32_t record_stereo_audio_bytes(uint32_t frames)
 {
     return IPVF_IMA_HEADER_BYTES + frames - 1u;
+}
+
+static uint32_t record_mono_audio_bytes(uint32_t frames)
+{
+    return IPVF_IMA_MONO_HEADER_BYTES + frames / 2u;
 }
 
 static bool read_header(int fd, struct ipvf_info *info)
@@ -662,10 +667,16 @@ static bool parse_record(const unsigned char *record,
     record_info->next_sectors = get_le16(record + 2);
     record_info->stored_video_bytes = get_le32(record + 4);
     record_info->decoded_video_bytes = get_le32(record + 8);
+    record_info->audio_bytes = get_le32(record + 12);
     record_info->audio_frames = record_audio_frames(info, frame);
     if (record_info->audio_frames == 0)
         return false;
-    record_info->audio_bytes = record_audio_bytes(record_info->audio_frames);
+    if (record_info->audio_bytes != 0 &&
+        record_info->audio_bytes !=
+            record_mono_audio_bytes(record_info->audio_frames) &&
+        record_info->audio_bytes !=
+            record_stereo_audio_bytes(record_info->audio_frames))
+        return false;
     record_info->compressed = source_type == IPVF_TYPE_KEY_LZ4 ||
                               source_type == IPVF_TYPE_RECTS_LZ4 ||
                               source_type == IPVF_TYPE_XOR_LZ4;
@@ -753,6 +764,13 @@ static bool parse_record(const unsigned char *record,
 
     audio_payload = record + IPVF_FRAME_HEADER_SIZE +
                     record_info->stored_video_bytes;
+    if (record_info->audio_bytes == 0)
+        return true;
+    if (record_info->audio_bytes ==
+        record_mono_audio_bytes(record_info->audio_frames))
+        return ipvf_ima_parse_mono_header(
+            audio_payload, record_info->audio_bytes,
+            record_info->audio_frames, &ima_state);
     return ipvf_ima_parse_header(audio_payload, record_info->audio_bytes,
                                  record_info->audio_frames, &ima_state);
 }

@@ -44,7 +44,8 @@ class IPVFEncodeTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<H", data, 4)[0],
                          ipvf.HEADER_SIZE)
         self.assertEqual(struct.unpack_from("<I", data, 20)[0], 0x0B)
-        fps = struct.unpack_from("<H", data, 10)[0]
+        fps_num, fps_den = struct.unpack_from("<HH", data, 10)
+        fps = ipvf.Fraction(fps_num, fps_den)
         frame_count = struct.unpack_from("<I", data, 16)[0]
         current = struct.unpack_from("<H", data, 14)[0]
         media_end = struct.unpack_from("<Q", data, 44)[0]
@@ -54,17 +55,17 @@ class IPVFEncodeTests(unittest.TestCase):
         position = ipvf.DATA_OFFSET
         records = []
         for frame in range(frame_count):
-            kind, rects, next_sectors, video_size, decoded_video_size = struct.unpack_from(
-                "<BBHII", data, position
+            kind, rects, next_sectors, video_size, decoded_video_size, \
+                audio_size = struct.unpack_from(
+                "<BBHIII", data, position
             )
             audio_frames = (
                 ipvf.audio_boundary(frame + 1, fps)
                 - ipvf.audio_boundary(frame, fps)
             )
-            audio_size = 8 + max(audio_frames - 1, 0)
             expected = ipvf.record_sectors(video_size, audio_size)
             self.assertEqual(current, expected)
-            video_start = position + 12
+            video_start = position + ipvf.RECORD_HEADER_SIZE
             audio_start = video_start + video_size
             video = data[video_start:audio_start]
             if kind in (ipvf.TYPE_KEY_LZ4, ipvf.TYPE_RECTS_LZ4):
@@ -141,6 +142,7 @@ class IPVFEncodeTests(unittest.TestCase):
         source_audio: bytes,
         metadata: dict[str, str] | None = None,
         keyint: int = 120,
+        fps: int | ipvf.Fraction = 30,
     ) -> bytes:
         output = root / "clip.ipvf"
 
@@ -152,7 +154,7 @@ class IPVFEncodeTests(unittest.TestCase):
         ), mock.patch.object(ipvf, "decode_audio", side_effect=fake_audio), \
                 contextlib.redirect_stdout(io.StringIO()):
             ipvf.encode(
-                root / "source.fake", output, 30, keyint, "unused",
+                root / "source.fake", output, fps, keyint, "unused",
                 metadata=metadata,
             )
         return output.read_bytes()
@@ -252,14 +254,16 @@ class IPVFEncodeTests(unittest.TestCase):
             ))
 
     def test_keyframe_sector_limit(self) -> None:
-        audio_at_three = 8 + ipvf.audio_boundary(1, 3) - 1
+        audio_at_four = 8 + ipvf.audio_boundary(1, 4) - 1
         self.assertLessEqual(
-            ipvf.record_sectors(ipvf.FRAME_BYTES, audio_at_three),
+            ipvf.record_sectors(ipvf.FRAME_BYTES, audio_at_four),
             ipvf.MAX_RECORD_SECTORS,
         )
-        audio_at_two = 8 + ipvf.audio_boundary(1, 2) - 1
         with self.assertRaises(RuntimeError):
-            ipvf.record_sectors(ipvf.FRAME_BYTES, audio_at_two)
+            ipvf.record_sectors(
+                ipvf.FRAME_BYTES,
+                ipvf.MAX_RECORD_SECTORS * ipvf.RECORD_SECTOR_SIZE,
+            )
 
     def test_metadata_tlv_rejects_invalid_values(self) -> None:
         with self.assertRaisesRegex(ValueError, "1..255"):
@@ -391,7 +395,7 @@ class IPVFEncodeTests(unittest.TestCase):
                       struct.unpack_from("<H", data, 14)[0] *
                       ipvf.RECORD_SECTOR_SIZE)
             self.assertEqual(data[second], ipvf.TYPE_XOR_LZ4)
-            data[second + 12] ^= 1
+            data[second + ipvf.RECORD_HEADER_SIZE] ^= 1
             corrupted = root / "temporal-corrupt.ipvf"
             corrupted.write_bytes(data)
             with self.assertRaisesRegex(
@@ -433,7 +437,7 @@ class IPVFEncodeTests(unittest.TestCase):
             original = bytearray(self.encode_with_audio(root, source_audio))
             first = ipvf.DATA_OFFSET
             video_size = struct.unpack_from("<I", original, first + 4)[0]
-            audio_byte = first + 12 + video_size + 8
+            audio_byte = first + ipvf.RECORD_HEADER_SIZE + video_size + 8
             original[audio_byte] ^= 1
             corrupted = root / "bad-media-id.ipvf"
             corrupted.write_bytes(original)
@@ -457,6 +461,51 @@ class IPVFEncodeTests(unittest.TestCase):
             ipvf.decode_ima_adpcm(bytes(8), 0)
         with self.assertRaises(ValueError):
             ipvf.decode_ima_adpcm(block[:-1], 3)
+
+    def test_adaptive_silence_mono_and_stereo_audio(self) -> None:
+        silence, left, right, mode = ipvf.encode_adaptive_ima(
+            bytes(4 * ipvf.AUDIO_FRAME_BYTES), 4, 7, 9
+        )
+        self.assertEqual((silence, left, right, mode), (b"", 7, 9, "silence"))
+        self.assertEqual(ipvf.decode_ima_adpcm(silence, 4),
+                         bytes(4 * ipvf.AUDIO_FRAME_BYTES))
+
+        mono_pcm = struct.pack("<hhhhhhhh", 100, 100, 200, 200,
+                               -100, -100, 50, 50)
+        mono, left, right, mode = ipvf.encode_adaptive_ima(
+            mono_pcm, 4, 0, 0
+        )
+        self.assertEqual(mode, "mono")
+        self.assertEqual(len(mono), 6)
+        self.assertEqual(left, right)
+        decoded = ipvf.decode_ima_adpcm(mono, 4)
+        self.assertTrue(all(
+            decoded[offset:offset + 2] == decoded[offset + 2:offset + 4]
+            for offset in range(0, len(decoded), ipvf.AUDIO_FRAME_BYTES)
+        ))
+
+        stereo_pcm = struct.pack("<hhhhhhhh", 100, -100, 200, -200,
+                                 -100, 100, 50, -50)
+        stereo, _left, _right, mode = ipvf.encode_adaptive_ima(
+            stereo_pcm, 4, 0, 0
+        )
+        self.assertEqual((mode, len(stereo)), ("stereo", 11))
+
+    def test_rational_cadence_header_and_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            rate = ipvf.Fraction(24_000, 1_001)
+            required = ipvf.audio_boundary(len(self.frames), rate) * 4
+            data = self.encode_with_audio(root, bytes(required), fps=rate)
+            self.assertEqual(struct.unpack_from("<HH", data, 10),
+                             (24_000, 1_001))
+            report = inspector.inspect_file(root / "clip.ipvf")
+            self.assertEqual((report["fps_num"], report["fps_den"]),
+                             (24_000, 1_001))
+        with self.assertRaises(ValueError):
+            ipvf.frame_rate(3)
+        with self.assertRaises(ValueError):
+            ipvf.frame_rate(241)
 
 
 if __name__ == "__main__":

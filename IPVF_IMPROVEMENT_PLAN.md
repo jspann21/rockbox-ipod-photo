@@ -44,7 +44,9 @@ The plan is evidence-driven:
 - [x] One sector-aligned, bounded read unit containing video plus matching
       audio.
 - [x] Maximum stored record: 192 sectors / 96 KiB.
-- [x] Stereo 44.1 kHz IMA ADPCM on disk, decoded into Rockbox's PCM mixer.
+- [x] Adaptive 44.1 kHz IMA audio on disk: zero-payload exact silence,
+      one-channel exact dual mono, and the stereo baseline, all decoded to the
+      Rockbox stereo PCM mixer.
 - [x] Decoded audio consumption is the video clock.
 - [x] About one second of audio is prebuffered before playback starts.
 - [x] Three-slot CPU/COP pipeline with target-driver-owned LCD updates.
@@ -527,7 +529,8 @@ Goal: harvest encoder-only wins first. These can improve file size without
 changing the proven player.
 
 - [x] Make one candidate selector evaluate the complete record cost including
-      12-byte header, audio, 512-byte rounding, and 192-sector limit.
+      16-byte header, explicit audio size, 512-byte rounding, and 192-sector
+      limit.
 - [x] Preserve raw fallback and choose the smallest valid sector count per
       record; use byte count and predicted decode cost as tie-breakers.
 - [ ] Sweep time-based and scene-cut-aware keyframe intervals. Replace the
@@ -629,7 +632,7 @@ there is one format and no compatibility/version branch.
 
 ### Canonical layout
 
-- [ ] One 512-byte superblock now carries rational FPS fields, 64-bit media/index
+- [x] One 512-byte superblock carries rational FPS fields, 64-bit media/index
       locations, bounded metadata, and an index CRC. Widened logical frame/audio
       counts plus file/segment identity remain before segmentation/resume.
 - [x] Sector-aligned media records retain bounded video+audio reads unchanged.
@@ -737,9 +740,9 @@ still exceed the desired storage budget.
 
 ### Lossy movie profiles
 
-- [ ] Add rational 23.976/24/25 fps output and compare with 30/60. Integer
-      24/20/15 testing is complete and showed 15.5%/34.9% savings at 20/15;
-      exact rational container timing remains.
+- [x] Preserve exact rational source cadence up to 30 fps, including
+      24000/1001, 24, 25, and 30000/1001. Integer 24/20/15 testing remains the
+      measured profile comparison; native 30/60 source testing remains.
 - [ ] Test native 30- and 60-fps real footage rather than judging those rates
       from duplicated 23.976-fps frames; compare motion feel, CPU margin,
       battery, late frames, and complete sector-rounded size on the A1099.
@@ -777,9 +780,11 @@ still exceed the desired storage budget.
 Goal: improve long-movie audio after video dominates less, without weakening
 the working audio clock.
 
-- [x] Keep stereo IMA as the robust baseline: low CPU, tiny state, independently
+- [x] Keep stereo IMA as the robust fallback: low CPU, tiny state, independently
       decodable records, zero gaps in current qualification.
-- [ ] Add a zero-payload silence mode and optional mono IMA profile.
+- [x] Zero-payload exact silence and one-channel exact dual-mono IMA are
+      implemented per record with no threshold/downmix. Silence-to-mono-to-
+      stereo transitions passed A1099 qualification without audible gaps.
 - [ ] Host bakeoff: current IMA, mono IMA, MP2 96/128/160 kbps, MP3 96/128,
       and bounded delta/Rice with raw fallback.
 - [ ] Report whole-IPVF savings, not only audio ratio. Replacing current IMA
@@ -915,6 +920,10 @@ Do these in order:
       path; key it by stable media identity rather than a mutable filename.
       The combined A1099 resume/reopen/start-over/completion/details/checkpoint
       test passed.
+- [x] P5.1: qualify the canonical 16-byte record header, exact rational cadence,
+      zero-payload silence, exact dual-mono IMA, and stereo fallback together.
+      Host validation and A1099 playback pass a 359-frame 24000/1001 transition
+      file containing 119 silence, 120 mono, and 120 stereo records.
 - [ ] P3.1: settle 2-GiB behavior before final segment/rollover and long-movie
       resume rules. IPVF stores 64-bit logical media/index offsets but the
       current A1099 Rockbox file API deliberately rejects offsets above 2 GiB.

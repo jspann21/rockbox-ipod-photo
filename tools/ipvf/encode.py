@@ -3,8 +3,8 @@
 
 IPVF stores exact 220x176 RGB565 big-endian pixels (the byte layout used by
 Rockbox RGB565SWAPPED), lossless bounding-rectangle deltas, and one independent
-44.1 kHz stereo IMA ADPCM block after each frame's video payload. Video and its
-matching audio remain together in one sector-aligned disk read.
+44.1 kHz silence, mono IMA, or stereo IMA payload after each frame's video.
+Video and matching audio remain together in one sector-aligned disk read.
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ FRAME_BYTES = W * H * 2
 HEADER_SIZE = 80
 DATA_OFFSET = 512
 RECORD_SECTOR_SIZE = 512
+RECORD_HEADER_SIZE = 16
 MAX_RECORD_SECTORS = 192
 MAGIC = b"IPVF"
 FLAG_RGB565BE = 1
@@ -298,8 +299,24 @@ def _ima_step(predictor: int, index: int, code: int) -> tuple[int, int]:
 
 
 def decode_ima_adpcm(data: bytes, frames: int) -> bytes:
-    """Decode one interleaved stereo IMA block, rejecting malformed lengths."""
-    if frames <= 0 or len(data) != 8 + frames - 1:
+    """Decode one adaptive silence/mono/stereo IMA block to stereo PCM."""
+    if frames <= 0:
+        raise ValueError("invalid IMA ADPCM block length")
+    if not data:
+        return bytes(frames * AUDIO_FRAME_BYTES)
+    mono_bytes = 4 + ((frames - 1 + 1) // 2)
+    if len(data) == mono_bytes:
+        predictor, index, reserved = struct.unpack_from("<hBB", data)
+        if reserved or index > 88:
+            raise ValueError("invalid IMA ADPCM block header")
+        out = bytearray(struct.pack("<hh", predictor, predictor))
+        for sample in range(1, frames):
+            packed = data[4 + (sample - 1) // 2]
+            code = packed >> 4 if (sample - 1) & 1 else packed & 0x0F
+            predictor, index = _ima_step(predictor, index, code)
+            out.extend(struct.pack("<hh", predictor, predictor))
+        return bytes(out)
+    if len(data) != 8 + frames - 1:
         raise ValueError("invalid IMA ADPCM block length")
     left, li, reserved, right, ri, reserved_r = struct.unpack_from(
         "<hBBhBB", data
@@ -364,6 +381,58 @@ def encode_ima_adpcm_stateful(
         rp, ri = _ima_step(rp, old_ri, code_r)
         out.append(code_l | (code_r << 4))
     return bytes(out), li, ri
+
+
+def encode_ima_mono_stateful(
+    pcm: bytes, frames: int, index: int
+) -> tuple[bytes, int]:
+    """Encode exact dual-mono stereo PCM as one independently anchored channel."""
+    if frames <= 0 or len(pcm) != frames * AUDIO_FRAME_BYTES:
+        raise ValueError("PCM does not contain exactly the requested frames")
+    if not 0 <= index <= 88:
+        raise ValueError("invalid initial IMA ADPCM index")
+    predictor, right = struct.unpack_from("<hh", pcm)
+    if predictor != right:
+        raise ValueError("PCM is not dual mono")
+    out = bytearray(struct.pack("<hBB", predictor, index, 0))
+    pending = 0
+    for frame in range(1, frames):
+        target, right = struct.unpack_from("<hh", pcm,
+                                           frame * AUDIO_FRAME_BYTES)
+        if target != right:
+            raise ValueError("PCM is not dual mono")
+        code, _ = _ima_code(predictor, target, index)
+        predictor, index = _ima_step(predictor, index, code)
+        if (frame - 1) & 1:
+            out.append(pending | (code << 4))
+        else:
+            pending = code
+    if (frames - 1) & 1:
+        out.append(pending)
+    return bytes(out), index
+
+
+def encode_adaptive_ima(
+    pcm: bytes, frames: int, left_index: int, right_index: int
+) -> tuple[bytes, int, int, str]:
+    """Choose exact silence, exact dual mono, or ordinary stereo per record."""
+    if frames <= 0 or len(pcm) != frames * AUDIO_FRAME_BYTES:
+        raise ValueError("PCM does not contain exactly the requested frames")
+    if not 0 <= left_index <= 88 or not 0 <= right_index <= 88:
+        raise ValueError("invalid initial IMA ADPCM index")
+    if pcm == bytes(len(pcm)):
+        return b"", left_index, right_index, "silence"
+    dual_mono = all(
+        pcm[offset:offset + 2] == pcm[offset + 2:offset + 4]
+        for offset in range(0, len(pcm), AUDIO_FRAME_BYTES)
+    )
+    if dual_mono:
+        payload, index = encode_ima_mono_stateful(pcm, frames, left_index)
+        return payload, index, index, "mono"
+    payload, left_index, right_index = encode_ima_adpcm_stateful(
+        pcm, frames, left_index, right_index
+    )
+    return payload, left_index, right_index, "stereo"
 
 
 def encode_ima_adpcm(pcm: bytes, frames: int) -> bytes:
@@ -709,14 +778,26 @@ def xor_frames(prev: bytes, cur: bytes) -> bytes:
     return bytes(a ^ b for a, b in zip(prev, cur))
 
 
-def audio_boundary(frame: int, fps: int) -> int:
-    """Nearest 44.1 kHz sample-frame boundary for an integer video frame."""
-    return (frame * AUDIO_SAMPLE_RATE + fps // 2) // fps
+def frame_rate(fps: int | Fraction) -> Fraction:
+    """Normalize and bound one exact IPVF rational frame rate."""
+    rate = Fraction(fps)
+    if (rate < MIN_FPS or rate > MAX_FPS or
+            rate.numerator > 0xFFFF or rate.denominator > 0xFFFF):
+        raise ValueError("frame rate is outside IPVF rational bounds")
+    return rate
+
+
+def audio_boundary(frame: int, fps: int | Fraction) -> int:
+    """Nearest 44.1 kHz sample-frame boundary for an exact video frame."""
+    rate = frame_rate(fps)
+    numerator = frame * AUDIO_SAMPLE_RATE * rate.denominator
+    return (numerator + rate.numerator // 2) // rate.numerator
 
 
 def record_sectors(video_payload_size: int, audio_size: int) -> int:
     sectors = (
-        12 + video_payload_size + audio_size + RECORD_SECTOR_SIZE - 1
+        RECORD_HEADER_SIZE + video_payload_size + audio_size +
+        RECORD_SECTOR_SIZE - 1
     ) // RECORD_SECTOR_SIZE
     if not 1 <= sectors <= MAX_RECORD_SECTORS:
         raise RuntimeError(
@@ -737,18 +818,20 @@ def write_record(
 ) -> tuple[int, int]:
     sectors = record_sectors(len(video_payload), len(audio_payload))
     record_bytes = sectors * RECORD_SECTOR_SIZE
-    f.write(struct.pack("<BBHII", kind, rects, next_sectors,
-                        len(video_payload), decoded_video_bytes))
+    f.write(struct.pack("<BBHIII", kind, rects, next_sectors,
+                        len(video_payload), decoded_video_bytes,
+                        len(audio_payload)))
     f.write(video_payload)
     f.write(audio_payload)
-    padding = record_bytes - 12 - len(video_payload) - len(audio_payload)
+    padding = (record_bytes - RECORD_HEADER_SIZE - len(video_payload) -
+               len(audio_payload))
     f.write(bytes(padding))
     return sectors, padding
 
 
 def write_header(
     f: BinaryIO,
-    fps: int,
+    fps: int | Fraction,
     frames: int,
     first_record_sectors: int,
     flags: int,
@@ -758,6 +841,7 @@ def write_header(
     media_id: int,
     metadata: dict[str, str] | None = None,
 ) -> None:
+    rate = frame_rate(fps)
     metadata_bytes = encode_metadata(metadata)
     if not 0 <= media_end_offset <= UINT64_MAX:
         raise ValueError("media end offset does not fit in the IPVF header")
@@ -776,8 +860,8 @@ def write_header(
         HEADER_SIZE,
         W,
         H,
-        fps,
-        1,
+        rate.numerator,
+        rate.denominator,
         first_record_sectors,
         frames,
         flags,
@@ -810,8 +894,8 @@ def write_header(
     f.write(h)
 
 
-def probe_source_fps(source: Path, ffprobe: str) -> float:
-    """Return the first video stream's measured average frame rate."""
+def probe_source_fps(source: Path, ffprobe: str) -> Fraction:
+    """Return the first video stream's exact average frame rate."""
     result = subprocess.run(
         [
             ffprobe,
@@ -846,7 +930,7 @@ def probe_source_fps(source: Path, ffprobe: str) -> float:
         except (KeyError, ValueError, ZeroDivisionError):
             continue
         if rate > 0:
-            return float(rate)
+            return rate
     raise RuntimeError("ffprobe returned no usable video frame rate")
 
 
@@ -908,10 +992,10 @@ def probe_source_metadata(source: Path, ffprobe: str) -> dict[str, str]:
 def profile_settings(
     source: Path,
     profile: str,
-    fps_override: int | None,
+    fps_override: Fraction | None,
     color_override: str | None,
     ffprobe: str,
-) -> tuple[int, str, float | None]:
+) -> tuple[Fraction, str, Fraction | None]:
     """Resolve one friendly profile, retaining explicit expert overrides."""
     if profile not in CREATOR_PROFILES:
         raise ValueError(f"unknown creator profile: {profile}")
@@ -920,22 +1004,25 @@ def profile_settings(
     fps = fps_override if fps_override is not None else settings["fps"]
     if fps is None:
         source_fps = probe_source_fps(source, ffprobe)
-        fps = max(MIN_FPS, min(30, int(source_fps + 0.5)))
+        fps = max(Fraction(MIN_FPS), min(Fraction(30), source_fps))
+    fps = frame_rate(fps)
     color_depth = color_override or settings["color_depth"]
-    assert isinstance(fps, int) and isinstance(color_depth, str)
+    assert isinstance(color_depth, str)
     return fps, color_depth, source_fps
 
 
 def ffmpeg_frames(
     source: Path,
-    fps: int,
+    fps: int | Fraction,
     ffmpeg: str,
     color_depth: str = "rgb565",
 ):
+    rate = frame_rate(fps)
     if color_depth not in COLOR_FILTERS:
         raise ValueError(f"unknown color depth: {color_depth}")
     filters = [
-        f"fps={fps},scale={W}:{H}:force_original_aspect_ratio=decrease:"
+        f"fps={rate.numerator}/{rate.denominator},"
+        f"scale={W}:{H}:force_original_aspect_ratio=decrease:"
         f"flags=lanczos,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black"
     ]
     if COLOR_FILTERS[color_depth] is not None:
@@ -1109,7 +1196,7 @@ def choose_video_record(
 def encode(
     source: Path,
     output: Path,
-    fps: int,
+    fps: int | Fraction,
     keyint: int,
     ffmpeg: str,
     video_mode: str = "spatial",
@@ -1119,6 +1206,7 @@ def encode(
     *,
     metadata: dict[str, str] | None = None,
 ) -> None:
+    fps = frame_rate(fps)
     if video_mode == "auto" and keyint == 0:
         raise ValueError("temporal mode requires a bounded keyframe interval")
     if video_mode == "auto" and fps > 30:
@@ -1131,6 +1219,7 @@ def encode(
         TYPE_KEY: 0, TYPE_RECTS: 0, TYPE_REPEAT: 0,
         TYPE_KEY_LZ4: 0, TYPE_RECTS_LZ4: 0, TYPE_XOR_LZ4: 0,
     }
+    audio_counts = {"silence": 0, "mono": 0, "stereo": 0}
     video_payload_total = 0
     audio_payload_total = 0
     audio_padding_total = 0
@@ -1166,12 +1255,13 @@ def encode(
                 audio_frames = audio_end - audio_start
                 audio_bytes = audio_frames * AUDIO_FRAME_BYTES
                 audio_pcm, missing = read_audio_slice(audio_file, audio_bytes)
-                audio_payload, ima_left_index, ima_right_index = (
-                    encode_ima_adpcm_stateful(
+                audio_payload, ima_left_index, ima_right_index, audio_kind = (
+                    encode_adaptive_ima(
                         audio_pcm, audio_frames,
                         ima_left_index, ima_right_index,
                     )
                 )
+                audio_counts[audio_kind] += 1
                 audio_padding_total += missing
 
                 kind, rects, video_payload, decoded_video_bytes = (
@@ -1285,7 +1375,7 @@ def encode(
 
     raw = n * FRAME_BYTES
     ratio = video_payload_total / raw if raw else 0
-    print(f"{output}: {n} frames @ {fps} fps")
+    print(f"{output}: {n} frames @ {fps.numerator}/{fps.denominator} fps")
     print(
         f"  key={counts[TYPE_KEY]} delta={counts[TYPE_RECTS]} "
         f"repeat={counts[TYPE_REPEAT]} key-lz4={counts[TYPE_KEY_LZ4]} "
@@ -1298,9 +1388,9 @@ def encode(
         f"({ratio:.1%} of raw RGB565)"
     )
     print(
-        f"  audio={audio_payload_total:,} bytes, "
+        f"  audio={audio_payload_total:,} bytes, modes={audio_counts}, "
         f"silence-pad={audio_padding_total:,} bytes "
-        f"({AUDIO_SAMPLE_RATE} Hz stereo IMA ADPCM)"
+        f"({AUDIO_SAMPLE_RATE} Hz adaptive IMA ADPCM)"
     )
     print(
         f"  records={record_total:,} bytes, padding={padding_total:,} bytes "
@@ -1328,8 +1418,9 @@ def main() -> None:
     )
     ap.add_argument(
         "--fps",
-        type=int,
-        help="override profile frame rate (default: source cadence, capped at 30)",
+        type=Fraction,
+        help=("override profile frame rate as integer or rational, for example "
+              "24000/1001 (default: exact source cadence, capped at 30)"),
     )
     ap.add_argument(
         "--color-depth",
@@ -1402,8 +1493,12 @@ def main() -> None:
         for name in missing_metadata:
             if name in probed:
                 metadata[name] = probed[name]
-    cadence = (f"source {source_fps:.3f} fps -> {fps} fps"
-               if source_fps is not None else f"{fps} fps override")
+    cadence = (
+        f"source {source_fps.numerator}/{source_fps.denominator} fps -> "
+        f"{fps.numerator}/{fps.denominator} fps"
+        if source_fps is not None else
+        f"{fps.numerator}/{fps.denominator} fps override"
+    )
     print(f"profile={ns.profile}: {cadence}, color={color_depth}")
     encode(ns.source, ns.output, fps, ns.keyint, ns.ffmpeg,
            ns.video_mode, ns.max_rects, ns.lz4_mode, color_depth,
