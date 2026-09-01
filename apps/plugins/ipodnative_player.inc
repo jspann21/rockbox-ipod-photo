@@ -1,4 +1,4 @@
-#define IPVF_AUDIO_PREBUFFER_FRAMES (2u * 44100u)
+#define IPVF_AUDIO_PREBUFFER_FRAMES (4u * 44100u)
 
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
 static void write_qualification_log(const char *filename,
@@ -96,9 +96,11 @@ static void write_qualification_log(const char *filename,
     rb->close(log_fd);
 }
 
-static void note_qualification_error(struct ipvf_stats *stats,
-                                     enum ipvf_error_code code,
-                                     unsigned long frame)
+#endif
+
+static void note_playback_error(struct ipvf_stats *stats,
+                                enum ipvf_error_code code,
+                                unsigned long frame)
 {
     stats->error_count++;
     if (stats->first_error == IPVF_ERROR_NONE)
@@ -107,11 +109,69 @@ static void note_qualification_error(struct ipvf_stats *stats,
         stats->first_error_frame = frame;
     }
 }
+
 #define IPVF_NOTE_QUALIFICATION_ERROR(stats, code, frame) \
-    note_qualification_error((stats), (code), (frame))
-#else
-#define IPVF_NOTE_QUALIFICATION_ERROR(stats, code, frame) ((void)0)
-#endif
+    note_playback_error((stats), (code), (frame))
+
+/* Keep lifecycle evidence out of the playback hot path. One compact row is
+ * appended only after audio, rendering, storage policy, and the movie fd have
+ * all been restored. Rotation bounds persistent storage without exposing
+ * diagnostic counters in the UI. */
+static void write_run_journal(const struct ipvf_info *info,
+                              const struct ipvf_stats *stats,
+                              const char *status,
+                              uint32_t active_frame,
+                              unsigned long started_tick)
+{
+    bool new_file;
+    int journal_fd;
+    off_t journal_size;
+
+    if (info == NULL || stats == NULL || status == NULL || stats->frames == 0)
+        return;
+
+    journal_size = 0;
+    journal_fd = rb->open(IPVF_RUN_JOURNAL, O_RDONLY);
+    if (journal_fd >= 0)
+    {
+        journal_size = rb->filesize(journal_fd);
+        rb->close(journal_fd);
+    }
+    if (journal_size >= (off_t)IPVF_RUN_JOURNAL_MAX_BYTES)
+    {
+        rb->remove(IPVF_RUN_JOURNAL_PREVIOUS);
+        if (rb->rename(IPVF_RUN_JOURNAL,
+                       IPVF_RUN_JOURNAL_PREVIOUS) < 0)
+            return;
+    }
+
+    new_file = !rb->file_exists(IPVF_RUN_JOURNAL);
+    journal_fd = rb->open(IPVF_RUN_JOURNAL,
+                          O_WRONLY | O_CREAT | O_APPEND, 0666);
+    if (journal_fd < 0)
+        return;
+    if (new_file)
+    {
+        rb->fdprintf(journal_fd,
+            "tick\telapsed_ticks\tbuild\tstatus\tfps_num\tfps_den\t"
+            "frames\ttotal_frames\tactive_frame\tlate\taudio_gaps\t"
+            "audio_rebuffers\tfirst_rebuffer_frame\tlast_rebuffer_frame\t"
+            "audio_capacity_frames\terror\terror_frame\n");
+    }
+    rb->fdprintf(journal_fd,
+        "%lu\t%lu\t%s\t%s\t%u\t%u\t%lu\t%lu\t%lu\t%lu\t%lu\t"
+        "%lu\t%lu\t%lu\t%lu\t%lu\t%lu\n",
+        started_tick, (unsigned long)(*rb->current_tick - started_tick),
+        rb->rbversion, status, info->fps_num, info->fps_den,
+        stats->frames, info->frame_count, (unsigned long)active_frame,
+        stats->late_frames, stats->audio_underruns,
+        stats->audio_rebuffers,
+        stats->first_audio_rebuffer_frame,
+        stats->last_audio_rebuffer_frame,
+        stats->audio_capacity_frames,
+        stats->first_error, stats->first_error_frame);
+    rb->close(journal_fd);
+}
 
 #define IPVF_BUTTON_DRAIN_LIMIT 16u
 #define IPVF_PENDING_SEEK_LIMIT 1024
@@ -134,6 +194,10 @@ enum ipvf_resume_state
     IPVF_RESUME_DISMISSED,
     IPVF_RESUME_COMPLETE,
 };
+
+static uint32_t resume_writer_sequence;
+static int resume_writer_slot;
+static bool resume_writer_ready;
 
 static void resume_put_le32(unsigned char *p, uint32_t value)
 {
@@ -218,26 +282,74 @@ static bool load_resume(const struct ipvf_info *info,
     return true;
 }
 
-static bool save_resume(const struct ipvf_info *info, uint32_t frame,
-                        enum ipvf_resume_state state)
+static bool prepare_resume_slot(const struct ipvf_info *info, int slot)
 {
-    struct ipvf_resume_candidate latest;
-    unsigned char data[IPVF_RESUME_SLOT_BYTES];
+    unsigned char empty[IPVF_RESUME_SLOT_BYTES];
     char path[IPVF_RESUME_PATH_BYTES];
-    uint32_t sequence = 1;
-    int slot = 0;
     int fd;
     bool written;
 
-    if ((state == IPVF_RESUME_ACTIVE &&
+    resume_slot_path(path, sizeof(path), info, slot);
+    fd = rb->open(path, O_RDWR);
+    if (fd >= 0)
+    {
+        bool ready = rb->filesize(fd) == (off_t)sizeof(empty);
+        rb->close(fd);
+        if (ready)
+            return true;
+    }
+
+    rb->memset(empty, 0, sizeof(empty));
+    fd = rb->open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0)
+        return false;
+    written = rb->write(fd, empty, sizeof(empty)) ==
+              (ssize_t)sizeof(empty);
+    if (rb->close(fd) < 0)
+        written = false;
+    if (!written)
+        rb->remove(path);
+    return written;
+}
+
+static bool prepare_resume_slots(const struct ipvf_info *info)
+{
+    return prepare_resume_slot(info, 0) && prepare_resume_slot(info, 1);
+}
+
+static void initialize_resume_writer(
+    const struct ipvf_resume_candidate *latest)
+{
+    if (latest != NULL && latest->valid)
+    {
+        resume_writer_sequence = latest->sequence;
+        resume_writer_slot = latest->slot == 0 ? 1 : 0;
+    }
+    else
+    {
+        resume_writer_sequence = 0;
+        resume_writer_slot = 0;
+    }
+    resume_writer_ready = true;
+}
+
+static bool save_resume(const struct ipvf_info *info, uint32_t frame,
+                        enum ipvf_resume_state state)
+{
+    unsigned char data[IPVF_RESUME_SLOT_BYTES];
+    char path[IPVF_RESUME_PATH_BYTES];
+    uint32_t sequence;
+    int slot;
+    int fd;
+    bool written;
+
+    if (!resume_writer_ready ||
+        (state == IPVF_RESUME_ACTIVE &&
          (frame == 0 || frame >= info->frame_count)) ||
         (state != IPVF_RESUME_ACTIVE && frame != 0))
         return false;
-    if (load_resume(info, &latest))
-    {
-        sequence = latest.sequence + 1u;
-        slot = latest.slot == 0 ? 1 : 0;
-    }
+    sequence = resume_writer_sequence + 1u;
+    slot = resume_writer_slot;
 
     rb->memset(data, 0, sizeof(data));
     rb->memcpy(data, "IPRS", 4);
@@ -252,14 +364,19 @@ static bool save_resume(const struct ipvf_info *info, uint32_t frame,
                     rb->crc_32(data, sizeof(data) - 4u, 0xffffffffu));
 
     resume_slot_path(path, sizeof(path), info, slot);
-    fd = rb->open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    fd = rb->open(path, O_RDWR);
     if (fd < 0)
         return false;
-    written = rb->write(fd, data, sizeof(data)) == (ssize_t)sizeof(data);
+    written = rb->filesize(fd) == (off_t)sizeof(data) &&
+              rb->lseek(fd, 0, SEEK_SET) == 0 &&
+              rb->write(fd, data, sizeof(data)) == (ssize_t)sizeof(data);
     if (rb->close(fd) < 0)
         written = false;
-    if (!written)
-        rb->remove(path);
+    if (written)
+    {
+        resume_writer_sequence = sequence;
+        resume_writer_slot = slot == 0 ? 1 : 0;
+    }
     return written;
 }
 
@@ -618,9 +735,7 @@ static enum plugin_status play_file(const char *filename)
     bool pending_details = false;
     bool startup_resume = false;
     bool seeking = false;
-#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
     long playback_start_tick;
-#endif
     int fd;
     struct ipvf_system_cleanup system_cleanup;
     bool failed = false;
@@ -633,6 +748,7 @@ static enum plugin_status play_file(const char *filename)
 
     rb->memset(&info, 0, sizeof(info));
     rb->memset(&stats, 0, sizeof(stats));
+    rb->memset(&saved_resume, 0, sizeof(saved_resume));
     rb->memset(&system_cleanup, 0, sizeof(system_cleanup));
     system_cleanup.info = &info;
     system_cleanup.stats = &stats;
@@ -648,8 +764,17 @@ static enum plugin_status play_file(const char *filename)
         return PLUGIN_ERROR;
     }
 
-    if (load_resume(&info, &saved_resume) &&
-        saved_resume.state == IPVF_RESUME_ACTIVE)
+    if (!prepare_resume_slots(&info))
+    {
+        rb->close(fd);
+        rb->splash(HZ * 2, "IPVF resume unavailable");
+        return PLUGIN_ERROR;
+    }
+    if (!load_resume(&info, &saved_resume))
+        saved_resume.valid = false;
+    initialize_resume_writer(saved_resume.valid ? &saved_resume : NULL);
+
+    if (saved_resume.valid && saved_resume.state == IPVF_RESUME_ACTIVE)
     {
         const char *lines[] = { "Resume video?" };
         const struct text_message prompt = { lines, 1 };
@@ -757,9 +882,9 @@ static enum plugin_status play_file(const char *filename)
     boosted = true;
 #endif
 
+    playback_start_tick = *rb->current_tick;
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
-    stats.start_tick = (unsigned long)*rb->current_tick;
-    playback_start_tick = (long)stats.start_tick;
+    stats.start_tick = (unsigned long)playback_start_tick;
 #endif
 
     current_sectors = info.first_record_sectors;
@@ -990,6 +1115,51 @@ static enum plugin_status play_file(const char *filename)
                                  &stats.max_video_decode_us,
                                  operation_us);
 #endif
+
+        /* Rebuild the full decoded-audio cushion after a true mixer
+         * starvation. The current video is already decoded, so the shared
+         * record buffer can safely scan future records and then seek back. */
+        if (!seeking && audio_needs_rebuffer())
+        {
+            off_t next_position = file_position;
+            uint32_t next_sectors = record_info.next_sectors;
+            bool rebuffer_ok = audio_reset_to(
+                audio_frame_boundary(&info, frame));
+
+            if (rebuffer_ok)
+            {
+                rebuffer_ok = audio_write_ima_block(
+                    audio_payload, record_info.audio_bytes,
+                    record_info.audio_frames);
+            }
+            if (rebuffer_ok)
+            {
+                rebuffer_ok = audio_prebuffer_records(
+                    fd, &info, record, frame + 1, next_position,
+                    next_sectors, &prebuffer_end_frame);
+            }
+            if (rebuffer_ok && frame + 1 < info.frame_count)
+            {
+                rebuffer_ok = rb->lseek(fd, next_position, SEEK_SET) ==
+                              next_position;
+            }
+            if (rebuffer_ok)
+                rebuffer_ok = audio_start();
+            if (!rebuffer_ok)
+            {
+#ifdef IPVF_NATIVE_PIPELINE
+                render_abandon();
+#endif
+                IPVF_NOTE_QUALIFICATION_ERROR(
+                    &stats, IPVF_ERROR_PREBUFFER, frame);
+                failed = true;
+                break;
+            }
+            if (stats.audio_rebuffers == 0)
+                stats.first_audio_rebuffer_frame = frame;
+            stats.last_audio_rebuffer_frame = frame;
+            stats.audio_rebuffers++;
+        }
 #ifdef IPVF_NATIVE_PIPELINE
         if (record_info.keyframe && !seeking)
         {
@@ -1298,7 +1468,11 @@ static enum plugin_status play_file(const char *filename)
                 else if (details_result == IPVF_DETAILS_USB)
                     usb_connected = true;
                 else if (details_result == IPVF_DETAILS_FAILED)
+                {
+                    IPVF_NOTE_QUALIFICATION_ERROR(
+                        &stats, IPVF_ERROR_DETAILS, stats.frames);
                     failed = true;
+                }
             }
             if (pause_requested && !stopped && !usb_connected)
             {
@@ -1322,7 +1496,11 @@ static enum plugin_status play_file(const char *filename)
                     pause_requested = false;
                 }
                 else if (pause_result == IPVF_PAUSE_FAILED)
+                {
+                    IPVF_NOTE_QUALIFICATION_ERROR(
+                        &stats, IPVF_ERROR_PAUSE, stats.frames);
                     failed = true;
+                }
             }
             if (seek_steps != 0 && !pause_requested &&
                 !stopped && !usb_connected && !failed)
@@ -1358,6 +1536,8 @@ static enum plugin_status play_file(const char *filename)
 #endif
                     || rb->lseek(fd, entry.offset, SEEK_SET) != entry.offset)
                 {
+                    IPVF_NOTE_QUALIFICATION_ERROR(
+                        &stats, IPVF_ERROR_SEEK, stats.frames);
                     failed = true;
                 }
                 else
@@ -1467,6 +1647,7 @@ static enum plugin_status play_file(const char *filename)
 #endif
 
     stats.audio_underruns = audio.underruns;
+    stats.audio_capacity_frames = audio.capacity_frames;
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
     stats.elapsed_ticks = (unsigned long)
         (*rb->current_tick - playback_start_tick);
@@ -1497,6 +1678,12 @@ runtime_restoration:
         failed ? "failed" :
         (stats.frames == info.frame_count ? "complete" : "stopped"));
 #endif
+
+    write_run_journal(
+        &info, &stats,
+        failed ? "failed" :
+        (stats.frames == info.frame_count ? "complete" : "stopped"),
+        active_frame, (unsigned long)playback_start_tick);
 
     if (failed)
         rb->splash(HZ * 2, "IPVF playback failed");

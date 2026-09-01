@@ -72,6 +72,12 @@ static bool audio_restart(void)
     return rb->mixer_channel_status(IPVF_AUDIO_CHANNEL) != CHANNEL_STOPPED;
 }
 
+static bool audio_needs_rebuffer(void)
+{
+    return audio.configured && audio.started && !audio.source_eof &&
+           rb->mixer_channel_status(IPVF_AUDIO_CHANNEL) == CHANNEL_STOPPED;
+}
+
 static bool audio_write_ima_block(const unsigned char *source,
                                   uint32_t source_bytes,
                                   uint32_t frames)

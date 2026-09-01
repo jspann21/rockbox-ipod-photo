@@ -72,6 +72,9 @@
 #define IPVF_DECODED_SLOT_STRIDE      0x18000u
 #define IPVF_LATE_THRESHOLD_FRAMES \
     ((IPVF_AUDIO_SAMPLE_RATE * 501u + 999999u) / 1000000u)
+#define IPVF_RUN_JOURNAL           ROCKBOX_DIR "/ipvf-runs.tsv"
+#define IPVF_RUN_JOURNAL_PREVIOUS  ROCKBOX_DIR "/ipvf-runs.previous.tsv"
+#define IPVF_RUN_JOURNAL_MAX_BYTES (32u * 1024u)
 
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
 #define IPVF_QUALIFICATION_LOG \
@@ -81,7 +84,6 @@
 #define IPVF_DECODER_REV             "motion-1"
 #endif
 
-#if IPVF_ENABLE_QUALIFICATION_TELEMETRY
 enum ipvf_error_code
 {
     IPVF_ERROR_NONE = 0,
@@ -101,8 +103,10 @@ enum ipvf_error_code
     IPVF_ERROR_RENDER_FINISH,
     IPVF_ERROR_AUDIO_FINISH,
     IPVF_ERROR_RECONCILE,
+    IPVF_ERROR_DETAILS,
+    IPVF_ERROR_PAUSE,
+    IPVF_ERROR_SEEK,
 };
-#endif
 
 #if defined(IPOD_COLOR) && NUM_CORES > 1 && \
     defined(HAVE_SEMAPHORE_OBJECTS) && !defined(SIMULATOR)
@@ -145,6 +149,13 @@ struct ipvf_stats
     unsigned long frames;
     unsigned long late_frames;
     unsigned long audio_underruns;
+    unsigned long audio_rebuffers;
+    unsigned long first_audio_rebuffer_frame;
+    unsigned long last_audio_rebuffer_frame;
+    unsigned long audio_capacity_frames;
+    unsigned long error_count;
+    unsigned long first_error;
+    unsigned long first_error_frame;
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
     unsigned long max_late_us;
     unsigned long max_read_us;
@@ -162,9 +173,6 @@ struct ipvf_stats
     unsigned long render_calls;
     unsigned long rectangle_calls;
     unsigned long render_failures;
-    unsigned long error_count;
-    unsigned long first_error;
-    unsigned long first_error_frame;
     unsigned long type_counts[IPVF_TYPE_COUNT];
     uint64_t read_us;
     uint64_t video_decode_us;

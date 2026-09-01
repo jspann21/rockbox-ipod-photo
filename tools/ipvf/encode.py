@@ -1350,6 +1350,10 @@ def encode(
     source_has_audio: bool | None = None,
 ) -> None:
     fps = frame_rate(fps)
+    # Validate metadata before creating temporary PCM or walking any video
+    # frames. Header finalization must not be the first point where a bad tag
+    # can reject an otherwise complete long encode.
+    encode_metadata(metadata)
     if video_mode in ("motion", "auto") and keyint == 0:
         raise ValueError("temporal mode requires a bounded keyframe interval")
     if video_mode in ("motion", "auto") and fps > 30:

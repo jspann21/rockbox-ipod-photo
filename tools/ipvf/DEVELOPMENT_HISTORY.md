@@ -1397,3 +1397,123 @@
   final framebuffer CRC as the prior integer-24 file, and is 38,912 bytes
   smaller. This small real-file saving is timing correctness plus lossless audio
   elision, not a claim of broad video compression improvement.
+
+## 52. MPEG Layer II size experiment rejected on hardware
+
+- A host bakeoff found MP2 and MP3 essentially equal in payload size at equal
+  constant bitrates. Complete 128-kbps MP2 reduced the tested whole IPVF file
+  by about 5.1%; dropping to 96 kbps gained only another 0.7 percentage point
+  at whole-file scale.
+- A bounded Layer-II-only libmad player, complete-frame interleave, fixed
+  decoder-delay compensation, exact-silence mode, seeking, and strict host
+  validation were implemented as an unreleased experiment.
+- Hardware qualification rejected the experiment. The 30-fps candidate
+  stuttered badly, the 60-fps candidate stopped with playback failure, and the
+  longer seek/resume candidate stuttered and responded to a skip after about a
+  second. The silent 20-fps control also did not look completely smooth, so it
+  provides no positive promotion evidence.
+- The experimental runtime and file-format changes were removed. Adaptive IMA
+  remains canonical because its larger audio payload preserves smooth playback
+  and responsive controls. Compressed audio should return only with a
+  materially lower-CPU decoder or a measured schedule that meets video
+  deadlines; the observed whole-file saving is not enough to trade away
+  playback quality.
+
+## 53. Bounded run journal and five-minute lifecycle candidate
+
+- The production player now keeps first-error stage/frame counters even when
+  detailed qualification telemetry is compiled out. Read, parse, audio, video,
+  render, details, pause, and seek failures remain distinguishable after a run
+  while the user-facing failure message stays concise.
+- After complete teardown, playback appends one small row to
+  `.rockbox/ipvf-runs.tsv`. It performs no playback-loop I/O and records no
+  filename, title, or hash. The journal rotates at 32 KiB and retains one
+  predecessor, bounding persistent storage.
+- Sector repacking was not promoted. The current 45-second everyday file has
+  only 273,104 bytes of total record padding, under 1% of record storage, so an
+  audio-placement container change cannot provide a material general saving on
+  that corpus.
+- Metadata is now validated before PCM extraction or frame encoding. This
+  prevents an invalid tag from wasting a complete long encode before header
+  finalization rejects it.
+- The canonical five-minute candidate contains 7,202 frames at 24 fps,
+  61 indexed keys, 7,117 spatial LZ4 records, 24 repeats, adaptive IMA audio,
+  and 39 bytes of bounded generic metadata. It is 205,264,336 bytes; strict
+  validation reconstructed every record and accepted the index, audio, media
+  identity, and final framebuffer. Hardware and journal qualification remain.
+- Hardware playback then completed the full file. Volume, details, pause,
+  rapid seeking, MENU stop, persistent resume, and natural completion all
+  worked. Three or four small stutters were observed. The stopped run journal
+  row covered 1,789 frames with zero late presentations, two mixer-underrun
+  callbacks, and no error; the resumed completion row covered all 7,202 frames
+  with 11 late presentations, three mixer underruns, and no error. This is a
+  functional lifecycle pass but not a zero-stutter performance pass.
+- The anonymous raw journal is retained at
+  `qualification/2026-09-01-lifecycle-runs.tsv`. The next playback improvement
+  should increase or restore audio cushion across long runs and controls, then
+  repeat the same gate before proceeding to 30-minute endurance.
+
+## 54. Long-run audio-cushion recovery candidate
+
+- The prior player already prebuffered two seconds, but a true mixer underrun
+  restarted as soon as the next per-video-frame IMA block was written. At
+  24 fps that could be only about 42 ms of decoded audio, allowing one storage
+  or scheduling disturbance to cascade into repeated small stutters.
+- The candidate increases normal startup/seek cushion to four seconds. If the
+  mixer still starves, playback rebases audio to the currently decoded video
+  frame, rewrites that frame's audio, scans enough future records to restore
+  the full cushion, seeks the movie fd back, and only then restarts output.
+  This favors one bounded pause over repeated gaps or silent A/V drift.
+- The production journal adds an `audio_rebuffers` count so the hardware rerun
+  can distinguish an uninterrupted pass from a recovered underrun. The ARM
+  build and all 29 host tests pass; the candidate is installed for rerun.
+- Hardware evidence showed the recovery itself worked: one reported noticeable
+  pause corresponded to one underrun and one rebuffer, and the subsequent
+  uninterrupted resumed-to-completion run recorded zero gaps/rebuffers and no
+  error. A separate long run recorded four successful recoveries while USB was
+  repeatedly connected but not recognized. That is USB/storage-interruption
+  evidence rather than an ordinary-playback result, but it still demonstrates
+  that bounded recovery survives the disturbance.
+- The follow-up uses a 2-MiB decoded ring and an eight-second target at startup,
+  seek, and recovery. This consumes plugin audio-buffer memory already acquired
+  exclusively by the viewer, adds no steady-state codec work, and tests whether
+  greater cushion removes storage/scheduling starvation before designing a
+  continuous second-read stream. Raw evidence is retained in
+  `qualification/2026-09-01-cushion4-runs.tsv`.
+- The eight-second device rerun completed with no fatal error, five late
+  presentations, two mixer-empty callbacks, and one recovery. The same
+  user-visible hiccup occurred at the same content position and lasted longer
+  while the larger cushion was rebuilt. This rejects larger buffering as the
+  root fix. Four seconds is restored, and the journal now records first/last
+  recovery frame plus actual ring capacity so the deterministic record or
+  storage event can be inspected directly. The eight-second evidence is in
+  `qualification/2026-09-01-cushion8-runs.tsv`.
+
+## 55. Deterministic 30-second checkpoint hotspot fix
+
+- The targeted journal rerun located the repeatable recovery at frame 720,
+  exactly 30.000 seconds at 24 fps. The ring contained 262,144 sample frames;
+  the problem was therefore not an unknown capacity limit or a video record.
+- The periodic persistent-resume checkpoint synchronously reread both slot
+  files, selected a sequence, then opened the alternate 36-byte slot with
+  `O_TRUNC` and rewrote it. FAT metadata/allocation work at the first checkpoint
+  was the deterministic storage stall that starved audio.
+- Both fixed-size slots are now prepared before playback starts. Existing valid
+  records remain intact; missing or malformed-size slots are allocated as
+  invalid zero records before audio begins. The latest sequence and next slot
+  remain in RAM for the session, eliminating both slot rereads at every
+  checkpoint. Each checkpoint overwrites an already allocated 36-byte slot in
+  place without truncate or create operations, while alternating-slot CRC
+  recovery remains intact.
+- The four-second cushion is restored because the larger target only lengthened
+  recovery. The ARM build is warning-free and all 29 host tests pass. Hardware
+  must now cross frame 720 without a mixer underrun or rebuffer; targeted raw
+  evidence is retained in
+  `qualification/2026-09-01-hotspot-frame-runs.tsv`.
+- The installed in-place-slot build crossed the next periodic checkpoint in a
+  71-second targeted run with zero mixer underruns, zero rebuffers, zero errors,
+  and one late presentation. Combined with the prior complete five-minute
+  controls/resume run, this closes the five-minute lifecycle checkpoint gate.
+  Anonymous evidence is retained in
+  `qualification/2026-09-01-checkpoint-fix-runs.tsv`; 30-minute endurance is
+  the next duration gate.

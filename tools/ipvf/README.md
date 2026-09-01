@@ -461,10 +461,24 @@ heavily throughout. The experiment also required endpoint padding and exact
 frame trimming to avoid shortening 480 frames to 476. The production creator
 retains no interpolation option; native source cadence remains preferred.
 
-Broader qualification still includes a long drift run, line out, deliberate
-storage stalls, Menu stop, USB insertion, and repeat-heavy audio content.
-Qualification telemetry is compile-time opt-in. Normal builds contain no TSV
-logger/marker handling and perform no qualification timing or final-frame CRC
-scan; define `IPVF_ENABLE_QUALIFICATION_TELEMETRY=1` only for an instrumented
-qualification build. The production plugin is 13,924 bytes, down from 17,080
-bytes for the final telemetry-enabled v5 qualification plugin.
+Broader qualification still includes longer drift runs, line out, deliberate
+storage stalls, USB insertion, and repeat-heavy audio content. Production
+playback appends one small teardown-only row to `.rockbox/ipvf-runs.tsv`; the
+row contains timing/outcome counters but no media filename, title, or hash. The
+file rotates at 32 KiB and retains one bounded predecessor. It performs no I/O
+in the playback loop and displays no diagnostic frame counters. Full
+qualification telemetry remains compile-time opt-in: define
+`IPVF_ENABLE_QUALIFICATION_TELEMETRY=1` only for an instrumented build.
+
+A canonical five-minute lifecycle file is prepared for hardware testing:
+7,202 RGB565 frames at 24 fps, 61 indexed keys, spatial LZ4 video, adaptive IMA
+audio, and 205,264,336 total bytes. Strict validation passes. The creator also
+validates all metadata before starting PCM extraction or frame encoding, so an
+invalid tag cannot waste a long encode and fail only at header finalization.
+
+The file completed on A1099 with volume, details, pause, rapid seeking,
+MENU/resume, and natural completion working. A repeatable 30-second hiccup was
+traced to periodic resume slots being reread and truncated on FAT. Resume slots
+are now allocated before playback, sequence/slot selection remains in RAM, and
+checkpoints overwrite fixed slots in place. A targeted 71-second rerun crossed
+the next checkpoint with zero audio gaps, rebuffers, or errors.

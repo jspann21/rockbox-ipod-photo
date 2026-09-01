@@ -72,7 +72,9 @@ The plan is evidence-driven:
       counters; genuine playback failures retain a concise error.
 - [x] Persistent playback position, resume/start-over choice, and completion
       handling are implemented and qualified on A1099.
-- [ ] Durable production-quality run journal.
+- [ ] Durable production-quality run journal. The bounded teardown-only TSV
+      recorded stopped and completed hardware runs without filenames/hashes or
+      hot-path writes. Rotation and power-interruption checks remain.
 - [ ] Long-duration and lifecycle qualification.
 
 ### Current measurements
@@ -94,6 +96,9 @@ Important size facts:
   278.8 MB/min at 60 fps (132.9 and 265.9 MiB/min);
 - current IMA audio is approximately 2.65 MB/min plus small per-record headers;
 - therefore video, not audio, dominates current movie size;
+- shifting audio between records cannot provide a major current-corpus win:
+  the 45-second everyday file has 273,104 bytes of total sector padding, under
+  1% of its record bytes;
 - the current eight-second result is one music-video workload, not proof of a
   universal movie bitrate.
 
@@ -498,7 +503,12 @@ only the physical click/eject/reconnect actions remain manual.
 - [x] Inputs with no audio stream are first-class: the creator detects absence
       with FFprobe, skips audio decoding, preserves the exact 44.1-kHz timeline,
       and emits zero-payload silence for every record.
-- [ ] Long: 5 minutes, 30 minutes, one hour, and two hours.
+- [x] Five-minute lifecycle: the canonical 300.08-second/7,202-frame RGB565
+      spatial/IMA file completed with controls and persistent resume working.
+      The repeatable hiccup was isolated to synchronous FAT work at the first
+      30-second checkpoint; the in-place-slot fix crossed the next checkpoint
+      for 71 seconds with zero gaps, rebuffers, or errors.
+- [ ] Long: 30 minutes, one hour, and two hours.
 
 ### Qualification telemetry
 
@@ -824,16 +834,25 @@ the working audio clock.
 - [x] Zero-payload exact silence and one-channel exact dual-mono IMA are
       implemented per record with no threshold/downmix. Silence-to-mono-to-
       stereo transitions passed A1099 qualification without audible gaps.
-- [ ] Host bakeoff: current IMA, mono IMA, MP2 96/128/160 kbps, MP3 96/128,
-      and bounded delta/Rice with raw fallback.
-- [ ] Report whole-IPVF savings, not only audio ratio. Replacing current IMA
-      with 128-kbps MP2 is only about a 5% total reduction on the present
-      eight-second files.
+- [x] Host bakeoff: current IMA against MP2 96/128/160 and MP3 96/128.
+      MP2 and MP3 were effectively equal in size at equal CBR; bounded
+      delta/Rice remains a separate experiment.
+- [x] Report whole-IPVF savings, not only audio ratio. A complete 128-kbps MP2
+      candidate reduced the present real-footage file by about 5.1%; 96 kbps
+      improved the whole-file result by only another 0.7 percentage point.
 - [ ] Correct premise: Rockbox's libmad path supports MPEG Layer II as well as
       Layer III, but the IPVF plugin cannot simply invoke `mpa.codec`; an MP2
       experiment needs a bounded private wrapper/extraction and RAM accounting.
-- [ ] Prototype MP2 at 128 kbps first; measure decoder time, code/RAM, priming,
-      seek pre-roll, ring low-water, gaps, late frames, and battery.
+- [x] Prototype MP2 at 128 kbps first. A bounded Layer-II-only libmad build,
+      complete-frame interleave, fixed 481-sample delay compensation, seeking,
+      validation, and exact-silence mode all passed host checks, but device
+      qualification rejected it: 30 fps stuttered badly, 60 fps failed, and a
+      longer seek/resume candidate stuttered with roughly one-second seek
+      response. The canonical runtime remains adaptive IMA.
+- [ ] Reconsider compressed audio only after a materially lower-CPU decoder or
+      a measured read-ahead schedule can preserve the qualified video
+      deadlines. A roughly 5% whole-file saving does not justify degraded
+      playback.
 - [ ] Use impulse+flash and left/right ID clips to measure physical line-out to
       LCD synchronization, not only the software mixer clock.
 - [ ] Do not assume 22.05 kHz hardware output: the current target advertises
@@ -972,6 +991,27 @@ Do these in order:
       zero-payload silence, exact dual-mono IMA, and stereo fallback together.
       Host validation and A1099 playback pass a 359-frame 24000/1001 transition
       file containing 119 silence, 120 mono, and 120 stereo records.
+- [x] P5.2: prototype and reject canonical 128-kbps MP2 on A1099. Host size and
+      correctness checks passed, but hardware playback regressed at 30 fps,
+      failed at 60 fps, and slowed seek response. No MP2 implementation or
+      format change is retained; adaptive IMA remains the working baseline.
+- [x] P7.1: five-minute lifecycle behavior passed: volume, details, pause,
+      rapid seeking, MENU/resume, and natural completion all worked, with zero
+      fatal errors. Smoothness remains open because three or four small
+      stutters were visible and the final run logged 11 late presentations and
+      3 mixer underruns. Four-second recovery reduced a cascade to one bounded
+      pause and one uninterrupted completion logged zero gaps/rebuffers. A
+      separate run recovered four times while repeated USB connections were
+      attempted but not recognized; treat that as USB/storage stress, not
+      ordinary playback. The 2-MiB/eight-second follow-up still recovered once
+      at the same content position and made the pause longer, so it is rejected.
+      Four seconds is restored while first/last recovery frame and actual ring
+      capacity identified the deterministic hotspot. The rerun
+      located it at frame 720, exactly the first 30-second persistent-resume
+      checkpoint. Resume slots are now preallocated before playback and updated
+      in place from RAM-maintained sequence state. A 71-second targeted run
+      crossed the next periodic checkpoint with zero underruns, rebuffers, or
+      errors; the five-minute lifecycle/checkpoint gate is closed.
 - [ ] P3.1: settle 2-GiB behavior before final segment/rollover and long-movie
       resume rules. IPVF stores 64-bit logical media/index offsets but the
       current A1099 Rockbox file API deliberately rejects offsets above 2 GiB.

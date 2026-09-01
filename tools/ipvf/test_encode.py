@@ -295,6 +295,15 @@ class IPVFEncodeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ipvf.parse_metadata(malformed)
 
+    def test_encode_rejects_metadata_before_frame_work(self) -> None:
+        with mock.patch.object(ipvf, "ffmpeg_frames") as frames:
+            with self.assertRaisesRegex(ValueError, "1..255"):
+                ipvf.encode(
+                    Path("source.fake"), Path("output.ipvf"), 30, 120,
+                    "unused", metadata={"artist": ""},
+                )
+            frames.assert_not_called()
+
     def test_lz4_roundtrip_and_malformed_rejection(self) -> None:
         source = (b"abcd" * 20_000) + bytes(range(251))
         packed = ipvf.lz4_compress(source)

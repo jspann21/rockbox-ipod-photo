@@ -1,0 +1,7 @@
+tick	elapsed_ticks	build	status	fps_num	fps_den	frames	total_frames	active_frame	late	audio_gaps	audio_rebuffers	error	error_frame
+1321	9864	69a03b35eaM-260831	stopped	24	1	2298	7202	2298	2	1	1	0	0
+11392	1659	69a03b35eaM-260831	stopped	24	1	2535	7202	2535	2	0	0	0	0
+13262	19565	69a03b35eaM-260831	complete	24	1	7202	7202	7202	4	0	0	0	0
+1276	39175	69a03b35eaM-260831	stopped	24	1	6319	7202	6319	16	4	4	0	0
+49527	1686	69a03b35eaM-260831	stopped	24	1	6222	7202	6222	23	0	0	0	0
+51497	3490	69a03b35eaM-260831	stopped	24	1	681	7202	681	2	0	0	0	0
