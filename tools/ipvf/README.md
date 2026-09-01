@@ -65,8 +65,10 @@ matching, and avoids expensive short-offset copies when an almost-equivalent
 match is available. By default, the host also tries official LZ4HC level 12
 when `liblz4` is available and keeps the smaller raw LZ4 block per record. This
 changes no device format and cannot enlarge a record; use `--lz4-mode builtin`
-for the original compressor alone. The encoder forces a true key every 120 frames by default;
-temporal `auto` mode rejects `--keyint 0` so dependency chains stay bounded.
+for the original compressor alone. The creator forces indexed true keys at a
+maximum five-second interval computed from exact source cadence; use
+`--key-seconds` to select another positive duration. Temporal dependency chains
+therefore remain time-bounded rather than changing length arbitrarily with FPS.
 It also rejects rates above 30 fps because hardware lower-bound testing proved
 that dense full-frame temporal reconstruction cannot meet the 60 fps budget.
 
@@ -421,6 +423,15 @@ reconstructed every RGB565 frame exactly. On A1099, the motion file was
 indistinguishable from the spatial control during playback, volume changes,
 pause/resume, and repeated seeking. Motion is therefore the creator default at
 up to 30 fps; dense XOR remains the separate experimental `auto` extension.
+
+The follow-up memory/navigation batch reduced each of the three render-slot
+strides from 128 KiB to 96 KiB, recovering 96 KiB of plugin-buffer space while
+retaining all three CPU/COP ownership slots. The parser's maximum decoded
+record plus header is 81,552 bytes, leaving 16,752 bytes of guard space in each
+slot plus a compile-time size assertion. Its exact-cadence test file indexed
+frames `0,119,...,1071`; strict source reconstruction passed, and A1099
+playback, volume, pause/details, rapid seeking, MENU/reopen, and resume showed
+no regression.
 
 Broader qualification still includes a long drift run, line out, deliberate
 storage stalls, Menu stop, USB insertion, and repeat-heavy audio content.

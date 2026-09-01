@@ -47,6 +47,7 @@ AUDIO_SAMPLE_RATE = 44_100
 AUDIO_FRAME_BYTES = AUDIO_CHANNELS * AUDIO_BITS_PER_SAMPLE // 8
 MIN_FPS = 4
 MAX_FPS = 240
+DEFAULT_KEY_SECONDS = Fraction(5)
 UINT32_MAX = (1 << 32) - 1
 UINT64_MAX = (1 << 64) - 1
 DEVICE_FILE_SIZE_MAX = 0x7FFFFFFF
@@ -863,6 +864,21 @@ def frame_rate(fps: int | Fraction) -> Fraction:
     return rate
 
 
+def key_interval_frames(
+    fps: int | Fraction,
+    seconds: int | Fraction = DEFAULT_KEY_SECONDS,
+) -> int:
+    """Convert a maximum key/dependency duration to an exact frame count."""
+    rate = frame_rate(fps)
+    duration = Fraction(seconds)
+    if duration <= 0:
+        raise ValueError("keyframe interval must be positive")
+    interval = (rate.numerator * duration.numerator) // (
+        rate.denominator * duration.denominator
+    )
+    return max(1, interval)
+
+
 def audio_boundary(frame: int, fps: int | Fraction) -> int:
     """Nearest 44.1 kHz sample-frame boundary for an exact video frame."""
     rate = frame_rate(fps)
@@ -1527,10 +1543,10 @@ def main() -> None:
             help=f"set the IPVF {name} metadata tag (defaults to source tag)",
         )
     ap.add_argument(
-        "--keyint",
-        type=int,
-        default=120,
-        help="force a full frame every N frames (0 disables)",
+        "--key-seconds",
+        type=Fraction,
+        default=DEFAULT_KEY_SECONDS,
+        help="maximum seconds between indexed true keys (default: 5)",
     )
     ap.add_argument("--ffmpeg", default="ffmpeg")
     ap.add_argument("--ffprobe", default="ffprobe")
@@ -1566,10 +1582,10 @@ def main() -> None:
         ap.error(f"--fps must be {MIN_FPS}..{MAX_FPS}")
     if ns.video_mode is None:
         ns.video_mode = "motion" if fps <= 30 else "spatial"
-    if ns.keyint < 0:
-        ap.error("--keyint must be >= 0")
-    if ns.video_mode in ("motion", "auto") and ns.keyint == 0:
-        ap.error("temporal video modes require --keyint > 0")
+    try:
+        keyint = key_interval_frames(fps, ns.key_seconds)
+    except ValueError as error:
+        ap.error(str(error))
     if ns.video_mode in ("motion", "auto") and fps > 30:
         ap.error("temporal video modes are hardware-qualified only at <=30 fps")
     if not 1 <= ns.max_rects <= 255:
@@ -1596,8 +1612,11 @@ def main() -> None:
         if source_fps is not None else
         f"{fps.numerator}/{fps.denominator} fps override"
     )
-    print(f"profile={ns.profile}: {cadence}, color={color_depth}")
-    encode(ns.source, ns.output, fps, ns.keyint, ns.ffmpeg,
+    print(
+        f"profile={ns.profile}: {cadence}, color={color_depth}, "
+        f"keys<={float(ns.key_seconds):g}s/{keyint} frames"
+    )
+    encode(ns.source, ns.output, fps, keyint, ns.ffmpeg,
            ns.video_mode, ns.max_rects, ns.lz4_mode, color_depth,
            metadata=metadata)
 

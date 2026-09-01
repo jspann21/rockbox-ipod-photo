@@ -559,6 +559,15 @@ class IPVFEncodeTests(unittest.TestCase):
         residual = ipvf.xor_frames(prediction, current)
         self.assertEqual(ipvf.xor_frames(prediction, residual), current)
 
+    def test_time_based_key_intervals_use_exact_cadence(self) -> None:
+        self.assertEqual(ipvf.key_interval_frames(ipvf.Fraction(24000, 1001)),
+                         119)
+        self.assertEqual(ipvf.key_interval_frames(30), 150)
+        self.assertEqual(ipvf.key_interval_frames(60), 300)
+        self.assertEqual(ipvf.key_interval_frames(4, ipvf.Fraction(1, 10)), 1)
+        with self.assertRaises(ValueError):
+            ipvf.key_interval_frames(30, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

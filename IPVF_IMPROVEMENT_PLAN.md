@@ -536,8 +536,11 @@ changing the proven player.
       limit.
 - [x] Preserve raw fallback and choose the smallest valid sector count per
       record; use byte count and predicted decode cost as tie-breakers.
-- [ ] Sweep time-based and scene-cut-aware keyframe intervals. Replace the
-      frame-count-only default with a maximum seek/dependency time.
+- [x] Replace the frame-count-only creator default with a maximum five-second
+      seek/dependency interval computed from exact rational cadence: 119 frames
+      at 24000/1001, 150 at 30 fps, and 300 at 60 fps.
+- [ ] Sweep alternate time-based and scene-cut-aware keyframe intervals before
+      changing the qualified five-second default.
 - [x] Compare the current 32-candidate LZ4 search with official LZ4HC levels,
       `--best`, optimal parsing, and decode-speed-favoring output. All use the
       same block decoder. Fast and HC levels 3/9/12 were measured; HC12 is now
@@ -591,16 +594,18 @@ Goal: qualify the strongest measured lossless high-motion candidate.
 
 ### RAM enabling experiment
 
-- [ ] Canary-test a smaller sector-aligned render-slot stride. Current stride is
-      128 KiB although the largest decoded payload plus header needs about
-      81,920 bytes when rounded to 512.
-- [ ] Test 81,920-byte and conservative 96-KiB strides with all three slots,
-      full-screen keyframes, maximum rectangle payload, COP display, replay,
-      MENU, USB, and cache stress.
-- [ ] Retain 128 KiB immediately if any aliasing, overlap, corruption, timing,
-      or lifecycle uncertainty appears.
-- [ ] Use recovered space for the reference frame or an IPVF-owned read buffer,
-      not speculative extra features.
+- [x] Canary-test a smaller sector-aligned render-slot stride. The qualified
+      96-KiB stride exceeds the parser's 81,552-byte maximum decoded
+      record-plus-header bound by 16,752 bytes and has a compile-time guard.
+- [x] Test the conservative 96-KiB stride with all three slots, full-screen
+      playback, motion reconstruction, COP display, volume, pause/details,
+      rapid seeking, MENU, replay, and persistent resume. The combined A1099
+      pass showed no stutter, corruption, audio issue, or control regression.
+- [ ] Canary-test the exact 81,920-byte rounded stride only if another measured
+      48 KiB of plugin-buffer space has a concrete use; retain 96 KiB otherwise.
+- [x] Recover 96 KiB across the three slots without removing a slot or changing
+      the pipeline's ownership model. Reserve it for measured read-ahead or
+      codec needs rather than speculative features.
 
 ### Device matrix
 
@@ -908,8 +913,9 @@ Do these in order:
 - [x] P1.1: run current LZ4, official LZ4HC/optimal, predictors,
       multi-rectangle, tiles, and current-format XOR+LZ4 offline.
 - [x] P1.2: choose modes by total sectors and decoder-operation budget.
-- [ ] P2.1: canary-qualify a smaller three-slot stride without changing the
-      pipeline's ownership model.
+- [x] P2.1: the conservative 96-KiB three-slot stride is A1099-qualified without
+      changing the pipeline's ownership model, freeing 96 KiB versus 128-KiB
+      slots. The exact 80-KiB stride remains optional and ungated by need.
 - [x] P2.2: build one bounded XOR+LZ4 qualification player with sparse logging.
 - [x] P2.3: install via the standard WSL package/Windows device loop; run 30 fps
       first, then 60 fps; pull and analyze logs after each gate.

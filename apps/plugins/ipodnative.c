@@ -69,7 +69,7 @@
 #define IPVF_AUDIO_DMA_MAX_FRAMES \
     (IPVF_AUDIO_DMA_MAX_BYTES / IPVF_AUDIO_FRAME_BYTES)
 #define IPVF_AUDIO_CHANNEL           PCM_MIXER_CHAN_PLAYBACK
-#define IPVF_DECODED_SLOT_STRIDE      0x20000u
+#define IPVF_DECODED_SLOT_STRIDE      0x18000u
 #define IPVF_LATE_THRESHOLD_FRAMES \
     ((IPVF_AUDIO_SAMPLE_RATE * 501u + 999999u) / 1000000u)
 
@@ -116,6 +116,9 @@ typedef char ipvf_fb_data_must_be_16_bits[
     sizeof(fb_data) == 2 ? 1 : -1];
 typedef char ipvf_pcm_frame_must_be_4_bytes[
     IPVF_AUDIO_FRAME_BYTES == 4 ? 1 : -1];
+typedef char ipvf_decoded_slot_must_fit_max_payload[
+    IPVF_DECODED_SLOT_STRIDE >=
+        IPVF_FRAME_HEADER_SIZE + IPVF_MAX_PAYLOAD ? 1 : -1];
 
 struct ipvf_info
 {

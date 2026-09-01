@@ -374,3 +374,21 @@ seconds. No special EOF clamp or diagnostic build is retained.
   motion file played correctly with working volume, pause/resume, and repeated
   indexed seeking. Motion is accepted as the creator default through 30 fps;
   output above 30 fps continues to default to spatial records.
+
+## Pass 15 - timed keys and 96-KiB render slots
+
+- The creator replaces its frame-count CLI default with a positive
+  `--key-seconds` duration. Five seconds maps through exact cadence to 119
+  frames at 24000/1001, 150 at 30 fps, and 300 at 60 fps.
+- The 45.09-second candidate contains indexed true keys at
+  `0,119,238,357,476,595,714,833,952,1071`; maximum spacing is 119 frames.
+  All 1,081 source frames reconstruct exactly with final framebuffer CRC
+  `517baebe`.
+- The three render slots use a conservative 96-KiB stride instead of 128 KiB,
+  freeing 98,304 bytes total. The parser's maximum decoded record plus header
+  is 81,552 bytes, enforced by a compile-time assertion.
+- Twenty focused host tests, strict source validation, and the production WSL
+  A1099 build pass. On hardware, the spatial control and timed-key/motion file
+  showed correct picture and sound with working volume, pause/resume, Details,
+  rapid forward/back seeking, MENU/reopen, and persistent resume. No stutter,
+  visual corruption, audio issue, or unexpected exit was observed.
