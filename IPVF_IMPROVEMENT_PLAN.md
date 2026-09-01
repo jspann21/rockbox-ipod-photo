@@ -952,8 +952,11 @@ Do these in order:
       bytes), with exact source reconstruction and zero-payload silence. A1099
       playback was clean at both rates; 60 fps felt faster/more immediate while
       retaining the same exact duration.
-- [ ] P4.3 interpolation gate: separately test a 24-to-60 host-interpolated
-      candidate before deciding whether interpolation belongs in a profile.
+- [x] P4.3 interpolation gate: reject 24-to-60 host interpolation. On the same
+      eight-second source, source cadence was 4,269,600 bytes, duplicated 60
+      fps was 4,713,504 bytes, and motion-interpolated 60 fps was 10,768,928
+      bytes. Duplicated 60 showed slight A1099 stutter; interpolated 60 stuttered
+      heavily throughout. No interpolation option is retained in the creator.
 - [x] P3.2: implement IPVF's bounded metadata and appended keyframe index.
       The 45.08-second real-motion encode contains 1,082 frames, 10 indexed
       keys, a 160-byte index, and 37 metadata bytes; strict WSL validation and

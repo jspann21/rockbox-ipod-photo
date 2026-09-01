@@ -410,3 +410,21 @@ seconds. No special EOF clamp or diagnostic build is retained.
   faster/more immediate than 30 fps. Both files retain the same exact
   eight-second duration, so this is a motion-perception result rather than a
   playback-clock speed difference.
+
+## Pass 17 - 24-to-60 host interpolation rejection
+
+- Three matched eight-second files used identical audio and final framebuffer
+  content: source cadence (192 frames, 4,269,600 bytes), ordinary duplicated
+  60 fps (480 frames, 4,713,504 bytes), and motion-interpolated 60 fps (480
+  frames, 10,768,928 bytes).
+- Strict host validation reconstructed all three against their exact FFmpeg
+  filter outputs. The interpolator initially emitted only 476 frames; bounded
+  cloned-tail padding plus exact trimming corrected it to 480 before hardware
+  testing.
+- Source cadence played cleanly. Duplicated 60 fps showed slight stuttering.
+  Interpolated 60 fps showed heavy stuttering throughout and cost 2.28 times
+  as much storage as duplicated 60.
+- Motion interpolation is rejected and removed from the uncommitted creator
+  and validator changes. Native cadence remains the preferred default; 60 fps
+  is most appropriate for genuinely native high-rate sources with measured
+  device margin.

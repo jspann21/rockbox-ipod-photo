@@ -453,6 +453,14 @@ bytes, spatial mode). Every record carried zero audio bytes. Both played cleanly
 on A1099 with normal silent output and controls; 60 fps felt faster/more
 immediate than 30 fps while both retained the same exact eight-second duration.
 
+A separate 24-to-60 motion-interpolation gate was rejected. Matched eight-
+second files measured 4,269,600 bytes at source cadence, 4,713,504 bytes for
+ordinary duplicated 60 fps, and 10,768,928 bytes for host-interpolated 60 fps.
+Duplicated 60 showed slight A1099 stutter, while interpolated 60 stuttered
+heavily throughout. The experiment also required endpoint padding and exact
+frame trimming to avoid shortening 480 frames to 476. The production creator
+retains no interpolation option; native source cadence remains preferred.
+
 Broader qualification still includes a long drift run, line out, deliberate
 storage stalls, Menu stop, USB insertion, and repeat-heavy audio content.
 Qualification telemetry is compile-time opt-in. Normal builds contain no TSV
