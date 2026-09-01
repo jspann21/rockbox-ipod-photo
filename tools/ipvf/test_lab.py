@@ -40,6 +40,48 @@ class IPVFLabTests(unittest.TestCase):
                 ipvf.compress_lz4(source, "best"),
                 ipvf.compress_lz4(source, "builtin"),
             )
+            self.assertEqual(
+                ipvf.compress_lz4(source, "balanced"),
+                ipvf.compress_lz4(source, "builtin"),
+            )
+
+    def test_frame_cost_uses_canonical_record_header(self) -> None:
+        cost = lab.frame_cost("header", 100, 200)
+        self.assertEqual(
+            cost.padding_bytes,
+            cost.record_bytes - ipvf.RECORD_HEADER_SIZE - 100 - 200,
+        )
+
+    def test_lab_audio_size_tracks_adaptive_record_mode(self) -> None:
+        frame = 0
+        fps = 30
+        samples = (ipvf.audio_boundary(frame + 1, fps) -
+                   ipvf.audio_boundary(frame, fps))
+        self.assertEqual(lab.audio_payload_size(frame, fps), 8 + samples - 1)
+        self.assertEqual(
+            lab.audio_payload_size(
+                frame, fps,
+                {"present": True, "kind": "tone", "channels": 1,
+                 "sample_frames": 44100},
+            ),
+            4 + samples // 2,
+        )
+        self.assertEqual(
+            lab.audio_payload_size(
+                frame, fps,
+                {"present": True, "kind": "silence", "channels": 2,
+                 "sample_frames": 44100},
+            ),
+            0,
+        )
+        self.assertEqual(
+            lab.audio_payload_size(
+                1, fps,
+                {"present": True, "kind": "tone", "channels": 2,
+                 "sample_frames": 1000},
+            ),
+            0,
+        )
 
     def test_all_reversible_predictors_preserve_frame_size(self) -> None:
         source = bytes((i * 19 + i // 23) & 0xFF

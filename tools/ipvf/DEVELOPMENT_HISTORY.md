@@ -1169,10 +1169,12 @@
   6,115,840 for spatial/built-in LZ4, and 5,927,936 when each spatial payload
   adaptively selected the smaller built-in or official LZ4HC-12 block.
 - Official LZ4HC blocks decode through the unchanged IPVF raw-block decoder.
-  The friendly encoder now performs that adaptive host-only comparison by
-  default and falls back to the built-in compressor when host `liblz4` is not
-  available. A strict source validation on `global-shake-30` reduced the full
-  file from 585,216 to 562,176 bytes without changing reconstructed output.
+  At this checkpoint the friendly encoder performed that adaptive host-only
+  comparison by default and fell back to the built-in compressor when host
+  `liblz4` was unavailable. Section 59 supersedes that host-time policy with
+  measured `balanced` selection. A strict source validation on
+  `global-shake-30` reduced the full file from 585,216 to 562,176 bytes without
+  changing reconstructed output.
 - Horizontal 16-bit Sub prediction plus LZ4HC was the smallest aggregate lab
   candidate at 5,669,376 bytes, 9.71% below the original current path and
   about 4.36% below adaptive spatial LZ4HC. It is not in the device format:
@@ -1613,3 +1615,34 @@
   preserving the brief control-heavy empty boundary as actionable evidence.
   The anonymous row is retained in
   `qualification/2026-09-01-audio-margin-runs.tsv`.
+
+## 59. Faster default host compression
+
+- Profiling had already identified the pure-Python bounded LZ4 search as the
+  dominant creator cost. The prior `best` mode always ran that search before
+  comparing official HC12, so merely having fast host `liblz4` available did
+  not remove the bottleneck.
+- The new `balanced` default calls official HC12 directly when available and
+  safely falls back to the built-in encoder otherwise. Exhaustive `best`, strict
+  `official-hc12`, and `builtin` remain explicit choices. Every choice emits the
+  same independent raw LZ4 block format already decoded by the device.
+- Ten deterministic one-second classes spanning static content, local/global
+  motion, cuts/fades, grain/noise, 25/30/60 fps, and audio-length edges produced
+  3,591,792 total bytes under both `best` and HC12. Aggregate creator time fell
+  from 27.546 to 10.170 seconds, a 63.1% reduction.
+- The established eight-second real-footage sample remained 4,308,000 bytes,
+  had identical record modes and stored video/audio totals, reconstructed every
+  source frame exactly, and fell from 26.809 to 8.453 seconds, a 68.5%
+  reduction. A default `balanced` rerun was byte-identical to strict HC12.
+- Official levels 10--12 already select LZ4HC's optimal parser, so HC12 covers
+  the open optimal-parsing question. `favorDecompressionSpeed` remains an
+  experimental static-linking-only API not exported by the installed shared
+  library; the creator does not rely on private LZ4 context layout.
+- The lab's component-only padding calculation now subtracts the canonical
+  16-byte record header instead of 12 bytes. Complete sector totals and
+  candidate selection were already correct. Generated-corpus costing now also
+  uses zero, mono, or stereo adaptive IMA size from the manifest instead of
+  treating every clip as stereo. Silence after a short source ends is costed as
+  zero payload. All focused WSL host tests pass.
+- Anonymous benchmark rows are retained in
+  `qualification/2026-09-01-host-compression-runs.tsv`.

@@ -92,6 +92,8 @@ COLOR_FILTERS = {
     ),
 }
 
+DEFAULT_LZ4_MODE = "balanced"
+
 
 class OfficialLZ4:
     """Official raw-block LZ4/LZ4HC encoder loaded from the host library."""
@@ -1227,15 +1229,27 @@ def read_audio_slice(audio: BinaryIO, size: int) -> tuple[bytes, int]:
     return data, missing
 
 
-def compress_lz4(data: bytes, mode: str = "best") -> bytes:
+def compress_lz4(data: bytes, mode: str = DEFAULT_LZ4_MODE) -> bytes:
     """Choose a raw LZ4 block without changing the device bitstream."""
-    if mode not in ("builtin", "best", "official-hc12"):
-        raise ValueError("lz4 mode must be builtin, best, or official-hc12")
-    candidates = [] if mode == "official-hc12" else [lz4_compress(data)]
+    if mode not in ("builtin", "balanced", "best", "official-hc12"):
+        raise ValueError(
+            "lz4 mode must be builtin, balanced, best, or official-hc12"
+        )
     host_lz4 = official_lz4()
-    if mode != "builtin" and host_lz4 is not None:
+    if mode == "balanced":
+        return (host_lz4.compress(data, 12)
+                if host_lz4 is not None else lz4_compress(data))
+    if mode == "builtin":
+        return lz4_compress(data)
+    if mode == "official-hc12":
+        if host_lz4 is None:
+            raise RuntimeError("official-hc12 requires host liblz4")
+        return host_lz4.compress(data, 12)
+
+    candidates = [lz4_compress(data)]
+    if host_lz4 is not None:
         candidates.append(host_lz4.compress(data, 12))
-    if not candidates:
+    if not candidates:  # Defensive: the built-in candidate is always present.
         raise RuntimeError("official-hc12 requires host liblz4")
     return min(candidates, key=len)
 
@@ -1245,7 +1259,7 @@ def _compress_record_if_smaller(
     rect_count: int,
     payload: bytes,
     audio_size: int,
-    lz4_mode: str = "best",
+    lz4_mode: str = DEFAULT_LZ4_MODE,
 ):
     """Return a raw or LZ4 record, requiring a whole-sector saving."""
     decoded_size = len(payload)
@@ -1266,7 +1280,7 @@ def choose_video_record(
     force_key: bool,
     video_mode: str,
     max_rects: int,
-    lz4_mode: str = "best",
+    lz4_mode: str = DEFAULT_LZ4_MODE,
 ):
     """Choose a video record by final sector count, with bounded tie costs."""
     if video_mode not in ("current", "spatial", "motion", "auto"):
@@ -1343,7 +1357,7 @@ def encode(
     ffmpeg: str,
     video_mode: str = "spatial",
     max_rects: int = 8,
-    lz4_mode: str = "best",
+    lz4_mode: str = DEFAULT_LZ4_MODE,
     color_depth: str = "rgb565",
     *,
     metadata: dict[str, str] | None = None,
@@ -1606,10 +1620,10 @@ def main() -> None:
     )
     ap.add_argument(
         "--lz4-mode",
-        choices=("builtin", "best", "official-hc12"),
-        default="best",
-        help=("best compares built-in LZ4 with official LZ4HC level 12 "
-              "when host liblz4 is available"),
+        choices=("builtin", "balanced", "best", "official-hc12"),
+        default=DEFAULT_LZ4_MODE,
+        help=("balanced uses fast official HC12 when available and otherwise "
+              "falls back to built-in LZ4; best exhaustively compares both"),
     )
     ns = ap.parse_args()
     try:

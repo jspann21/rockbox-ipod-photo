@@ -1,0 +1,3 @@
+workload	clips	frames	exhaustive_bytes	balanced_bytes	exhaustive_seconds	balanced_seconds	time_reduction_percent	strict_source_verified	byte_identical_outputs
+deterministic-quick	10	355	3591792	3591792	27.546	10.170	63.08	not-run	9/10
+real-footage-eight-second	1	193	4308000	4308000	26.809	8.453	68.47	yes	yes

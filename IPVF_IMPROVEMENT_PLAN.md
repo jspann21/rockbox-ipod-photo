@@ -159,9 +159,10 @@ Aggregate standard-corpus results are:
 | Spatial + bounded Sub16/LZ4HC candidate | 5,669,376 | 9.71% | predictor inverse required |
 
 Official LZ4HC emits the same raw LZ4 blocks accepted by the current decoder.
-The encoder therefore now compares its built-in block with LZ4HC level 12 and
-keeps the smaller one per record. Missing host `liblz4` safely falls back to
-the built-in encoder. An exact encode/validate check on `global-shake-30`
+The lab and explicit `best` mode compare the built-in block with LZ4HC level 12
+and keep the smaller one per record. The friendly `balanced` mode now calls
+HC12 directly when available and safely falls back to built-in LZ4. An exact
+encode/validate check on `global-shake-30`
 reduced the complete file from 585,216 to 562,176 bytes (3.94%). Sub16 remains
 lab-only until its inverse cost and playback timing pass hardware gates.
 
@@ -585,10 +586,13 @@ changing the proven player.
 - [ ] Sweep alternate time-based and scene-cut-aware keyframe intervals before
       changing the qualified five-second default.
 - [x] Compare the current 32-candidate LZ4 search with official fast and HC
-      levels 3/9/12. Current `--lz4-mode best` adaptively selects the built-in
+      levels 3/9/12. Explicit `--lz4-mode best` adaptively selects the built-in
       result or HC12, both using the same device block decoder.
-- [ ] Compare official optimal-parsing and favor-decompression-speed variants;
-      neither is present in the current lab or creator.
+- [x] Confirm official HC levels 10--12 use the optimal parser; the already
+      measured HC12 candidate therefore covers optimal parsing.
+- [ ] Compare official `favorDecompressionSpeed`. It is an experimental
+      static-linking-only API and is not exported by the installed liblz4 1.9.4
+      shared library; do not depend on private context layout to force it.
 - [x] Try RGB565 byte-plane split, 16/32-bit word ordering, XOR, horizontal
       `Sub`, vertical `Up`, and simple Paeth-like reversible predictors before
       LZ4.
@@ -598,9 +602,15 @@ changing the proven player.
       rectangles can save storage while costing display setup time.
 - [x] Compare 8x8, 16x8, and 16x16 maps with raw and LZ4 tile payloads in the
       sector-count lab.
-- [ ] Correct `lab.py`'s component accounting to subtract the canonical 16-byte
-      record header rather than 12 bytes, then regenerate padding reports. Total
-      sector/record bytes and candidate ranking are already computed correctly.
+- [x] Correct `lab.py` component accounting to subtract the canonical 16-byte
+      record header rather than 12 bytes. Total sector/record bytes and
+      candidate ranking were already correct.
+- [x] Cost generated-corpus audio by its actual adaptive record class: zero
+      bytes for silence/absent/exhausted audio, one-channel IMA for exact mono,
+      and stereo IMA otherwise. This removes the prior stereo-only estimate at
+      sector boundaries.
+- [ ] Regenerate the retained standard-corpus component/padding reports with the
+      corrected accounting; new lab runs are correct.
 - [ ] Extend tile payload experiments to solid-color, palette, and XOR variants
       only where a content-class result can beat the current selector.
 - [ ] Add compact repeat runs and silence runs to measure sector-padding savings
@@ -616,8 +626,16 @@ changing the proven player.
       Python LZ4 search (52.76 of 70.25 profiler seconds), followed by motion
       estimation (7.64 seconds); scaling/FFmpeg is not the current bottleneck.
 - [x] Compare `best` with built-in LZ4 on that corpus. Both produced the same
-      4,269,600-byte file byte-for-byte and took 28.295/28.329 seconds, so no
-      label/default change is justified by this workload.
+      4,269,600-byte file byte-for-byte and took 28.295/28.329 seconds; this
+      established that merely adding HC12 after the Python search costs little
+      but does not remove the dominant search.
+- [x] Promote the adaptive `balanced` creator mode. It calls official HC12
+      directly when available and falls back to built-in LZ4 otherwise;
+      exhaustive `best` remains explicit. Across ten deterministic one-second
+      classes, total output stayed 3,591,792 bytes while time fell from 27.546
+      to 10.170 seconds (63.1%). The established eight-second real-footage
+      sample stayed 4,308,000 bytes, reconstructed exactly, and fell from
+      26.809 to 8.453 seconds (68.5%). No device or format change is involved.
 - [x] Benchmark simple whole-sector compressor-pruning bounds. Two shortcuts
       were removed after pruning zero calls and producing no creator-time or
       file-size benefit.
@@ -630,9 +648,9 @@ Decision gate:
 
 - [x] Keep the device mode set small and adaptive: qualified whole-frame motion
       is the creator default through 30 fps, spatial video with adaptive
-      `--lz4-mode best` is the default above 30 fps, dense temporal XOR is capped
-      at 30 fps and remains explicit, and weaker experiments stay host-only or
-      rejected.
+      `--lz4-mode balanced` is the host-compression default at every rate, dense
+      temporal XOR is capped at 30 fps and remains explicit, and weaker
+      experiments stay host-only or rejected.
 - [x] Defer Sub16 below the 10% promotion gate: it saved 4.3617% beyond adaptive
       spatial/LZ4HC, has no timed inverse, and may force full-frame display work.
 

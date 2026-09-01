@@ -135,9 +135,21 @@ TRANSFORMS: dict[str, Callable[[bytes], bytes]] = {
 }
 
 
-def audio_payload_size(frame: int, fps: int) -> int:
-    samples = (ipvf.audio_boundary(frame + 1, fps) -
-               ipvf.audio_boundary(frame, fps))
+def audio_payload_size(
+    frame: int, fps: int, audio: dict | None = None
+) -> int:
+    """Return the adaptive IMA payload size for a generated-corpus record."""
+    start = ipvf.audio_boundary(frame, fps)
+    end = ipvf.audio_boundary(frame + 1, fps)
+    samples = end - start
+    if audio is not None:
+        source_frames = int(audio.get("sample_frames", 0))
+        if (not audio.get("present", True) or
+                audio.get("kind") == "silence" or
+                start >= source_frames):
+            return 0
+        if int(audio.get("channels", 2)) == 1:
+            return 4 + samples // 2
     return 8 + samples - 1
 
 
@@ -158,7 +170,8 @@ def frame_cost(
         record_bytes=record_bytes,
         payload_bytes=payload_size,
         audio_bytes=audio_size,
-        padding_bytes=record_bytes - 12 - payload_size - audio_size,
+        padding_bytes=(record_bytes - ipvf.RECORD_HEADER_SIZE -
+                       payload_size - audio_size),
         lz4_input_bytes=lz4_input,
         reconstruct_bytes=reconstruct,
         lcd_pixels=lcd_pixels,
@@ -391,6 +404,7 @@ def aggregate_clip(
     ffmpeg: str,
     official: OfficialLZ4,
     max_frames: int | None,
+    audio: dict | None = None,
 ) -> dict[str, Cost]:
     totals: dict[str, Cost] = {}
     prev: bytes | None = None
@@ -399,7 +413,7 @@ def aggregate_clip(
             # Drain FFmpeg cleanly. Closing its rawvideo pipe early turns an
             # intentional lab limit into a noisy broken-pipe decoder error.
             continue
-        audio_size = audio_payload_size(frame, fps)
+        audio_size = audio_payload_size(frame, fps, audio)
         force_key = prev is None or (keyint and frame % keyint == 0)
         costs = candidate_costs(prev, cur, audio_size, force_key, official)
         current_names = {cost.strategy for cost in costs}
@@ -476,7 +490,7 @@ def run_clip_task(task: tuple) -> tuple[list[dict], dict]:
     started = time.perf_counter()
     totals = aggregate_clip(
         source, fps, max(1, round(key_seconds * fps)), ffmpeg,
-        OfficialLZ4(), max_frames,
+        OfficialLZ4(), max_frames, clip.get("audio"),
     )
     elapsed = time.perf_counter() - started
     rows = []

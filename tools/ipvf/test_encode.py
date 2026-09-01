@@ -382,7 +382,8 @@ class IPVFEncodeTests(unittest.TestCase):
 
     def test_default_mode_is_hardware_proven_spatial(self) -> None:
         self.assertEqual(
-            ipvf.encode.__defaults__, ("spatial", 8, "best", "rgb565")
+            ipvf.encode.__defaults__,
+            ("spatial", 8, "balanced", "rgb565")
         )
         audio = bytes(ipvf.audio_boundary(len(self.frames), 30) *
                       ipvf.AUDIO_FRAME_BYTES)

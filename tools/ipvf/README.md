@@ -62,10 +62,11 @@ rounding, becomes at least one sector smaller. Temporal records carry the
 Rockbox CRC32 of their compressed residual payload. The built-in compressor
 searches bounded hash chains, prefers longer matches, uses one-byte lazy
 matching, and avoids expensive short-offset copies when an almost-equivalent
-match is available. By default, the host also tries official LZ4HC level 12
-when `liblz4` is available and keeps the smaller raw LZ4 block per record. This
-changes no device format and cannot enlarge a record; use `--lz4-mode builtin`
-for the original compressor alone. The creator forces indexed true keys at a
+match is available. The `balanced` default uses official LZ4HC level 12 when
+`liblz4` is available and otherwise falls back to the built-in compressor. This
+changes no device format; use `--lz4-mode best` for an exhaustive size-first
+comparison of both encoders, or `--lz4-mode builtin` for the original encoder
+alone. The creator forces indexed true keys at a
 maximum five-second interval computed from exact source cadence; use
 `--key-seconds` to select another positive duration. Temporal dependency chains
 therefore remain time-bounded rather than changing length arbitrarily with FPS.
@@ -84,9 +85,19 @@ Motion search memoizes every bounded translation score within a frame. This
 does not change candidate ordering or output bytes; on the repeatable 192-frame
 creator corpus it reduced normal wall time from 30.951 to 28.295 seconds
 (8.6%). A profile attributes most remaining host time to the exhaustive pure-
-Python LZ4 match search. `best` and `builtin` happened to produce the same
-4,269,600-byte file and nearly identical time on this workload, so `best`
-remains the size-oriented default rather than inferring a universal result.
+Python LZ4 match search. A follow-up ten-class quick corpus produced the same
+3,591,792 total IPVF bytes with exhaustive `best` and direct HC12, while HC12
+reduced conversion time from 27.546 to 10.170 seconds (63.1%). The established
+eight-second real-footage sample likewise remained 4,308,000 bytes and strictly
+source-valid while falling from 26.809 to 8.453 seconds (68.5%). `balanced` is
+therefore the friendly default; exhaustive `best` remains available when every
+compressed byte matters more than creator time.
+
+The sector lab now also subtracts the canonical 16-byte record header and uses
+each generated clip's actual adaptive audio class: zero payload for silence or
+exhausted audio, mono IMA for exact one-channel sources, and stereo IMA
+otherwise. Complete record rankings were already sector-based; the corrected
+components make boundary and padding reports exact as well.
 
 IPVF requires at least 4 fps. Every stored record is limited to 192 sectors (96
 KiB), so it fits the player's dedicated read buffer even when incompressible
