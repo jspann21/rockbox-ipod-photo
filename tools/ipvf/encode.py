@@ -778,6 +778,81 @@ def xor_frames(prev: bytes, cur: bytes) -> bytes:
     return bytes(a ^ b for a, b in zip(prev, cur))
 
 
+def translate_frame(previous: bytes, dx: int, dy: int) -> bytes:
+    """Shift one RGB565 frame losslessly into a black prediction canvas."""
+    if len(previous) != FRAME_BYTES:
+        raise ValueError("frame must match the native IPVF geometry")
+    if abs(dx) >= W or abs(dy) >= H:
+        raise ValueError("translation leaves no overlapping pixels")
+    predicted = bytearray(FRAME_BYTES)
+    source_x = max(0, -dx)
+    target_x = max(0, dx)
+    source_y = max(0, -dy)
+    target_y = max(0, dy)
+    width = W - abs(dx)
+    height = H - abs(dy)
+    row_bytes = width * 2
+    for row in range(height):
+        source = ((source_y + row) * W + source_x) * 2
+        target = ((target_y + row) * W + target_x) * 2
+        predicted[target:target + row_bytes] = \
+            previous[source:source + row_bytes]
+    return bytes(predicted)
+
+
+def estimate_translation(
+    previous: bytes, current: bytes, max_shift: int = 16,
+    sample_step: int = 12,
+) -> tuple[int, int]:
+    """Estimate a bounded integer translation with a coarse/refined RGB565 SAD."""
+    if len(previous) != FRAME_BYTES or len(current) != FRAME_BYTES:
+        raise ValueError("frames must match the native IPVF geometry")
+    if not 0 <= max_shift < min(W, H) or sample_step <= 0:
+        raise ValueError("invalid translation search bounds")
+
+    def score(dx: int, dy: int) -> tuple[int, int]:
+        x0 = max(0, dx)
+        x1 = min(W, W + dx)
+        y0 = max(0, dy)
+        y1 = min(H, H + dy)
+        total = 0
+        count = 0
+        for y in range(y0, y1, sample_step):
+            current_offset = (y * W + x0) * 2
+            previous_offset = ((y - dy) * W + x0 - dx) * 2
+            for _x in range(x0, x1, sample_step):
+                total += abs(current[current_offset] - previous[previous_offset])
+                total += abs(current[current_offset + 1] -
+                             previous[previous_offset + 1])
+                count += 1
+                current_offset += sample_step * 2
+                previous_offset += sample_step * 2
+        return total, count
+
+    def better(candidate: tuple[int, int], best: tuple[int, int]) -> bool:
+        candidate_score, candidate_count = score(*candidate)
+        best_score, best_count = score(*best)
+        left = candidate_score * best_count
+        right = best_score * candidate_count
+        return (left, abs(candidate[0]) + abs(candidate[1]), candidate) < \
+               (right, abs(best[0]) + abs(best[1]), best)
+
+    best = (0, 0)
+    coarse = range(-max_shift, max_shift + 1, 2)
+    for dy in coarse:
+        for dx in coarse:
+            if better((dx, dy), best):
+                best = dx, dy
+    coarse_best = best
+    for dy in range(max(-max_shift, coarse_best[1] - 2),
+                    min(max_shift, coarse_best[1] + 2) + 1):
+        for dx in range(max(-max_shift, coarse_best[0] - 2),
+                        min(max_shift, coarse_best[0] + 2) + 1):
+            if better((dx, dy), best):
+                best = dx, dy
+    return best
+
+
 def frame_rate(fps: int | Fraction) -> Fraction:
     """Normalize and bound one exact IPVF rational frame rate."""
     rate = Fraction(fps)

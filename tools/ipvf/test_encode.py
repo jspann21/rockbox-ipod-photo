@@ -507,6 +507,23 @@ class IPVFEncodeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ipvf.frame_rate(241)
 
+    def test_translation_estimate_and_lossless_residual(self) -> None:
+        previous = bytearray(ipvf.FRAME_BYTES)
+        for y in range(ipvf.H):
+            for x in range(ipvf.W):
+                offset = (y * ipvf.W + x) * 2
+                previous[offset] = (x * 7 + y * 3) & 0xFF
+                previous[offset + 1] = (x * 5 + y * 11) & 0xFF
+        previous = bytes(previous)
+        current = ipvf.translate_frame(previous, 4, -2)
+        self.assertEqual(
+            ipvf.estimate_translation(previous, current, max_shift=8),
+            (4, -2),
+        )
+        prediction = ipvf.translate_frame(previous, 4, -2)
+        residual = ipvf.xor_frames(prediction, current)
+        self.assertEqual(ipvf.xor_frames(prediction, residual), current)
+
 
 if __name__ == "__main__":
     unittest.main()
