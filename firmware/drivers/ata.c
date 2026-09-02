@@ -1067,13 +1067,33 @@ static int identify(void)
     return 0;
 }
 
+static uint8_t ata_safe_multiple_count(uint8_t maximum, uint8_t current)
+{
+    uint8_t limit = maximum ? maximum : current;
+    uint8_t count = 1;
+
+    /* Word 47 permits a maximum from 1 through 255, while hosts should select
+     * a power-of-two SET MULTIPLE count. Round down instead of passing a raw,
+     * possibly malformed bridge value through to the command, and never let
+     * word 59 select more than a nonzero word-47 maximum. */
+    while (count < 128 && (uint16_t)count * 2 <= limit)
+        count *= 2;
+
+    return count;
+}
+
 /* Parse geometry into locals first, then publish one coherent snapshot.  ATA
  * bridges are re-IDENTIFY'd after reset and rail power-on; retaining values
  * from the previous response can otherwise mix an old addressing mode or
  * sector size with the newly initialized device. */
 static int ata_parse_identify_geometry(void)
 {
-    uint8_t new_multisectors = identify_info[47] & 0xff;
+    uint8_t maximum_multisectors = identify_info[47] & 0xff;
+    uint8_t current_multisectors =
+        (identify_info[59] & 0x100) ? identify_info[59] & 0xff : 0;
+    uint8_t new_multisectors =
+        ata_safe_multiple_count(maximum_multisectors,
+                                current_multisectors);
     uint64_t new_total_sectors = ((uint32_t)identify_info[61] << 16) |
                                  identify_info[60];
     uint32_t new_log_sector_size;
@@ -1081,11 +1101,6 @@ static int ata_parse_identify_geometry(void)
 #ifdef HAVE_LBA48
     bool new_lba48 = false;
 #endif
-
-    if (!new_multisectors && (identify_info[59] & 0x100) == 0x100)
-        new_multisectors = identify_info[59] & 0xff;
-    if (!new_multisectors)
-        new_multisectors = 1;
 
 #ifdef HAVE_LBA48
     if (identify_info[83] & 0x0400 &&

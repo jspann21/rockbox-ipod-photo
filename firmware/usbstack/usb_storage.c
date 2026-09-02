@@ -344,6 +344,7 @@ static enum {
     SENDING_RESULT,
     SENDING_FAILED_RESULT,
     RECEIVING_BLOCKS,
+    DISCARDING_BLOCKS,
 #if CONFIG_RTC
     RECEIVING_TIME,
 #endif
@@ -679,10 +680,24 @@ static void usb_storage_transfer_complete(int ep,int dir,int status,int length)
                 }
 
                 if(result != 0) {
-                    send_csw(UMS_STATUS_FAIL);
                     cur_sense_data.sense_key=SENSE_MEDIUM_ERROR;
                     cur_sense_data.asc=ASC_WRITE_ERROR;
                     cur_sense_data.ascq=0;
+
+                    if (next_count != 0) {
+                        /* The next OUT transfer was deliberately primed
+                         * before the synchronous media write. If that write
+                         * fails, drain the rest of this command before
+                         * arming a CBW receive; otherwise the new receive can
+                         * overwrite the active ARC endpoint queue. */
+                        cur_cmd.data_select = next_select;
+                        cur_cmd.sector = next_sector;
+                        cur_cmd.count = next_count;
+                        state = DISCARDING_BLOCKS;
+                    }
+                    else {
+                        send_csw(UMS_STATUS_FAIL);
+                    }
                     break;
                 }
 #endif
@@ -706,6 +721,44 @@ static void usb_storage_transfer_complete(int ep,int dir,int status,int length)
                 cur_sense_data.ascq=0;
             }
             break;
+        case DISCARDING_BLOCKS: {
+            unsigned int chunk =
+                MIN(WRITE_BUFFER_SIZE / cur_cmd.block_size, cur_cmd.count);
+
+            /* Only an OUT completion proves that the queued discard receive
+             * is no longer active. An unrelated IN callback must not re-prime
+             * EP_OUT over it. */
+            if (dir != USB_DIR_OUT) {
+                logf("ignoring IN while discarding write");
+                break;
+            }
+
+            if (status != 0 ||
+                (unsigned int)length != chunk * cur_cmd.block_size) {
+                logf("discard write failed %d/%X/%d", dir, status, length);
+                send_csw(UMS_STATUS_FAIL);
+                break;
+            }
+
+            cur_cmd.count -= chunk;
+            if (cur_cmd.count == 0) {
+                send_csw(UMS_STATUS_FAIL);
+            }
+            else {
+                cur_cmd.data_select = !cur_cmd.data_select;
+                chunk = MIN(WRITE_BUFFER_SIZE / cur_cmd.block_size,
+                            cur_cmd.count);
+                if (usb_drv_recv_nonblocking(EP_OUT,
+                        cur_cmd.data[cur_cmd.data_select],
+                        chunk * cur_cmd.block_size) < 0) {
+                    send_csw(UMS_STATUS_FAIL);
+                }
+                else {
+                    state = DISCARDING_BLOCKS;
+                }
+            }
+            break;
+        }
         case WAITING_FOR_CSW_COMPLETION_OR_COMMAND:
             if(dir==USB_DIR_IN) {
                 /* This was the CSW */
@@ -770,20 +823,23 @@ static void usb_storage_transfer_complete(int ep,int dir,int status,int length)
             }
             if(status==0) {
                 if (!usb_storage_lun_available(cur_cmd.lun)) {
-                    send_csw(UMS_STATUS_FAIL);
+                    cur_cmd.last_result = -1;
                     cur_sense_data.sense_key = SENSE_NOT_READY;
                     cur_sense_data.asc = ASC_MEDIUM_NOT_PRESENT;
                     cur_sense_data.ascq = 0;
-                    break;
                 }
                 if(cur_cmd.count==0) {
                     //logf("data sent, now send csw");
                     if(cur_cmd.last_result!=0) {
                         /* The last read failed. */
-                        send_csw(UMS_STATUS_FAIL);
-                        cur_sense_data.sense_key=SENSE_MEDIUM_ERROR;
-                        cur_sense_data.asc=ASC_READ_ERROR;
+                        bool present =
+                            usb_storage_lun_available(cur_cmd.lun);
+                        cur_sense_data.sense_key = present ? SENSE_MEDIUM_ERROR
+                                                          : SENSE_NOT_READY;
+                        cur_sense_data.asc = present ? ASC_READ_ERROR
+                                                    : ASC_MEDIUM_NOT_PRESENT;
                         cur_sense_data.ascq=0;
+                        send_csw(UMS_STATUS_FAIL);
                         return;
                     }
                     else
@@ -898,27 +954,30 @@ static bool usb_storage_control_request(struct usb_ctrlrequest* req, uint8_t* re
 static void send_and_read_next(void)
 {
     int result = 0;
+    unsigned int transfer_size =
+        MIN(READ_BUFFER_SIZE / cur_cmd.block_size,
+            cur_cmd.count) * cur_cmd.block_size;
 
     if (!usb_storage_lun_available(cur_cmd.lun)) {
         cur_cmd.last_result = -1;
         cur_sense_data.sense_key = SENSE_NOT_READY;
         cur_sense_data.asc = ASC_MEDIUM_NOT_PRESENT;
         cur_sense_data.ascq = 0;
-        /* Do not expose the previous contents of the double buffer when the
-         * medium vanishes between reads. Finish the BOT data phase empty and
-         * report the failure through the normal CSW path. */
-        send_command_failed_result();
-        return;
     }
-
-    result = USBSTOR_READ_SECTORS_FILTER();
+    else {
+        result = USBSTOR_READ_SECTORS_FILTER();
+    }
 
     if(result != 0 && cur_cmd.last_result == 0)
         cur_cmd.last_result = result;
 
-    send_block_data(cur_cmd.data[cur_cmd.data_select],
-                    MIN(READ_BUFFER_SIZE / cur_cmd.block_size,
-                        cur_cmd.count) * cur_cmd.block_size);
+    /* Complete the declared BOT data phase, but never expose an old transfer
+     * buffer after the initial or prefetched media read has failed. The CSW
+     * still reports the latched read error so the host must discard/retry. */
+    if (cur_cmd.last_result != 0)
+        memset(cur_cmd.data[cur_cmd.data_select], 0, transfer_size);
+
+    send_block_data(cur_cmd.data[cur_cmd.data_select], transfer_size);
 
     /* Switch buffers for the next one */
     cur_cmd.data_select=!cur_cmd.data_select;
@@ -930,26 +989,46 @@ static void send_and_read_next(void)
         /* already read the next bit, so we can send it out immediately when the
          * current transfer completes.  */
 #ifdef USB_USE_RAMDISK
-        memcpy(cur_cmd.data[cur_cmd.data_select],
-                ramdisk_buffer + cur_cmd.sector*cur_cmd.block_size,
-                MIN(READ_BUFFER_SIZE/cur_cmd.block_size, cur_cmd.count)*cur_cmd.block_size);
-#else
-        if (usb_storage_lun_available(cur_cmd.lun)) {
-            result = storage_read_sectors(IF_MD(cur_cmd.lun,)
-                    cur_cmd.sector,
-                    MIN(READ_BUFFER_SIZE/cur_cmd.block_size, cur_cmd.count),
-                    cur_cmd.data[cur_cmd.data_select]);
-            if(cur_cmd.last_result == 0)
-                cur_cmd.last_result = result;
+        if (cur_cmd.last_result == 0) {
+            memcpy(cur_cmd.data[cur_cmd.data_select],
+                    ramdisk_buffer + cur_cmd.sector*cur_cmd.block_size,
+                    MIN(READ_BUFFER_SIZE/cur_cmd.block_size,
+                        cur_cmd.count) * cur_cmd.block_size);
         }
-        else {
-            cur_cmd.last_result = -1;
+#else
+        if (cur_cmd.last_result == 0) {
+            if (usb_storage_lun_available(cur_cmd.lun)) {
+                result = storage_read_sectors(IF_MD(cur_cmd.lun,)
+                        cur_cmd.sector,
+                        MIN(READ_BUFFER_SIZE/cur_cmd.block_size,
+                            cur_cmd.count),
+                        cur_cmd.data[cur_cmd.data_select]);
+                cur_cmd.last_result = result;
+            }
+            else {
+                cur_cmd.last_result = -1;
+            }
         }
 
 #endif
     }
 }
 /****************************************************************************/
+
+static bool block_transfer_size_supported(unsigned int block_size,
+                                          unsigned int buffer_size)
+{
+    if (block_size != 0 && block_size <= buffer_size)
+        return true;
+
+    /* A zero-sector chunk would neither transfer data nor reduce count,
+     * trapping the command in the read/write pipeline. */
+    cur_sense_data.sense_key = SENSE_ILLEGAL_REQUEST;
+    cur_sense_data.asc = ASC_INVALID_FIELD_IN_CBD;
+    cur_sense_data.ascq = 0;
+    send_csw(UMS_STATUS_FAIL);
+    return false;
+}
 
 static void handle_scsi(struct command_block_wrapper* cbw)
 {
@@ -1401,9 +1480,12 @@ static void handle_scsi(struct command_block_wrapper* cbw)
                 cur_sense_data.ascq=0;
                 break;
             }
+            if (!block_transfer_size_supported(block_size, READ_BUFFER_SIZE))
+                break;
             cur_cmd.data[0] = tb.transfer_buffer;
             cur_cmd.data[1] = &tb.transfer_buffer[READ_BUFFER_SIZE];
             cur_cmd.data_select=0;
+            cur_cmd.last_result=0;
             cur_cmd.sector = block_size_mult *
                 ((uint32_t)cbw->command_block[2] << 24 |
                  (uint32_t)cbw->command_block[3] << 16 |
@@ -1450,9 +1532,12 @@ static void handle_scsi(struct command_block_wrapper* cbw)
                 cur_sense_data.ascq=0;
                 break;
             }
+            if (!block_transfer_size_supported(block_size, READ_BUFFER_SIZE))
+                break;
             cur_cmd.data[0] = tb.transfer_buffer;
             cur_cmd.data[1] = &tb.transfer_buffer[READ_BUFFER_SIZE];
             cur_cmd.data_select=0;
+            cur_cmd.last_result=0;
             cur_cmd.sector = block_size_mult *
                  ((uint64_t)cbw->command_block[2] << 56 |
                  (uint64_t)cbw->command_block[3] << 48 |
@@ -1505,6 +1590,8 @@ static void handle_scsi(struct command_block_wrapper* cbw)
                 cur_sense_data.ascq=0;
                 break;
             }
+            if (!block_transfer_size_supported(block_size, WRITE_BUFFER_SIZE))
+                break;
             cur_cmd.data[0] = tb.transfer_buffer;
             cur_cmd.data[1] = &tb.transfer_buffer[WRITE_BUFFER_SIZE];
             cur_cmd.data_select=0;
@@ -1545,6 +1632,8 @@ static void handle_scsi(struct command_block_wrapper* cbw)
                 cur_sense_data.ascq=0;
                 break;
             }
+            if (!block_transfer_size_supported(block_size, WRITE_BUFFER_SIZE))
+                break;
             cur_cmd.data[0] = tb.transfer_buffer;
             cur_cmd.data[1] = &tb.transfer_buffer[WRITE_BUFFER_SIZE];
             cur_cmd.data_select=0;
