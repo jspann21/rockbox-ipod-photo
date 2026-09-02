@@ -8,6 +8,7 @@
  ****************************************************************************/
 #include "plugin.h"
 #include "../imageviewer.h"
+#include <limits.h>
 
 #define F1013_FORMAT_ID      1013u
 #define F1013_WIDTH          LCD_WIDTH
@@ -340,7 +341,10 @@ static bool load_current_frame(void)
         return false;
 
     file_size = rb->filesize(fd);
-    if ((uint64_t)entry->offset + F1013_FRAME_BYTES > (uint64_t)file_size ||
+    if (file_size < 0 ||
+        (sizeof(off_t) <= sizeof(entry->offset) &&
+         entry->offset > (uint32_t)LONG_MAX) ||
+        (uint64_t)entry->offset + F1013_FRAME_BYTES > (uint64_t)file_size ||
         !read_at(fd, (off_t)entry->offset, photos.raw, F1013_FRAME_BYTES))
     {
         rb->close(fd);
@@ -384,7 +388,10 @@ static int load_image(char *filename, struct image_info *info,
 
     rb->memset(&photos, 0, sizeof(photos));
 
-    aligned = ((uintptr_t)buf + 3) & ~(uintptr_t)3;
+    /* PP5020 ATA reads require a cache-line-aligned destination for DMA.
+     * Every F1013 frame is a multiple of 16 bytes, so this alignment also
+     * keeps the second frame buffer and subsequent frame reads DMA-safe. */
+    aligned = ((uintptr_t)buf + 15) & ~(uintptr_t)15;
     skip = aligned - (uintptr_t)buf;
     if (*buf_size <= (ssize_t)skip)
         return PLUGIN_OUTOFMEM;

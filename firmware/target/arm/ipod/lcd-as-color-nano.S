@@ -40,10 +40,15 @@
     .section .icode, "ax", %progbits
     
 /****************************************************************************
- * extern void lcd_write_yuv420_lines(unsigned char const * const src[3],
+ * extern int lcd_write_yuv420_lines(unsigned char const * const src[3],
  *                                    const unsigned LCD_BASE,
  *                                    int width,
- *                                    int stride);
+ *                                    int stride,
+ *                                    unsigned long deadline,
+ *                                    volatile unsigned long *usec_timer);
+ *
+ * Returns 0 on success, 1 on a first-line FIFO timeout, and 2 on a
+ * second-line FIFO timeout.
  *
  *   Conversion from Motion JPEG and MPEG Y'PbPr to RGB is:
  *   |R|   |1.164  0.000  1.596| |Y' -  16|
@@ -69,19 +74,23 @@ lcd_write_yuv420_lines:
                                       /* r2 = width */
                                       /* r3 = stride */                
     stmfd       sp!, { r4-r10, lr }   /* save non-scratch */
+    ldr         r5, [sp, #32]         /* fifth arg = absolute deadline */
+    ldr         r6, [sp, #36]         /* sixth arg = microsecond timer */
     ldmia       r0, { r9, r10, r12 }  /* r9 = yuv_src[0] = Y'_p */
                                       /* r10 = yuv_src[1] = Cb_p */
                                       /* r12 = yuv_src[2] = Cr_p */
     add         r3, r9, r3            /* r3 = &ysrc[stride] */
     add         r4, r2, r2, asr #1    /* chroma buffer lenght = width/2 *3 */
     mov         r4, r4, asl #2        /*   use words for str/ldm possibility */
-    add         r4, r4, #19           /*   plus room for 4 additional words, */
+    add         r4, r4, #27           /*   plus room for 6 additional words, */
     bic         r4, r4, #3            /*   rounded up to multiples of 4 byte */
     sub         sp, sp, r4            /*   and allocate on stack */
     stmia       sp, {r1-r4}           /* LCD_BASE, width, &ysrc[stride], stack_alloc */
+    str         r5, [sp, #16]         /* absolute FIFO deadline */
+    str         r6, [sp, #20]         /* microsecond timer address */
 
     mov         r7, r2                /* r7 = loop count */
-    add         r8, sp, #16           /* chroma buffer */
+    add         r8, sp, #24           /* chroma buffer */
     add         lr, r1, #0x100        /* LCD data port = LCD2_BASE + 0x100 */
 
     /* 1st loop start */
@@ -168,16 +177,18 @@ lcd_write_yuv420_lines:
     orr         r5, r5, r3, lsl #5    /* pixel_2 = r<<11 | g<<5 | b */
     orr         r5, r5, r6, lsl #11   /* r5 = pixel_2 */
 #ifdef FORCE_FIFO_WAIT
-    /* wait for FIFO half full */
-    mov         r0, #1
-    mov         r0, r0, lsl #16
+    /* Wait for FIFO half full until the caller's elapsed-time deadline. */
 .fifo_wait1:
     ldr         r3, [lr, #-0xE0]      /* while !(LCD2_BLOCK_CTRL & 0x1000000); */
     tst         r3, #0x1000000
     bne         .fifo_ready1
-    subs        r0, r0, #1
-    bne         .fifo_wait1
-    b           .fifo_abort
+    ldr         r0, [sp, #20]
+    ldr         r0, [r0]
+    ldr         r3, [sp, #16]
+    sub         r0, r0, r3
+    cmp         r0, #0
+    blt         .fifo_wait1
+    b           .fifo_abort1
 .fifo_ready1:
 #endif
 
@@ -196,7 +207,7 @@ lcd_write_yuv420_lines:
     /* 1st loop end */
 
     /* Reload several registers for pointer rewinding for next loop */
-    add         r8, sp, #16           /* chroma buffer */
+    add         r8, sp, #24           /* chroma buffer */
     ldmia       sp, { r1, r7, r9}     /* r1  = LCD_BASE */
                                       /* r7  = loop count */
                                       /* r9 = &ysrc[stride] */   
@@ -263,16 +274,18 @@ lcd_write_yuv420_lines:
     orr         r5, r5, r3, lsl #5    /* pixel_2 = r<<11 | g<<5 | b */
     orr         r5, r5, r6, lsl #11   /* r5 = pixel_2 */
 #ifdef FORCE_FIFO_WAIT
-    /* wait for FIFO half full */
-    mov         r0, #1
-    mov         r0, r0, lsl #16
+    /* Wait for FIFO half full until the caller's elapsed-time deadline. */
 .fifo_wait2:
     ldr         r3, [lr, #-0xE0]      /* while !(LCD2_BLOCK_CTRL & 0x1000000); */
     tst         r3, #0x1000000
     bne         .fifo_ready2
-    subs        r0, r0, #1
-    bne         .fifo_wait2
-    b           .fifo_abort
+    ldr         r0, [sp, #20]
+    ldr         r0, [r0]
+    ldr         r3, [sp, #16]
+    sub         r0, r0, r3
+    cmp         r0, #0
+    blt         .fifo_wait2
+    b           .fifo_abort2
 .fifo_ready2:
 #endif
 
@@ -290,7 +303,15 @@ lcd_write_yuv420_lines:
     bgt         20b                   /* back to beginning  */
     /* 2nd loop end */
 
-.fifo_abort:
+    mov         r0, #0
+    b           .fifo_done
+
+.fifo_abort1:
+    mov         r0, #1
+    b           .fifo_done
+.fifo_abort2:
+    mov         r0, #2
+.fifo_done:
     ldr         r3, [sp, #12]
     add         sp, sp, r3            /* deallocate buffer */
     ldmpc       regs=r4-r10           /* restore registers */

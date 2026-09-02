@@ -2106,6 +2106,24 @@ static bool pp5020_perf_save_snapshot(void)
              perf.pcm_duplicate_notifications);
     fdprintf(fd, "pcm_missed_transitions=%llu\n",
              perf.pcm_missed_transitions);
+    fdprintf(fd, "lcd_updates=%llu\n", perf.lcd_updates);
+    fdprintf(fd, "lcd_requested_pixels=%llu\n", perf.lcd_requested_pixels);
+    fdprintf(fd, "lcd_transmitted_pixels=%llu\n", perf.lcd_transmitted_pixels);
+    fdprintf(fd, "lcd_avg_us=%llu\n",
+             perf.lcd_updates ? perf.lcd_total_us / perf.lcd_updates : 0);
+    fdprintf(fd, "lcd_max_us=%lu\n", (unsigned long)perf.lcd_max_us);
+    fdprintf(fd, "lcd_timeouts_busy_block_txok=%llu/%llu/%llu\n",
+             perf.lcd_busy_timeouts, perf.lcd_block_timeouts,
+             perf.lcd_txok_timeouts);
+    fdprintf(fd, "lcd_timeouts_fifo1_fifo2=%llu/%llu\n",
+             perf.lcd_fifo1_timeouts, perf.lcd_fifo2_timeouts);
+    fdprintf(fd, "lcd_abandoned_rectangles=%llu\n",
+             perf.lcd_abandoned_rectangles);
+    fdprintf(fd, "lcd_reinitializations=%llu\n",
+             perf.lcd_reinitializations);
+    fdprintf(fd, "lcd_failure_streak_current_max=%lu/%lu\n",
+             (unsigned long)perf.lcd_failure_streak,
+             (unsigned long)perf.lcd_max_failure_streak);
     fdprintf(fd, "timeout_active=%u\n", timeout_stats.active);
     fdprintf(fd, "timeout_capacity=%u\n", MAX_NUM_TIMEOUTS);
     fdprintf(fd, "timeout_high_watermark=%u\n",
@@ -2205,6 +2223,22 @@ static int pp5020_perf_callback(int btn, struct gui_synclist *lists)
         perf.pcm_deferred_notifications);
     simplelist_addline("PCM duplicate/missed: %llu/%llu",
         perf.pcm_duplicate_notifications, perf.pcm_missed_transitions);
+    simplelist_addline("LCD updates: %llu", perf.lcd_updates);
+    simplelist_addline("LCD pixels requested/sent: %llu/%llu",
+        perf.lcd_requested_pixels, perf.lcd_transmitted_pixels);
+    simplelist_addline("LCD avg/max us: %llu/%lu",
+        perf.lcd_updates ? perf.lcd_total_us / perf.lcd_updates : 0,
+        (unsigned long)perf.lcd_max_us);
+    simplelist_addline("LCD timeout busy/block/tx: %llu/%llu/%llu",
+        perf.lcd_busy_timeouts, perf.lcd_block_timeouts,
+        perf.lcd_txok_timeouts);
+    simplelist_addline("LCD timeout fifo1/fifo2: %llu/%llu",
+        perf.lcd_fifo1_timeouts, perf.lcd_fifo2_timeouts);
+    simplelist_addline("LCD abandoned/reinit: %llu/%llu",
+        perf.lcd_abandoned_rectangles, perf.lcd_reinitializations);
+    simplelist_addline("LCD failure streak/max: %lu/%lu",
+        (unsigned long)perf.lcd_failure_streak,
+        (unsigned long)perf.lcd_max_failure_streak);
     simplelist_addline("Timeouts active/peak: %u/%u of %u",
         timeout_stats.active, timeout_stats.high_watermark,
         MAX_NUM_TIMEOUTS);

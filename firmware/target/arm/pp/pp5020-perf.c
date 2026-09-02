@@ -133,6 +133,17 @@ void pp5020_perf_get(struct pp5020_perf_stats *stats)
         ADD_FIELD(pcm_deferred_notifications);
         ADD_FIELD(pcm_duplicate_notifications);
         ADD_FIELD(pcm_missed_transitions);
+        ADD_FIELD(lcd_updates);
+        ADD_FIELD(lcd_requested_pixels);
+        ADD_FIELD(lcd_transmitted_pixels);
+        ADD_FIELD(lcd_total_us);
+        ADD_FIELD(lcd_busy_timeouts);
+        ADD_FIELD(lcd_block_timeouts);
+        ADD_FIELD(lcd_txok_timeouts);
+        ADD_FIELD(lcd_fifo1_timeouts);
+        ADD_FIELD(lcd_fifo2_timeouts);
+        ADD_FIELD(lcd_abandoned_rectangles);
+        ADD_FIELD(lcd_reinitializations);
 #undef ADD_FIELD
         if (s->cache_clean_max_us > stats->cache_clean_max_us)
             stats->cache_clean_max_us = s->cache_clean_max_us;
@@ -142,6 +153,12 @@ void pp5020_perf_get(struct pp5020_perf_stats *stats)
             stats->dma_max_us = s->dma_max_us;
         if (s->pcm_notify_max_us > stats->pcm_notify_max_us)
             stats->pcm_notify_max_us = s->pcm_notify_max_us;
+        if (s->lcd_max_us > stats->lcd_max_us)
+            stats->lcd_max_us = s->lcd_max_us;
+        if (s->lcd_failure_streak > stats->lcd_failure_streak)
+            stats->lcd_failure_streak = s->lcd_failure_streak;
+        if (s->lcd_max_failure_streak > stats->lcd_max_failure_streak)
+            stats->lcd_max_failure_streak = s->lcd_max_failure_streak;
     }
 }
 
@@ -226,6 +243,57 @@ DEFINE_COUNTER(pp5020_perf_record_pcm_underrun, pcm_underruns)
 DEFINE_COUNTER(pp5020_perf_record_pcm_deferred, pcm_deferred_notifications)
 DEFINE_COUNTER(pp5020_perf_record_pcm_duplicate, pcm_duplicate_notifications)
 DEFINE_COUNTER(pp5020_perf_record_pcm_missed, pcm_missed_transitions)
+
+void pp5020_perf_record_lcd_update(uint32_t requested_pixels,
+                                   uint32_t transmitted_pixels,
+                                   uint32_t elapsed_us, bool success)
+{
+    int oldlevel = begin_update();
+    struct pp5020_perf_stats *s = local_stats();
+    inc_u64_sat(&s->lcd_updates);
+    add_u64_sat(&s->lcd_requested_pixels, requested_pixels);
+    add_u64_sat(&s->lcd_transmitted_pixels, transmitted_pixels);
+    add_u64_sat(&s->lcd_total_us, elapsed_us);
+    if (elapsed_us > s->lcd_max_us)
+        s->lcd_max_us = elapsed_us;
+    if (success)
+        s->lcd_failure_streak = 0;
+    else
+    {
+        inc_u64_sat(&s->lcd_abandoned_rectangles);
+        if (s->lcd_failure_streak != UINT32_MAX)
+            s->lcd_failure_streak++;
+        if (s->lcd_failure_streak > s->lcd_max_failure_streak)
+            s->lcd_max_failure_streak = s->lcd_failure_streak;
+    }
+    end_update(oldlevel);
+}
+
+void pp5020_perf_record_lcd_timeout(int phase)
+{
+    int oldlevel = begin_update();
+    struct pp5020_perf_stats *s = local_stats();
+    uint64_t *counter = NULL;
+
+    switch (phase)
+    {
+        case 1: counter = &s->lcd_busy_timeouts; break;
+        case 2: counter = &s->lcd_block_timeouts; break;
+        case 3: counter = &s->lcd_txok_timeouts; break;
+        case 4: counter = &s->lcd_fifo1_timeouts; break;
+        case 5: counter = &s->lcd_fifo2_timeouts; break;
+    }
+    if (counter != NULL)
+        inc_u64_sat(counter);
+    end_update(oldlevel);
+}
+
+void pp5020_perf_record_lcd_reinitialization(void)
+{
+    int oldlevel = begin_update();
+    inc_u64_sat(&local_stats()->lcd_reinitializations);
+    end_update(oldlevel);
+}
 
 void pp5020_perf_record_storage_wakeup(bool deadline)
 {
