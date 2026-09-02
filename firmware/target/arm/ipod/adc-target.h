@@ -33,7 +33,14 @@
 /* Force a scan now */
 unsigned short adc_scan(int channel);
 #ifdef IPOD_COLOR
-/* Timestamp of the last successful hardware conversion for this channel. */
-long adc_last_scan_tick(int channel);
+struct adc_channel_status
+{
+    long sample_tick;
+    unsigned int consecutive_failures;
+    unsigned long total_failures;
+};
+
+/* Atomically snapshot conversion freshness and PCF transaction failures. */
+void adc_get_channel_status(int channel, struct adc_channel_status *status);
 #endif
 #endif

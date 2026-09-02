@@ -143,6 +143,11 @@ static inline long ata_limit_wait_timeout(long timeout)
     return timeout;
 }
 
+long ata_get_request_deadline(long fallback_deadline)
+{
+    return ata_limit_wait_timeout(fallback_deadline);
+}
+
 static inline void ata_saturating_increment(uint32_t *counter)
 {
     if (*counter != UINT32_MAX)
@@ -489,11 +494,17 @@ static int ata_transfer_sectors(uint64_t start,
     if (incount == 0)
         return 0;
 
+    timeout = current_tick + READWRITE_TIMEOUT;
+#ifdef HAVE_ATA_DMA_RECOVERY
+    ata_set_wait_deadline(timeout);
+#endif
+
     if (incount < 0 || start > total_sectors ||
         (uint64_t)incount > total_sectors - start) {
         ret = -1;
         goto error;
     }
+
     keep_ata_active();
 
     ata_led(true);
@@ -517,11 +528,6 @@ static int ata_transfer_sectors(uint64_t start,
     }
 
     logf("ata XFER (%d) %d @ %llu", write, incount, start);
-
-    timeout = current_tick + READWRITE_TIMEOUT;
-#ifdef HAVE_ATA_DMA_RECOVERY
-    ata_set_wait_deadline(timeout);
-#endif
 
     ATA_OUT8(ATA_SELECT, ata_device);
     if (!wait_for_rdy())
@@ -647,11 +653,10 @@ static int ata_transfer_sectors(uint64_t start,
                 }
 
 #ifdef HAVE_ATA_DMA_RECOVERY
-                /* ata_dma_finish() may legitimately outlive the first
-                 * request deadline. The one PIO recovery gets its own full
-                 * budget after reset/reinitialization has succeeded. */
-                timeout = current_tick + READWRITE_TIMEOUT;
-                ata_set_wait_deadline(timeout);
+                /* DMA wait, reset/reinitialization, and the one PIO rescue
+                 * all consume the original request deadline. */
+                if (!TIME_BEFORE(current_tick, timeout))
+                    goto error;
 #endif
                 goto retry;
             }
@@ -1069,8 +1074,13 @@ static int perform_soft_reset(void)
     long saved_deadline = ata_wait_deadline;
 
     /* IDENTIFY, feature restoration, multiple mode, verification IDENTIFY,
-     * and freeze-lock all consume this one reset/reinitialization budget. */
-    ata_set_wait_deadline(current_tick + HZ*ATA_RESET_TIMEOUT_SECONDS);
+     * and freeze-lock consume the caller's remaining request budget when
+     * there is one; standalone reset keeps the established 30 s ceiling. */
+    long reset_deadline = current_tick + HZ*ATA_RESET_TIMEOUT_SECONDS;
+    if (saved_deadline_active &&
+        TIME_BEFORE(saved_deadline, reset_deadline))
+        reset_deadline = saved_deadline;
+    ata_set_wait_deadline(reset_deadline);
 #endif
 
     logf("ata SOFT RESET %ld", current_tick);

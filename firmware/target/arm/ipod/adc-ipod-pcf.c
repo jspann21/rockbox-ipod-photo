@@ -33,6 +33,10 @@ struct adc_struct {
     short channelnum;
     unsigned short data;
     long sample_tick;
+#ifdef IPOD_COLOR
+    unsigned short consecutive_failures;
+    unsigned long total_failures;
+#endif
 };
 
 static struct adc_struct adcdata[NUM_ADC_CHANNELS] IDATA_ATTR;
@@ -72,11 +76,21 @@ static unsigned short _adc_read(struct adc_struct *adc)
         /* ADCC1, 10 bit, start */
         if (pcf50605_write(0x2f, (adc->channelnum << 1) | 0x1) < 0)
         {
+#ifdef IPOD_COLOR
+            if (adc->consecutive_failures != 0xffff)
+                adc->consecutive_failures++;
+            adc->total_failures++;
+#endif
             i2c_unlock();
             return adc->data;
         }
         if (pcf50605_read_multiple(0x30, data, 2) != 0)
         {
+#ifdef IPOD_COLOR
+            if (adc->consecutive_failures != 0xffff)
+                adc->consecutive_failures++;
+            adc->total_failures++;
+#endif
             i2c_unlock();
             return adc->data;
         }
@@ -89,6 +103,9 @@ static unsigned short _adc_read(struct adc_struct *adc)
         }
         adc->data = value;
         adc->sample_tick = current_tick;
+#ifdef IPOD_COLOR
+        adc->consecutive_failures = 0;
+#endif
 
         i2c_unlock();
         return value;
@@ -111,9 +128,18 @@ unsigned short adc_read(int channel) {
 }
 
 #ifdef IPOD_COLOR
-long adc_last_scan_tick(int channel)
+void adc_get_channel_status(int channel, struct adc_channel_status *status)
 {
-    return adcdata[channel].sample_tick;
+    struct adc_struct *adc = &adcdata[channel];
+
+    if (status == NULL)
+        return;
+
+    i2c_lock();
+    status->sample_tick = adc->sample_tick;
+    status->consecutive_failures = adc->consecutive_failures;
+    status->total_failures = adc->total_failures;
+    i2c_unlock();
 }
 #endif
 

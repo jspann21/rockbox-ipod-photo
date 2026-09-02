@@ -67,6 +67,10 @@ void ata_dma_set_mode(unsigned char mode);
 bool ata_dma_setup(void *addr, unsigned long bytes, bool write);
 /* Waits for DMA transfer completion */
 bool ata_dma_finish(void);
+#ifdef HAVE_ATA_DMA_RECOVERY
+/* Clamp a target-side DMA wait to the active end-to-end request deadline. */
+long ata_get_request_deadline(long fallback_deadline);
+#endif
 #ifdef HAVE_ATA_DMA_IRQ
 /* Normal-priority IDE interrupt entry and sleep/power interlock. */
 void ata_dma_irq_init(void);

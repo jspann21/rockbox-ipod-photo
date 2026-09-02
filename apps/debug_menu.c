@@ -949,7 +949,7 @@ static const char *battery_model_state_name(unsigned int state)
 {
     static const char * const names[] =
     {
-        "normal", "low wait", "low", "shutdown wait"
+        "normal", "low wait", "low", "shutdown wait", "ADC fault"
     };
 
     return state < ARRAYLEN(names) ? names[state] : "unknown";
@@ -1300,6 +1300,13 @@ static bool view_battery(void)
                            debug.pcf_id, debug.pcf_lowbat_reg,
                            debug.pcf_lowbat_boot, debug.pcf_lowbat_now);
                 lcd_putsf(0, 10, "Trace samples: %u", debug.trace_count);
+                lcd_putsf(0, 11, "ADC age/fail: %us/%u %s",
+                          debug.adc_age_seconds,
+                          debug.adc_consecutive_failures,
+                          debug.adc_fault ? "FAULT" :
+                          debug.adc_stale ? "stale" : "fresh");
+                lcd_putsf(0, 12, "ADC failures total: %lu",
+                          debug.adc_total_failures);
                 break;
             }
 

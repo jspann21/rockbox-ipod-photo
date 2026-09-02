@@ -11,6 +11,7 @@ enum battery_model_state
     BATTERY_MODEL_LOW_PENDING,
     BATTERY_MODEL_LOW_CONFIRMED,
     BATTERY_MODEL_SHUTDOWN_PENDING,
+    BATTERY_MODEL_ADC_FAULT,
 };
 
 enum battery_model_load_flags
@@ -59,6 +60,11 @@ struct battery_model_debug
     unsigned char pcf_lowbat_reg;
     unsigned char pcf_lowbat_boot;
     unsigned char pcf_lowbat_now;
+    unsigned short adc_age_seconds;
+    unsigned short adc_consecutive_failures;
+    unsigned long adc_total_failures;
+    unsigned char adc_stale;
+    unsigned char adc_fault;
 };
 
 #endif /* BATTERY_MODEL_H */

@@ -613,10 +613,14 @@ static bool init_model_capture(void)
     rb->fdprintf(fd,
         "# run start=%lu model=%s rockbox=%s buffer_samples=%lu "
         "disksafe_mv=%u shutoff_mv=%u pcf_id=0x%02x "
-        "pcf_reg=0x%02x pcf_boot=0x%02x\n",
+        "pcf_reg=0x%02x pcf_boot=0x%02x adc_age_s=%u "
+        "adc_failures=%u adc_failures_total=%lu adc_stale=%u "
+        "adc_fault=%u\n",
         (unsigned long)start_tick, MODEL_NAME, rb->rbversion,
         (unsigned long)model_buf_count, debug.disksafe_mv, debug.shutoff_mv,
-        debug.pcf_id, debug.pcf_lowbat_reg, debug.pcf_lowbat_boot);
+        debug.pcf_id, debug.pcf_lowbat_reg, debug.pcf_lowbat_boot,
+        debug.adc_age_seconds, debug.adc_consecutive_failures,
+        debug.adc_total_failures, debug.adc_stale, debug.adc_fault);
     rb->close(fd);
     rb->battery_model_set_telemetry(true);
     return true;

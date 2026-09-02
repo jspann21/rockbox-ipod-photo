@@ -147,6 +147,9 @@ int _battery_voltage(void)
 #define MODEL_OFF_HYSTERESIS_MV   80
 #define MODEL_HARD_FLOOR_MV     3200
 #define MODEL_HARD_FLOOR_TICKS   (2 * HZ)
+#define MODEL_ADC_STALE_TICKS    (4 * HZ)
+#define MODEL_ADC_FAULT_TICKS   (10 * HZ)
+#define MODEL_ADC_FAILURE_LIMIT         3
 #define MODEL_PCF_STATUS_TICKS    (5 * HZ)
 #define MODEL_TRACE_TICKS         (1 * HZ)
 
@@ -155,12 +158,15 @@ struct ipodphoto_battery_model
     unsigned short raw[MODEL_RAW_SAMPLES];
     unsigned char raw_pos;
     unsigned char raw_count;
+    unsigned short last_raw_mv;
     unsigned short median_mv;
     int terminal_q8;
     int model_q8;
     int sag_q8;
     int pre_transient_mv;
     long adc_sample_tick;
+    bool adc_stale;
+    bool adc_fault;
     bool transient;
     bool sag_sampled;
     long transient_since;
@@ -194,6 +200,11 @@ static int q8_to_mv(int value)
 static bool model_elapsed(long since, long duration)
 {
     return !TIME_BEFORE(current_tick, since + duration);
+}
+
+static unsigned long model_tick_age(long tick)
+{
+    return (unsigned long)current_tick - (unsigned long)tick;
 }
 
 static unsigned char model_source_flags(void)
@@ -257,22 +268,27 @@ static unsigned short model_median(unsigned short raw_mv)
     return sorted[count / 2];
 }
 
-static void model_update_policy(int terminal_mv, int model_mv,
+static void model_update_adc_health(long sample_tick,
+                                    unsigned int consecutive_failures)
+{
+    battery_model.adc_stale =
+        model_tick_age(sample_tick) >= MODEL_ADC_STALE_TICKS;
+    battery_model.adc_fault =
+        consecutive_failures >= MODEL_ADC_FAILURE_LIMIT ||
+        model_tick_age(sample_tick) >= MODEL_ADC_FAULT_TICKS;
+
+    if (battery_model.adc_fault && !battery_model.force_shutdown)
+        battery_model.state = BATTERY_MODEL_ADC_FAULT;
+}
+
+static void model_update_policy(int raw_mv, int terminal_mv, int model_mv,
                                 unsigned char source_flags)
 {
     int safety_mv = MIN((int)battery_model.median_mv,
                         MIN(terminal_mv, model_mv));
+    int hard_floor_mv = MIN(raw_mv, (int)battery_model.median_mv);
 
-    if (source_flags & (BATTERY_MODEL_SOURCE_MAIN |
-                        BATTERY_MODEL_SOURCE_USB))
-    {
-        battery_model.state = BATTERY_MODEL_NORMAL;
-        battery_model.force_shutdown = false;
-        battery_model.hard_floor_pending = false;
-        return;
-    }
-
-    if (battery_model.median_mv <= MODEL_HARD_FLOOR_MV)
+    if (hard_floor_mv <= MODEL_HARD_FLOOR_MV)
     {
         if (!battery_model.hard_floor_pending)
         {
@@ -287,10 +303,28 @@ static void model_update_policy(int terminal_mv, int model_mv,
             return;
         }
     }
-    else if (battery_model.median_mv >= MODEL_HARD_FLOOR_MV +
-                                          MODEL_OFF_HYSTERESIS_MV)
+    else if (hard_floor_mv >= MODEL_HARD_FLOOR_MV +
+                              MODEL_OFF_HYSTERESIS_MV)
     {
         battery_model.hard_floor_pending = false;
+    }
+
+    /* External-power detection is not proof that the source is charging or
+     * strong enough to support writes. Preserve the absolute battery floor;
+     * only clear ordinary low-battery policy once the floor has recovered. */
+    if (source_flags & (BATTERY_MODEL_SOURCE_MAIN |
+                        BATTERY_MODEL_SOURCE_USB))
+    {
+        if (!battery_model.hard_floor_pending)
+        {
+            battery_model.state = BATTERY_MODEL_NORMAL;
+            battery_model.force_shutdown = false;
+        }
+        else if (!battery_model.force_shutdown)
+        {
+            battery_model.state = BATTERY_MODEL_LOW_CONFIRMED;
+        }
+        return;
     }
 
     /* Sag compensation may improve the displayed level, but never delays
@@ -384,12 +418,17 @@ void battery_model_init(int raw_mv)
 
     battery_model.raw_pos = 0;
     battery_model.raw_count = MODEL_RAW_SAMPLES;
+    battery_model.last_raw_mv = raw_mv;
     battery_model.median_mv = raw_mv;
     battery_model.terminal_q8 = raw_mv << MODEL_FP_SHIFT;
     battery_model.model_q8 = battery_model.terminal_q8;
     battery_model.sag_q8 = 0;
     battery_model.pre_transient_mv = raw_mv;
-    battery_model.adc_sample_tick = adc_last_scan_tick(ADC_UNREG_POWER);
+    struct adc_channel_status adc_status;
+    adc_get_channel_status(ADC_UNREG_POWER, &adc_status);
+    battery_model.adc_sample_tick = adc_status.sample_tick;
+    battery_model.adc_stale = false;
+    battery_model.adc_fault = false;
     battery_model.transient = false;
     battery_model.sag_sampled = false;
     battery_model.state = BATTERY_MODEL_NORMAL;
@@ -418,7 +457,8 @@ void battery_model_init(int raw_mv)
 
 int battery_model_step(int raw_mv)
 {
-    long sample_tick = adc_last_scan_tick(ADC_UNREG_POWER);
+    struct adc_channel_status adc_status;
+    long sample_tick;
     unsigned char source_flags;
     unsigned char load_flags;
     unsigned char lowbat_reg = 0;
@@ -428,7 +468,11 @@ int battery_model_step(int raw_mv)
     int terminal_mv;
     int model_mv;
 
+    adc_get_channel_status(ADC_UNREG_POWER, &adc_status);
+    sample_tick = adc_status.sample_tick;
     mutex_lock(&battery_model.mutex);
+    model_update_adc_health(sample_tick,
+                            adc_status.consecutive_failures);
 
     /* adc_read() returns its cached value between real PCF conversions and
      * after I2C failures. Do not learn twice from the same conversion. */
@@ -469,6 +513,11 @@ int battery_model_step(int raw_mv)
         return model_mv;
     }
     battery_model.adc_sample_tick = sample_tick;
+    battery_model.adc_stale = false;
+    battery_model.adc_fault = false;
+    if (battery_model.state == BATTERY_MODEL_ADC_FAULT)
+        battery_model.state = BATTERY_MODEL_NORMAL;
+    battery_model.last_raw_mv = raw_mv;
     previous_terminal_mv = q8_to_mv(battery_model.terminal_q8);
 
     battery_model.median_mv = model_median(raw_mv);
@@ -531,7 +580,7 @@ int battery_model_step(int raw_mv)
 
     battery_model.transient = transient;
     model_mv = q8_to_mv(battery_model.model_q8);
-    model_update_policy(terminal_mv, model_mv, source_flags);
+    model_update_policy(raw_mv, terminal_mv, model_mv, source_flags);
     if (model_elapsed(battery_model.trace_tick, MODEL_TRACE_TICKS))
     {
         battery_model.trace_tick = current_tick;
@@ -571,16 +620,23 @@ void battery_model_set_telemetry(bool enable)
 bool battery_model_disk_safe(void)
 {
     bool safe;
-
-    if (power_thread_inputs & POWER_INPUT)
-        return true;
+    bool external_power = power_thread_inputs & POWER_INPUT;
 
     mutex_lock(&battery_model.mutex);
     int safety_mv = MIN((int)battery_model.median_mv,
                         MIN(q8_to_mv(battery_model.terminal_q8),
                             q8_to_mv(battery_model.model_q8)));
-    safe = battery_model.state == BATTERY_MODEL_NORMAL &&
-           safety_mv > battery_level_disksafe;
+    int hard_floor_mv = MIN((int)battery_model.last_raw_mv,
+                            (int)battery_model.median_mv);
+
+    if (battery_model.adc_stale || battery_model.adc_fault)
+        safe = false;
+    else if (external_power)
+        safe = !battery_model.hard_floor_pending &&
+               hard_floor_mv > MODEL_HARD_FLOOR_MV;
+    else
+        safe = battery_model.state == BATTERY_MODEL_NORMAL &&
+               safety_mv > battery_level_disksafe;
     mutex_unlock(&battery_model.mutex);
     return safe;
 }
@@ -644,8 +700,14 @@ unsigned int battery_model_copy_samples(unsigned long after_tick,
 
 void battery_model_get_debug(struct battery_model_debug *debug)
 {
+    struct adc_channel_status adc_status;
+    unsigned long adc_age_seconds;
+
     if (debug == NULL)
         return;
+
+    adc_get_channel_status(ADC_UNREG_POWER, &adc_status);
+    adc_age_seconds = model_tick_age(adc_status.sample_tick) / HZ;
 
     mutex_lock(&battery_model.mutex);
     if (battery_model.trace_count > 0)
@@ -682,6 +744,11 @@ void battery_model_get_debug(struct battery_model_debug *debug)
     debug->pcf_lowbat_reg = battery_model.pcf_lowbat_reg;
     debug->pcf_lowbat_boot = battery_model.pcf_lowbat_boot;
     debug->pcf_lowbat_now = battery_model.pcf_lowbat_now;
+    debug->adc_age_seconds = MIN(adc_age_seconds, 0xfffful);
+    debug->adc_consecutive_failures = adc_status.consecutive_failures;
+    debug->adc_total_failures = adc_status.total_failures;
+    debug->adc_stale = battery_model.adc_stale;
+    debug->adc_fault = battery_model.adc_fault;
     mutex_unlock(&battery_model.mutex);
 }
 #endif /* HAVE_BATTERY_MEASURED_MODEL */

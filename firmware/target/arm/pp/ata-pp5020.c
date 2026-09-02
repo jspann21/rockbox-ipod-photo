@@ -219,6 +219,9 @@ void ICODE_ATTR ata_dma_irq_handler(void)
 static ICODE_ATTR int ata_wait_intrq(void)
 {
     long timeout = current_tick + HZ*ATA_DMA_TIMEOUT_SECONDS;
+#ifdef HAVE_ATA_DMA_RECOVERY
+    timeout = ata_get_request_deadline(timeout);
+#endif
     long yield_time = USEC_TIMER + ATA_DMA_BUSY_POLL_USEC;
 
     do
@@ -326,6 +329,9 @@ bool ata_dma_finish(void) {
     uint32_t busy_start;
     uint32_t busy_elapsed;
     long timeout = current_tick + HZ*ATA_DMA_TIMEOUT_SECONDS;
+#ifdef HAVE_ATA_DMA_RECOVERY
+    timeout = ata_get_request_deadline(timeout);
+#endif
 
     while (semaphore_wait(&ata_dma_complete, TIMEOUT_NOBLOCK) ==
            OBJ_WAIT_SUCCEEDED);
