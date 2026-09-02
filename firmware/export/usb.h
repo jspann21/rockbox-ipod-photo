@@ -119,6 +119,8 @@ enum
     USB_NOTIFY_SET_CONFIG,   /* Event */
     USB_NOTIFY_BUS_RESET,    /* Event */
     USB_NOTIFY_CLASS_DRIVER, /* Event - notify_event() of specified class driver */
+    USB_NOTIFY_CONTROL_REQUEST, /* Event - generation-tagged EP0 request */
+    USB_NOTIFY_CONTROLLER_FAILED, /* Event - controller has stopped DMA */
 #endif
 #ifdef USB_FIREWIRE_HANDLING
     USB_REQUEST_REBOOT,      /* Event */

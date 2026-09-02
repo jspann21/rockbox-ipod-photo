@@ -37,6 +37,7 @@
 #include "string.h"
 #ifdef HAVE_USBSTACK
 #include "usb_core.h"
+#include "usb_drv.h"
 #endif
 #include "logf.h"
 #include "screendump.h"
@@ -124,6 +125,9 @@ static bool usb_serial = false;
 static int usb_audio = 0;
 #endif
 static bool usb_host_present = false;
+#if CONFIG_USBOTG == USBOTG_ARC
+static bool usb_recovery_attempted;
+#endif
 static int usb_num_acks_to_expect = 0;
 static uint32_t usb_broadcast_seqnum = 0x80000000;
 #if defined(USB_FIREWIRE_HANDLING)
@@ -430,17 +434,57 @@ static void NORETURN_ATTR usb_thread(void)
         /*** Main USB thread duties ***/
 
 #ifdef HAVE_USBSTACK
+#if CONFIG_USBOTG == USBOTG_ARC
+        case USB_NOTIFY_CONTROLLER_FAILED:
+            if (usb_state <= USB_EXTRACTED)
+                break;
+            usb_stack_enable(false);
+            usb_set_host_present(false);
+            /* Drop notifications from the stopped controller, but preserve
+             * cable events and storage acknowledgements in the same queue. */
+            while (queue_peek_ex(&usb_queue, NULL, QPEEK_REMOVE_EVENTS,
+                    QPEEK_FILTER2(USB_TRANSFER_COMPLETION,
+                                  USB_NOTIFY_CONTROLLER_FAILED)))
+                ;
+            usb_state = USB_POWERED;
+            if (!usb_recovery_attempted && usb_detect() == USB_INSERTED) {
+                usb_recovery_attempted = true;
+                usb_stack_enable(true);
+            }
+            break;
+#endif
+        case USB_NOTIFY_CONTROL_REQUEST:
+            if (usb_state <= USB_EXTRACTED)
+                break;
+#if CONFIG_USBOTG == USBOTG_ARC
+            if (usb_drv_failed())
+                break;
+#endif
+#ifdef USB_DETECT_BY_REQUEST
+            usb_state = USB_INSERTED;
+            usb_set_host_present(true);
+#endif
+            usb_core_handle_notify(ev.id, ev.data);
+            break;
         case USB_NOTIFY_SET_ADDR:
         case USB_NOTIFY_SET_CONFIG:
         case USB_NOTIFY_BUS_RESET:
         case USB_NOTIFY_CLASS_DRIVER:
             if(usb_state <= USB_EXTRACTED)
                 break;
+#if CONFIG_USBOTG == USBOTG_ARC
+            if (usb_drv_failed())
+                break;
+#endif
             usb_core_handle_notify(ev.id, ev.data);
             break;
         case USB_TRANSFER_COMPLETION:
             if(usb_state <= USB_EXTRACTED)
                 break;
+#if CONFIG_USBOTG == USBOTG_ARC
+            if (usb_drv_failed())
+                break;
+#endif
 
 #ifdef USB_DETECT_BY_REQUEST
             usb_state = USB_INSERTED;
@@ -464,6 +508,9 @@ static void NORETURN_ATTR usb_thread(void)
 
             usb_state = USB_POWERED;
 
+#if CONFIG_USBOTG == USBOTG_ARC
+            usb_recovery_attempted = false;
+#endif
             usb_stack_enable(true);
 #ifndef BOOTLOADER
 #ifndef HAVE_USB_POWER

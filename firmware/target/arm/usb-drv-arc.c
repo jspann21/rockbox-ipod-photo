@@ -28,6 +28,7 @@
 #include "kernel.h"
 #include "panic.h"
 #include "usb_drv.h"
+#include "usb.h"
 
 /*#define LOGF_ENABLE*/
 #include "logf.h"
@@ -367,6 +368,34 @@ static void prepare_td(struct transfer_descriptor* td,
         struct transfer_descriptor* previous_td, void *ptr, int len,int pipe);
 static void bus_reset(void);
 static void init_control_queue_heads(void);
+static volatile bool controller_failed;
+
+/* IRQs are masked while priming and during bus reset. current_tick cannot
+ * advance there. Use the free-running timer where available; the fallback
+ * is a finite microsecond delay loop, never an interrupt-driven clock. */
+static bool wait_register(volatile unsigned int *reg, unsigned int mask,
+                          unsigned int value, unsigned int timeout_us)
+{
+#ifdef USEC_TIMER
+    unsigned long deadline = USEC_TIMER + timeout_us;
+#endif
+    while ((*reg & mask) != value) {
+#ifdef USEC_TIMER
+        if (!TIME_BEFORE(USEC_TIMER, deadline))
+            return false;
+#else
+        if (timeout_us-- == 0)
+            return false;
+        udelay(1);
+#endif
+    }
+    return true;
+}
+
+bool usb_drv_failed(void)
+{
+    return controller_failed;
+}
 /*-------------------------------------------------------------------------*/
 static void usb_drv_stop(void)
 {
@@ -376,7 +405,51 @@ static void usb_drv_stop(void)
     REG_USBCMD &= ~USBCMD_RUN;
 }
 
-static void usb_drv_reset(void)
+/* Never return a failed cancellation with DMA still owning caller buffers.
+ * The USB thread tears down class drivers and attempts one fresh connection.
+ * PP's module reset is the last resort if the ARC soft reset itself is stuck. */
+static void usb_drv_fault(void)
+{
+    if (controller_failed)
+        return;
+    controller_failed = true;
+    usb_drv_stop();
+    usb_drv_int_enable(false);
+    REG_USBCMD |= USBCMD_CTRL_RESET;
+    if (!wait_register(&REG_USBCMD, USBCMD_CTRL_RESET, 0, 100000)) {
+#ifdef CPU_PP
+        DEV_RS |= DEV_USB0 | DEV_USB1;
+#else
+        panicf("USB controller reset failed");
+#endif
+    }
+    for (int i = 0; i < USB_NUM_ENDPOINTS * 2; i++) {
+        qh_array[i].status = DTD_STATUS_HALTED;
+        if (qh_array[i].wait) {
+            qh_array[i].wait = 0;
+            semaphore_release(&transfer_completion_signal[i]);
+        }
+    }
+    usb_signal_notify(USB_NOTIFY_CONTROLLER_FAILED, 0);
+}
+
+static bool flush_endpoints(unsigned int mask)
+{
+    if (controller_failed)
+        return false;
+    /* A prime in flight may become active after the first flush. */
+    for (int attempt = 0; attempt < 2; attempt++) {
+        REG_ENDPTFLUSH = mask;
+        if (!wait_register(&REG_ENDPTFLUSH, mask, 0, 10000))
+            break;
+        if (!((REG_ENDPTSTATUS | REG_ENDPTPRIME) & mask))
+            return true;
+    }
+    usb_drv_fault();
+    return false;
+}
+
+static bool usb_drv_reset(void)
 {
     int oldlevel = disable_irq_save();
     REG_USBCMD &= ~USBCMD_RUN;
@@ -388,7 +461,10 @@ static void usb_drv_reset(void)
 #endif
     sleep(HZ/20);
     REG_USBCMD |= USBCMD_CTRL_RESET;
-    while (REG_USBCMD & USBCMD_CTRL_RESET);
+    if (!wait_register(&REG_USBCMD, USBCMD_CTRL_RESET, 0, 100000)) {
+        usb_drv_fault();
+        return false;
+    }
 
 #if CONFIG_CPU == PP5022 || CONFIG_CPU == PP5024
     /* On a CPU which identifies as a PP5022, this
@@ -411,8 +487,13 @@ static void usb_drv_reset(void)
     udelay(10);
     outl(inl(0x70000028) | 0x800, 0x70000028);
     outl(inl(0x70000028) & ~0x800, 0x70000028);
-    while ((inl(0x70000028) & 0x80) == 0);
+    if (!wait_register((volatile unsigned int *)0x70000028,
+                       0x80, 0x80, 1000000)) {
+        usb_drv_fault();
+        return false;
+    }
 #endif
+    return true;
 }
 
 static void td_set_buf_ptr(struct transfer_descriptor* td, const void* ptr){
@@ -451,6 +532,8 @@ void usb_drv_startup(void)
 #endif
 
 static void init_endpoint(int ep, int type, int mps) {
+    if (controller_failed)
+        return;
     const int ep_num = EP_NUM(ep);
     const int ep_dir = EP_DIR(ep);
 
@@ -490,7 +573,9 @@ static void init_endpoint(int ep, int type, int mps) {
 void usb_drv_init(void)
 {
     /* USB core decides */
-    usb_drv_reset();
+    controller_failed = false;
+    if (!usb_drv_reset())
+        return;
 
     REG_USBMODE = USBMODE_CTRL_MODE_DEVICE;
 
@@ -536,7 +621,10 @@ void usb_drv_init(void)
 
 void usb_drv_exit(void)
 {
-    usb_drv_stop();
+    if (!controller_failed) {
+        usb_drv_stop();
+        usb_drv_cancel_all_transfers();
+    }
 
     /* TODO : is one of these needed to save power ?
     REG_PORTSC1 |= PORTSCX_PHY_LOW_POWER_SPD;
@@ -548,6 +636,8 @@ void usb_drv_exit(void)
 
 void usb_drv_int(void)
 {
+    if (controller_failed)
+        return;
     unsigned int usbintr = REG_USBINTR; /* Only watch enabled ints */
     unsigned int status = REG_USBSTS & usbintr;
 
@@ -567,6 +657,8 @@ void usb_drv_int(void)
             control_received();
         }
 
+        if (controller_failed)
+            return;
         if (REG_ENDPTCOMPLETE)
             transfer_completed();
     }
@@ -583,6 +675,8 @@ void usb_drv_int(void)
     if (status & USBSTS_RESET) {
         REG_USBSTS = USBSTS_RESET;
         bus_reset();
+        if (controller_failed)
+            return;
         usb_core_bus_reset(); /* tell mom */
     }
 
@@ -600,6 +694,8 @@ void usb_drv_int(void)
 
 bool usb_drv_stalled(int endpoint,bool in)
 {
+    if (controller_failed)
+        return true;
     if(in) {
         return ((REG_ENDPTCTRL(EP_NUM(endpoint)) & EPCTRL_TX_EP_STALL)!=0);
     }
@@ -610,6 +706,8 @@ bool usb_drv_stalled(int endpoint,bool in)
 }
 void usb_drv_stall(int endpoint, bool stall, bool in)
 {
+    if (controller_failed)
+        return;
     int ep_num = EP_NUM(endpoint);
 
     logf("%sstall %d", stall ? "" : "un", ep_num);
@@ -655,6 +753,8 @@ int usb_drv_recv_blocking(int endpoint, void* ptr, int length)
 
 int usb_drv_port_speed(void)
 {
+    if (controller_failed)
+        return 0;
     return (REG_PORTSC1 & 0x08000000) ? 1 : 0;
 }
 
@@ -666,6 +766,8 @@ int usb_drv_get_frame_number(void)
 
 bool usb_drv_connected(void)
 {
+    if (controller_failed)
+        return false;
     return (REG_PORTSC1 &
         (PORTSCX_PORT_SUSPEND | PORTSCX_CURRENT_CONNECT_STATUS))
             == PORTSCX_CURRENT_CONNECT_STATUS;
@@ -673,12 +775,16 @@ bool usb_drv_connected(void)
 
 bool usb_drv_powered(void)
 {
+    if (controller_failed)
+        return false;
     /* true = bus 4V4 ok */
     return (REG_OTGSC & OTGSC_A_VBUS_VALID) ? true : false;
 }
 
 void usb_drv_set_address(int address)
 {
+    if (controller_failed)
+        return;
     REG_DEVICEADDR = address << USBDEVICEADDRESS_BIT_POS;
 }
 
@@ -686,12 +792,13 @@ void usb_drv_reset_endpoint(int endpoint, bool send)
 {
     int pipe = EP_NUM(endpoint) * 2 + (send ? 1 : 0);
     unsigned int mask = pipe2mask[pipe];
-    REG_ENDPTFLUSH = mask;
-    while (REG_ENDPTFLUSH & mask);
+    flush_endpoints(mask);
 }
 
 void usb_drv_set_test_mode(int mode)
 {
+    if (controller_failed)
+        return;
     switch(mode){
         case 0:
             REG_PORTSC1 &= ~PORTSCX_PORT_TEST_CTRL;
@@ -712,8 +819,8 @@ void usb_drv_set_test_mode(int mode)
             REG_PORTSC1 |= PORTSCX_PTC_FORCE_EN;
             break;
     }
-    usb_drv_reset();
-    REG_USBCMD |= USBCMD_RUN;
+    if (usb_drv_reset())
+        REG_USBCMD |= USBCMD_RUN;
 }
 
 /* batched request api  */
@@ -773,6 +880,8 @@ static bool batch_fill_tds(void) {
 }
 
 int usb_drv_batch_start(void) {
+    if (controller_failed)
+        return -1;
     logf("batch start");
 
     /* reset variables */
@@ -804,6 +913,8 @@ int usb_drv_batch_start(void) {
 
 int usb_drv_batch_stop(void) {
     batch_stopped = true;
+    if (controller_failed)
+        return -1;
 
     /* disable sof interrupt */
     REG_USBINTR &= ~USBINTR_SOF_EN;
@@ -819,10 +930,7 @@ int usb_drv_batch_stop(void) {
     const int pipe = ep_to_pipe_index(batch_ep);
     const unsigned int mask = pipe2mask[pipe];
 
-    REG_ENDPTFLUSH = mask;
-    while (REG_ENDPTFLUSH & mask);
-
-    return 0;
+    return flush_endpoints(mask) ? 0 : -1;
 }
 
 #if defined(LOGF_ENABLE) && defined(ROCKBOX_HAS_LOGF)
@@ -902,10 +1010,13 @@ static int prime_transfer(int ep_num, void* ptr, int len, bool send, bool wait)
     int pipe = ep_num * 2 + (send ? 1 : 0);
     unsigned int mask = pipe2mask[pipe];
     struct queue_head* qh = &qh_array[pipe];
-    static long last_tick;
     struct transfer_descriptor *new_td, *cur_td, *prev_td;
 
     int oldlevel = disable_irq_save();
+    if (controller_failed) {
+        restore_irq(oldlevel);
+        return -1;
+    }
 /*
     if (send && ep_num > EP_CONTROL) {
         logf("usb: sent %d bytes", len);
@@ -943,18 +1054,11 @@ static int prime_transfer(int ep_num, void* ptr, int len, bool send, bool wait)
         goto pt_error;
     }
 
-    last_tick = current_tick;
-    while ((REG_ENDPTPRIME & mask)) {
-        if (REG_USBSTS & USBSTS_RESET) {
-            rc = -1;
-            goto pt_error;
-        }
-
-        if (TIME_AFTER(current_tick, last_tick + HZ/4)) {
-            logf("prime timeout");
-            rc = -2;
-            goto pt_error;
-        }
+    if (!wait_register(&REG_ENDPTPRIME, mask, 0, 10000)) {
+        logf("prime timeout");
+        usb_drv_fault();
+        rc = -2;
+        goto pt_error;
     }
 
     if (!(REG_ENDPTSTATUS & mask)) {
@@ -990,8 +1094,13 @@ static int prime_transfer(int ep_num, void* ptr, int len, bool send, bool wait)
     }
 
 pt_error:
-    if(rc<0)
+    if(rc<0) {
+        /* Even a nonblocking failure must release DMA ownership before its
+         * caller can free/reuse the buffer. A pending SETUP is not a fault. */
+        if (!controller_failed)
+            flush_endpoints(mask);
         restore_irq(oldlevel);
+    }
 
     /* Error status must make sure an abandoned wakeup signal isn't left */
     if (rc < 0 && wait) {
@@ -1008,8 +1117,14 @@ pt_error:
 void usb_drv_cancel_all_transfers(void)
 {
     int i;
-    REG_ENDPTFLUSH = ~0;
-    while (REG_ENDPTFLUSH);
+    int oldlevel = disable_irq_save();
+    unsigned int endpoints = (1u << USB_NUM_ENDPOINTS) - 1;
+    if (!flush_endpoints(endpoints | (endpoints << 16))) {
+        restore_irq(oldlevel);
+        return;
+    }
+
+    REG_ENDPTCOMPLETE = endpoints | (endpoints << 16);
 
     memset(td_array, 0, sizeof td_array);
     for(i=0;i<USB_NUM_ENDPOINTS*2;i++) {
@@ -1019,6 +1134,7 @@ void usb_drv_cancel_all_transfers(void)
             semaphore_release(&transfer_completion_signal[i]);
         }
     }
+    restore_irq(oldlevel);
 }
 
 void usb_drv_ep_init(const struct usb_drv_ep_alloc_ctx* ctx, int ep) {
@@ -1028,6 +1144,8 @@ void usb_drv_ep_init(const struct usb_drv_ep_alloc_ctx* ctx, int ep) {
 }
 
 void usb_drv_ep_deinit(const struct usb_drv_ep_alloc_ctx* ctx, int ep) {
+    if (controller_failed)
+        return;
     (void)ctx;
     int ep_num = EP_NUM(ep);
     int ep_dir = EP_DIR(ep);
@@ -1074,7 +1192,14 @@ static void control_received(void)
     REG_ENDPTSETUPSTAT = EPSETUP_STATUS_EP0;
 
     /* Stop pending control transfers */
+    if (!flush_endpoints(pipe2mask[0] | pipe2mask[1]))
+        return;
+    REG_ENDPTCOMPLETE = pipe2mask[0] | pipe2mask[1];
     for(i=0;i<2;i++) {
+        qh_array[i].dtd.next_td_ptr = QH_NEXT_TERMINATE;
+        qh_array[i].dtd.size_ioc_sts = 0;
+        memset(&td_array[i * NUM_TDS_PER_EP], 0,
+               sizeof(struct transfer_descriptor) * NUM_TDS_PER_EP);
         if(qh_array[i].wait) {
             qh_array[i].wait=0;
             qh_array[i].status=DTD_STATUS_HALTED;
@@ -1123,6 +1248,8 @@ static void transfer_completed(void)
 
                 usb_core_transfer_complete(ep, dir?USB_DIR_IN:USB_DIR_OUT,
                         qh->status, length);
+                if (controller_failed)
+                    return;
                 Lskip:
                 continue;
             }
@@ -1156,6 +1283,8 @@ static void bus_reset(void)
     }
 
     usb_drv_cancel_all_transfers();
+    if (controller_failed)
+        return;
 
     if (!(REG_PORTSC1 & PORTSCX_PORT_RESET)) {
         logf("usb: slow reset!");
