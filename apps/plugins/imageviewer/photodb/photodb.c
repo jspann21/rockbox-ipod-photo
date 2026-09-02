@@ -1,8 +1,9 @@
 /***************************************************************************
  * Native iPod Photo Database decoder for Image Viewer.
  *
- * iPod Photo format 1013 is a screen-sized 220x176 RGB565 image stored in
- * F1013_N.ithmb as a 176x220 raster rotated 90 degrees counter-clockwise.
+ * iPod Photo formats 1013 and 1020 are screen-sized 220x176 RGB565 images
+ * stored in Fxxxx_N.ithmb as a 176x220 raster rotated 90 degrees
+ * counter-clockwise.
  * Its big-endian RGB565 bytes already match the iPod Color RGB565SWAPPED
  * framebuffer representation, so display requires only a read and rotation.
  ****************************************************************************/
@@ -11,19 +12,20 @@
 #include <limits.h>
 
 #define F1013_FORMAT_ID      1013u
+#define F1020_FORMAT_ID      1020u
 #define F1013_WIDTH          LCD_WIDTH
 #define F1013_HEIGHT         LCD_HEIGHT
 #define F1013_STORED_WIDTH   LCD_HEIGHT
 #define F1013_FRAME_BYTES    ((size_t)LCD_WIDTH * LCD_HEIGHT * sizeof(fb_data))
 
-#define DB_SCAN_BLOCK 4096
 #define DB_RECORD_SCAN 1024
+#define DB_SCAN_WINDOW (64u * 1024u)
 
 struct photo_entry
 {
     uint32_t offset;
     uint16_t file_index;
-    uint16_t reserved;
+    uint16_t format_id;
 };
 
 struct photo_database
@@ -39,8 +41,14 @@ struct photo_database
 };
 
 static struct photo_database photos;
-static unsigned char db_scan[DB_SCAN_BLOCK];
-static unsigned char db_record[DB_RECORD_SCAN];
+static unsigned char db_record[DB_RECORD_SCAN] CACHEALIGN_ATTR;
+
+enum mhni_parse_result
+{
+    MHNI_INVALID,
+    MHNI_NEED_MORE,
+    MHNI_VALID,
+};
 
 static uint16_t get_le16(const unsigned char *p)
 {
@@ -75,10 +83,16 @@ static bool read_at(int fd, off_t offset, void *buffer, size_t bytes)
     return true;
 }
 
-static int parse_f1013_index_ascii(const unsigned char *text, size_t bytes)
+static const char *format_prefix(uint32_t format_id)
 {
-    static const char prefix[] = "F1013_";
-    const size_t prefix_len = sizeof(prefix) - 1;
+    return format_id == F1013_FORMAT_ID ? "F1013_" : "F1020_";
+}
+
+static int parse_thumb_index_ascii(const unsigned char *text, size_t bytes,
+                                   uint32_t format_id)
+{
+    const char *prefix = format_prefix(format_id);
+    const size_t prefix_len = 6;
     size_t i;
 
     for (i = 0; i + prefix_len < bytes; i++)
@@ -106,10 +120,11 @@ static int parse_f1013_index_ascii(const unsigned char *text, size_t bytes)
     return 0;
 }
 
-static int parse_f1013_index_utf16le(const unsigned char *text, size_t bytes)
+static int parse_thumb_index_utf16le(const unsigned char *text, size_t bytes,
+                                     uint32_t format_id)
 {
-    static const char prefix[] = "F1013_";
-    const size_t prefix_len = sizeof(prefix) - 1;
+    const char *prefix = format_prefix(format_id);
+    const size_t prefix_len = 6;
     size_t i;
 
     for (i = 0; i + prefix_len * 2 < bytes; i++)
@@ -144,7 +159,8 @@ static int parse_f1013_index_utf16le(const unsigned char *text, size_t bytes)
     return 0;
 }
 
-static int find_f1013_file_index(const unsigned char *record, size_t bytes)
+static int find_thumb_file_index(const unsigned char *record, size_t bytes,
+                                 uint32_t format_id)
 {
     size_t i;
 
@@ -171,9 +187,9 @@ static int find_f1013_file_index(const unsigned char *record, size_t bytes)
 
         text = record + i + 36;
         if (record[i + 28] == 2)
-            index = parse_f1013_index_utf16le(text, string_len);
+            index = parse_thumb_index_utf16le(text, string_len, format_id);
         else
-            index = parse_f1013_index_ascii(text, string_len);
+            index = parse_thumb_index_ascii(text, string_len, format_id);
 
         if (index != 0)
             return index;
@@ -181,18 +197,18 @@ static int find_f1013_file_index(const unsigned char *record, size_t bytes)
 
     /* Compatibility with older/minimal Photo Database writers. */
     {
-        int index = parse_f1013_index_ascii(record, bytes);
+        int index = parse_thumb_index_ascii(record, bytes, format_id);
         if (index != 0)
             return index;
     }
 
-    return parse_f1013_index_utf16le(record, bytes);
+    return parse_thumb_index_utf16le(record, bytes, format_id);
 }
 
-static bool parse_mhni_at(int fd, off_t file_size, off_t offset,
-                          struct photo_entry *entry)
+static enum mhni_parse_result parse_mhni_memory(
+    const unsigned char *record, size_t bytes, uint64_t file_remaining,
+    struct photo_entry *entry)
 {
-    unsigned char header[36];
     uint32_t header_len;
     uint32_t total_len;
     uint32_t format_id;
@@ -200,38 +216,56 @@ static bool parse_mhni_at(int fd, off_t file_size, off_t offset,
     size_t record_bytes;
     int file_index;
 
-    if (offset < 0 || offset > file_size - (off_t)sizeof(header))
-        return false;
+    if (bytes < 36)
+        return MHNI_NEED_MORE;
+    if (rb->memcmp(record, "mhni", 4) != 0)
+        return MHNI_INVALID;
 
-    if (!read_at(fd, offset, header, sizeof(header)) ||
-        rb->memcmp(header, "mhni", 4) != 0)
-        return false;
+    header_len = get_le32(record + 4);
+    total_len = get_le32(record + 8);
+    format_id = get_le32(record + 16);
+    image_size = get_le32(record + 24);
 
-    header_len = get_le32(header + 4);
-    total_len = get_le32(header + 8);
-    format_id = get_le32(header + 16);
-    image_size = get_le32(header + 24);
-
-    if (header_len < sizeof(header) || total_len < header_len ||
-        (uint64_t)total_len > (uint64_t)(file_size - offset) ||
-        format_id != F1013_FORMAT_ID || image_size != F1013_FRAME_BYTES)
-        return false;
+    if (header_len < 36 || total_len < header_len ||
+        (uint64_t)total_len > file_remaining ||
+        (format_id != F1013_FORMAT_ID && format_id != F1020_FORMAT_ID) ||
+        image_size != F1013_FRAME_BYTES)
+        return MHNI_INVALID;
 
     record_bytes = MIN((size_t)total_len, sizeof(db_record));
+    if (record_bytes > bytes)
+        return MHNI_NEED_MORE;
+
+    file_index = find_thumb_file_index(record, record_bytes, format_id);
+    if (file_index <= 0 || file_index > UINT16_MAX)
+        return MHNI_INVALID;
+
+    entry->offset = get_le32(record + 20);
+    entry->file_index = (uint16_t)file_index;
+    entry->format_id = (uint16_t)format_id;
+    return MHNI_VALID;
+}
+
+static bool parse_mhni_at(int fd, off_t file_size, off_t offset,
+                          struct photo_entry *entry)
+{
+    size_t record_bytes;
+
+    if (offset < 0 || offset > file_size - 36)
+        return false;
+
+    record_bytes = (size_t)MIN((off_t)sizeof(db_record), file_size - offset);
     if (!read_at(fd, offset, db_record, record_bytes))
         return false;
 
-    file_index = find_f1013_file_index(db_record, record_bytes);
-    if (file_index <= 0 || file_index > UINT16_MAX)
-        return false;
-
-    entry->offset = get_le32(header + 20);
-    entry->file_index = (uint16_t)file_index;
-    entry->reserved = 0;
-    return true;
+    return parse_mhni_memory(db_record, record_bytes,
+                             (uint64_t)(file_size - offset), entry) ==
+           MHNI_VALID;
 }
 
 static unsigned int scan_photo_database(const char *path,
+                                        unsigned char *scan_buffer,
+                                        size_t scan_bytes,
                                         struct photo_entry *entries,
                                         unsigned int capacity,
                                         bool *overflow)
@@ -240,6 +274,7 @@ static unsigned int scan_photo_database(const char *path,
     off_t base = 0;
     off_t last_match = -1;
     unsigned int count = 0;
+    uint16_t selected_format = 0;
     int fd;
 
     *overflow = false;
@@ -260,10 +295,10 @@ static unsigned int scan_photo_database(const char *path,
 
     while (base < file_size)
     {
-        size_t want = (size_t)MIN((off_t)sizeof(db_scan), file_size - base);
+        size_t want = (size_t)MIN((off_t)scan_bytes, file_size - base);
         size_t i;
 
-        if (want < 4 || !read_at(fd, base, db_scan, want))
+        if (want < 4 || !read_at(fd, base, scan_buffer, want))
             break;
 
         for (i = 0; i + 4 <= want; i++)
@@ -271,8 +306,10 @@ static unsigned int scan_photo_database(const char *path,
             off_t candidate;
             struct photo_entry entry;
 
-            if (db_scan[i] != 'm' ||
-                rb->memcmp(db_scan + i, "mhni", 4) != 0)
+            enum mhni_parse_result parsed;
+
+            if (scan_buffer[i] != 'm' ||
+                rb->memcmp(scan_buffer + i, "mhni", 4) != 0)
                 continue;
 
             candidate = base + (off_t)i;
@@ -280,7 +317,19 @@ static unsigned int scan_photo_database(const char *path,
                 continue;
             last_match = candidate;
 
-            if (!parse_mhni_at(fd, file_size, candidate, &entry))
+            parsed = parse_mhni_memory(scan_buffer + i, want - i,
+                (uint64_t)(file_size - candidate), &entry);
+            if (parsed == MHNI_NEED_MORE &&
+                parse_mhni_at(fd, file_size, candidate, &entry))
+                parsed = MHNI_VALID;
+            if (parsed != MHNI_VALID)
+                continue;
+
+            /* Avoid duplicate photos if a sync tool emits both compatible
+               screen formats in one database. */
+            if (selected_format == 0)
+                selected_format = entry.format_id;
+            else if (entry.format_id != selected_format)
                 continue;
 
             if (count >= capacity)
@@ -302,7 +351,7 @@ out:
     return count;
 }
 
-static void rotate_f1013(const unsigned char *raw, fb_data *frame)
+static void rotate_screen_thumb(const unsigned char *raw, fb_data *frame)
 {
     const fb_data *src = (const fb_data *)raw;
     int x;
@@ -333,8 +382,9 @@ static bool load_current_frame(void)
         return true;
 
     entry = &photos.entries[photos.current];
-    rb->snprintf(path, sizeof(path), "%s/F1013_%u.ithmb",
-                 photos.thumb_dir, (unsigned int)entry->file_index);
+    rb->snprintf(path, sizeof(path), "%s/F%u_%u.ithmb",
+                 photos.thumb_dir, (unsigned int)entry->format_id,
+                 (unsigned int)entry->file_index);
 
     fd = rb->open(path, O_RDONLY);
     if (fd < 0)
@@ -355,7 +405,7 @@ static bool load_current_frame(void)
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
     rb->cpu_boost(true);
 #endif
-    rotate_f1013(photos.raw, photos.frame);
+    rotate_screen_thumb(photos.raw, photos.frame);
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
     rb->cpu_boost(false);
 #endif
@@ -406,7 +456,9 @@ static int load_image(char *filename, struct image_info *info,
     capacity = (unsigned int)((available - fixed_bytes) /
                               sizeof(struct photo_entry));
 
-    photos.count = scan_photo_database(filename, photos.entries,
+    photos.count = scan_photo_database(filename, photos.raw,
+                                       MIN(F1013_FRAME_BYTES, DB_SCAN_WINDOW),
+                                       photos.entries,
                                        capacity, &overflow);
     if (overflow)
         return PLUGIN_OUTOFMEM;

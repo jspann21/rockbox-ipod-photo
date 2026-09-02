@@ -8,7 +8,7 @@
  ****************************************************************************/
 #include "plugin.h"
 
-#define IPOD_PHOTO_DATABASE "/iPod_Control/Photos/Photo Database"
+#define IPOD_PHOTO_DATABASE "/Photos/Photo Database"
 
 static const struct plugin_api *imgviewer_rb;
 
