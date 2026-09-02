@@ -15,11 +15,10 @@ python3 tools/ipvf/encode.py input.mp4 output.ipvf
 ```
 
 That command now finishes by running the independent streaming inspector
-against both the completed IPVF and fresh FFmpeg output from the source. A
-successful run writes `output.ipvf.validation.json` with a compact pass record,
-decoded-audio identity, mode counts, sizes, index count, and record bounds. An
+against both the completed IPVF and fresh FFmpeg output from the source. An
 encode that cannot pass independent reconstruction does not report success.
-Use `--validation-report` only when the report needs a different location.
+Normal conversion creates no validation sidecar; use `--validation-report`
+only when a qualification run needs a retained JSON result.
 
 The default `everyday` profile preserves the source's exact rational cadence up
 to 30 fps (including 24000/1001 and 30000/1001) and retains full RGB565
@@ -362,6 +361,16 @@ python3 tools/ipvf/generate_corpus.py \
 python3 tools/ipvf/lab.py /tmp/ipvf-corpus/manifest.json \
   --output /tmp/ipvf-lab --jobs 8
 ```
+
+Run the real creator and independent validator across every manifest clip with:
+
+```sh
+python3 tools/ipvf/qualify_corpus.py /tmp/ipvf-corpus/manifest.json \
+  --output /tmp/ipvf-qualification
+```
+
+This writes the encoded clips plus one aggregate `qualification.json`. It does
+not create a validation sidecar or Markdown report for every conversion.
 
 The NUT/FFV1 sources are byte-identical across reruns with the same seed and
 toolchain. The manifest records source/content hashes, exact rates, durations,

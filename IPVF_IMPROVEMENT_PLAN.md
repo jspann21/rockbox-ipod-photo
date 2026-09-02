@@ -497,15 +497,15 @@ only the physical click/eject/reconnect actions remain manual.
 - [x] Walk every record, verify sizes/offsets/padding/EOF, decode every mode and
       all audio, and compare reconstructed frames with an optional fresh source.
 - [x] Make the one-step creator run that independent source reconstruction by
-      default and emit a compact JSON pass record including decoded-audio
-      identity. Invalid output can no longer finish as a successful creation.
-- [ ] Bind validation runs to corpus-manifest expected frame/audio identities
-      and emit a manifest-level pass/fail result.
-- [ ] Emit machine-readable `encode-results.jsonl`, `size.csv`,
-      `host-validation.jsonl`, and one Markdown summary. The lab now emits the
-      first two plus `summary.csv`, `timing.csv`, `pareto.csv`, and provenance;
-      manifest-wide creator validation JSONL and one combined Markdown summary
-      remain.
+      default. Invalid output can no longer finish as a successful creation;
+      a compact JSON result is available only when explicitly requested.
+- [x] Bind every corpus encode to its manifest source identity, expected frame
+      count/rate, exact source-frame reconstruction, complete audio decode, and
+      decoded-audio identity, with one manifest-level pass/fail result.
+- [x] Keep qualification output simple. The compression lab retains its
+      existing JSONL/CSV/provenance outputs; full creator qualification emits
+      one aggregate `qualification.json` and a console summary. Ordinary
+      conversions create no validation report unless explicitly requested.
 - [x] Add deterministic mutation/fuzz inputs for headers, record sizes,
       rectangles, LZ4 lengths/offsets, IMA headers, truncation, padding, and EOF.
       `mutation_corpus.py` verifies 34 host cases and emits JSONL plus a
@@ -1099,8 +1099,10 @@ Reference bitrates:
 ### Release gate
 
 - [x] Deterministic host corpus generation and sector-count lab pass.
-- [ ] Run manifest-driven strict reconstruction/audio validation for every
-      corpus encode and retain its machine-readable report.
+- [x] Run manifest-driven strict reconstruction/audio validation for every
+      corpus encode and retain its single machine-readable report. The
+      18-clip/711-frame run passed completely; evidence is
+      `qualification/2026-09-01-host-corpus-qualification.json`.
 - [x] Malformed/mutation corpus passes: all 34 deterministic host cases are
       rejected for their intended reason.
 - [ ] 30 fps general-movie corpus passes with zero gaps/drops.
@@ -1125,14 +1127,12 @@ Completed milestone results now live once in their owning phases above instead
 of being repeated in a second chronological checklist. The highest-return open
 work is:
 
-1. Bind every deterministic corpus encode to strict source reconstruction and
-   decoded-audio identity in one manifest-level report (Phase 0).
-2. Run the 30-minute endurance/drift gate with final audio, A/V, ring, teardown,
+1. Run the 30-minute endurance/drift gate with final audio, A/V, ring, teardown,
    and framebuffer evidence (Phase 7).
-3. Finish the exact seek/resume interruption matrix (Phase 3).
-4. Profile IMA, LZ4, CPU boost, storage behavior, and battery before making any
+2. Finish the exact seek/resume interruption matrix (Phase 3).
+3. Profile IMA, LZ4, CPU boost, storage behavior, and battery before making any
    CPU-heavier mode a default (Phase 6).
-5. Revisit alternate keyframe policy or the 2-GiB file ceiling only when
+4. Revisit alternate keyframe policy or the 2-GiB file ceiling only when
    measured use justifies changing the qualified defaults (Phases 1 and 3).
 
 ## Evidence and references

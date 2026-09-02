@@ -1767,9 +1767,10 @@
 
 - The one-step creator now immediately opens its completed output through the
   independent streaming inspector and compares every reconstructed frame with
-  fresh FFmpeg output from the source. It writes a compact JSON pass record
-  containing decoded-audio identity, frame/rate identity, mode counts, byte
-  totals, index count, and maximum record size.
+  fresh FFmpeg output from the source. Ordinary conversion prints the result
+  without creating a sidecar; an explicitly requested JSON report contains
+  decoded-audio identity, frame/rate identity, mode counts, byte totals, index
+  count, and maximum record size.
 - The inspector now accumulates a deterministic CRC over all decoded stereo
   PCM. This gives host qualification a compact audio-output identity while
   retaining complete per-block IMA validation.
@@ -1783,3 +1784,19 @@
   summary without source or content names. The focused 31-test host suite and
   a one-second generated creator/validation/mutation workflow pass in WSL; all
   34 malformed files are rejected for their intended reason.
+
+## 64. Manifest-wide creator qualification
+
+- `qualify_corpus.py` runs the canonical creator on every manifest clip, then
+  independently validates the completed file against fresh source conversion.
+  It checks the manifest source identity and expected frame count/rate, exact
+  reconstructed video, every decoded audio block, decoded-audio identity,
+  index integrity, padding, and all normal strict-inspector invariants.
+- Reporting remains deliberately small: ordinary conversion writes no sidecar,
+  and a corpus run retains one aggregate `qualification.json` plus its console
+  result. No per-clip JSONL or generated Markdown report is produced.
+- The retained 18-clip corpus passed 18/18 in WSL: 711 frames and 5,514,944
+  aggregate IPVF bytes across static imagery, gradients, local/global motion,
+  60-fps spatial playback, cuts/fades, grain/noise, boundary cases, clipping,
+  and shorter/longer audio. Evidence is retained in
+  `qualification/2026-09-01-host-corpus-qualification.json`.
