@@ -1029,8 +1029,18 @@ Reference bitrates:
       1,345 decoded frames at its lowest mixer callback. An extremely small
       transition sound remained reproducible only at one repeated-click cadence
       and is accepted; adding more muting or seek latency is not justified.
-- [ ] Measure whether startup's audio prebuffer scan/reread should be replaced by
-      an index-assisted or multi-record read.
+- [x] Qualify the bounded multi-record prebuffer read-ahead candidate. The
+      existing 1-MiB decoded-audio ring remains fixed; only otherwise-unused,
+      16-byte-aligned tail space from the plugin-owned audio allocation is
+      eligible. Startup and completed seeks retain a contiguous prefix of the
+      records they already scan for audio, then replay those raw bytes without
+      rereading storage. If no complete record fits, the existing seek-back and
+      reread path remains exact. Production journal counters expose capacity,
+      loads, bytes, records, and hits. The A1099 exposed 27,649,164 safe tail
+      bytes and served 161 records from RAM across fresh/seek and resume runs.
+      Fresh startup remained effectively flat at 68 ticks versus the earlier
+      66-tick baseline, resumed startup took 53 ticks, and both runs logged zero
+      late frames, gaps, rebuffers, recovery events, or errors.
 - [ ] Profile frame catch-up under injected stalls: current pause, timed silence,
       decode-without-display, and keyframe jump. Never call a late frame dropped.
 
@@ -1104,14 +1114,12 @@ work is:
    choose widened offsets or transparent segmentation (Phase 3).
 2. Run the 30-minute endurance/drift gate with final audio, A/V, ring, teardown,
    and framebuffer evidence (Phase 7).
-3. Measure index-assisted or multi-record startup prebuffer/read-ahead and retain
-   it only if it improves latency or storage-stall tolerance (Phase 6).
-4. Extend the three device-qualified recovery mutations into the complete
+3. Extend the three device-qualified recovery mutations into the complete
    malformed/mutation corpus; production ring low-water, bounded recovery, and
    the independent inspector are complete (Phases 0 and 3).
-5. Sweep scene-cut-aware/time-based keyframe policy and the exact seek/resume
+4. Sweep scene-cut-aware/time-based keyframe policy and the exact seek/resume
    interruption matrix (Phases 1 and 3).
-6. Profile IMA, LZ4, CPU boost, storage behavior, and battery before making any
+5. Profile IMA, LZ4, CPU boost, storage behavior, and battery before making any
    CPU-heavier mode a default (Phase 6).
 
 ## Evidence and references

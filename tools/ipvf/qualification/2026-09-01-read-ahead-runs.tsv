@@ -1,0 +1,3 @@
+run	status	fps_num	fps_den	frames	total_frames	active_frame	late	audio_gaps	audio_rebuffers	audio_capacity_frames	audio_low_water_frames	audio_buffer_callbacks	startup_ticks	read_ahead_capacity_bytes	read_ahead_loads	read_ahead_bytes	read_ahead_records	read_ahead_hits	index_cached	index_entries	index_valid	index_scans	audio_recovery_blocks	video_recovery_frames	seek_count	seek_reconstructed_frames	max_seek_ticks	error
+fresh_seek_run	stopped	24	1	1579	7202	1579	0	0	0	262144	1291	1266	68	27649164	4	3893760	164	138	1	61	1	0	0	0	3	125	119	0
+resume_run	stopped	24	1	1897	7202	1897	0	0	0	262144	1837	305	53	27649164	1	744448	23	23	1	61	1	0	0	0	0	19	0	0

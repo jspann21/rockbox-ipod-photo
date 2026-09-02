@@ -1,6 +1,56 @@
 #define IPVF_AUDIO_PREBUFFER_FRAMES (4u * 44100u)
 #define IPVF_AUDIO_SEEK_PREBUFFER_FRAMES (1u * 44100u)
 
+struct ipvf_read_ahead
+{
+    unsigned char *buffer;
+    size_t capacity;
+    size_t bytes;
+    size_t offset;
+    off_t first_position;
+    unsigned long next_frame;
+    unsigned long frames;
+    bool active;
+};
+
+static void read_ahead_reset(struct ipvf_read_ahead *read_ahead)
+{
+    if (read_ahead == NULL)
+        return;
+    read_ahead->bytes = 0;
+    read_ahead->offset = 0;
+    read_ahead->first_position = 0;
+    read_ahead->next_frame = 0;
+    read_ahead->frames = 0;
+    read_ahead->active = false;
+}
+
+static bool read_ahead_take(struct ipvf_read_ahead *read_ahead,
+                            unsigned long frame, off_t position,
+                            unsigned char *destination, size_t bytes)
+{
+    off_t expected_position;
+
+    if (read_ahead == NULL || !read_ahead->active ||
+        destination == NULL || bytes == 0 ||
+        read_ahead->offset > read_ahead->bytes ||
+        bytes > read_ahead->bytes - read_ahead->offset)
+        return false;
+    expected_position = read_ahead->first_position +
+                        (off_t)read_ahead->offset;
+    if (read_ahead->frames == 0 || position != expected_position ||
+        frame != read_ahead->next_frame)
+        return false;
+
+    rb->memcpy(destination, read_ahead->buffer + read_ahead->offset, bytes);
+    read_ahead->offset += bytes;
+    read_ahead->next_frame++;
+    read_ahead->frames--;
+    if (read_ahead->offset == read_ahead->bytes)
+        read_ahead->active = false;
+    return true;
+}
+
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
 static void write_qualification_log(const char *filename,
                                     const struct ipvf_info *info,
@@ -169,6 +219,7 @@ static void write_run_journal(const struct ipvf_info *info,
     rb->fdprintf(journal_fd,
         "%lu\t%lu\t%d\t%s\t%s\t%u\t%u\t%lu\t%lu\t%lu\t%lu\t"
         "%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t"
+        "%lu\t%lu\t%lu\t%lu\t%lu\t"
         "%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\n",
         started_tick, (unsigned long)(*rb->current_tick - started_tick),
         HZ, rb->rbversion, status, info->fps_num, info->fps_den,
@@ -181,6 +232,11 @@ static void write_run_journal(const struct ipvf_info *info,
         stats->audio_low_water_frames,
         stats->audio_buffer_callbacks,
         stats->startup_ticks,
+        stats->read_ahead_capacity_bytes,
+        stats->read_ahead_loads,
+        stats->read_ahead_bytes,
+        stats->read_ahead_records,
+        stats->read_ahead_hits,
         stats->index_cached,
         stats->index_entries,
         stats->index_valid,
@@ -657,11 +713,13 @@ static bool audio_prebuffer_records(int fd, const struct ipvf_info *info,
                                     uint32_t first_sectors,
                                     uint32_t target_frames,
                                     unsigned long *end_frame,
-                                    struct ipvf_stats *stats)
+                                    struct ipvf_stats *stats,
+                                    struct ipvf_read_ahead *read_ahead)
 {
     unsigned long scan_frame = first_frame;
     off_t scan_position = first_position;
     uint32_t scan_sectors = first_sectors;
+    bool cache_full = false;
     if (info == NULL || read_buffer == NULL || end_frame == NULL ||
         target_frames == 0 || audio.started)
         return false;
@@ -671,6 +729,7 @@ static bool audio_prebuffer_records(int fd, const struct ipvf_info *info,
         audio.capacity_frames - IPVF_AUDIO_DMA_MAX_FRAMES)
         target_frames =
             audio.capacity_frames - IPVF_AUDIO_DMA_MAX_FRAMES;
+    read_ahead_reset(read_ahead);
 
     while (scan_frame < info->frame_count &&
            audio_used_frames() < target_frames)
@@ -679,15 +738,30 @@ static bool audio_prebuffer_records(int fd, const struct ipvf_info *info,
         const unsigned char *audio_payload;
         uint32_t record_bytes;
         uint32_t used;
+        unsigned char *record = read_buffer;
+        bool cache_record = false;
 
         if (scan_sectors == 0 ||
             scan_sectors > IPVF_RECORD_MAX_SECTORS)
             return false;
         record_bytes = scan_sectors * IPVF_RECORD_SECTOR_SIZE;
         if (scan_position > info->media_end_offset ||
-            (off_t)record_bytes > info->media_end_offset - scan_position ||
-            !read_exact(fd, read_buffer, record_bytes) ||
-            !parse_record(read_buffer, scan_sectors, scan_frame, info,
+            (off_t)record_bytes > info->media_end_offset - scan_position)
+            return false;
+        if (!cache_full && read_ahead != NULL &&
+            read_ahead->buffer != NULL &&
+            read_ahead->bytes <= read_ahead->capacity &&
+            record_bytes <= read_ahead->capacity - read_ahead->bytes)
+        {
+            record = read_ahead->buffer + read_ahead->bytes;
+            cache_record = true;
+        }
+        else if (read_ahead != NULL)
+        {
+            cache_full = true;
+        }
+        if (!read_exact(fd, record, record_bytes) ||
+            !parse_record(record, scan_sectors, scan_frame, info,
                           &record_info))
             return false;
 
@@ -698,16 +772,48 @@ static bool audio_prebuffer_records(int fd, const struct ipvf_info *info,
         if (record_info.audio_frames > audio.capacity_frames - used)
             break;
 
-        audio_payload = read_buffer + IPVF_FRAME_HEADER_SIZE +
+        audio_payload = record + IPVF_FRAME_HEADER_SIZE +
                         record_info.stored_video_bytes;
         if (!audio_write_record_block(audio_payload, &record_info, stats))
             return false;
+
+        if (cache_record)
+        {
+            if (read_ahead->bytes == 0)
+            {
+                read_ahead->first_position = scan_position;
+                read_ahead->next_frame = scan_frame;
+            }
+            read_ahead->bytes += record_bytes;
+            read_ahead->frames++;
+        }
 
         scan_position += record_bytes;
         scan_sectors = record_info.next_sectors;
         scan_frame++;
     }
 
+    if (read_ahead != NULL && read_ahead->bytes != 0)
+    {
+        off_t cached_end = read_ahead->first_position +
+                           (off_t)read_ahead->bytes;
+
+        if (cached_end < read_ahead->first_position ||
+            rb->lseek(fd, cached_end, SEEK_SET) != cached_end)
+            return false;
+        read_ahead->active = true;
+        if (stats != NULL)
+        {
+            stats->read_ahead_loads++;
+            stats->read_ahead_bytes += read_ahead->bytes;
+            stats->read_ahead_records += read_ahead->frames;
+        }
+    }
+    else if (first_frame < info->frame_count &&
+             rb->lseek(fd, first_position, SEEK_SET) != first_position)
+    {
+        return false;
+    }
     *end_frame = scan_frame;
     return true;
 }
@@ -726,6 +832,7 @@ static enum plugin_status play_file(const char *filename)
     unsigned char *decoded_buffer;
     unsigned char *read_buffer;
     unsigned char *index_cache = NULL;
+    struct ipvf_read_ahead read_ahead;
     struct viewport *vp;
     fb_data *fb;
     uint32_t current_sectors;
@@ -774,6 +881,7 @@ static enum plugin_status play_file(const char *filename)
     rb->memset(&info, 0, sizeof(info));
     rb->memset(&stats, 0, sizeof(stats));
     rb->memset(&saved_resume, 0, sizeof(saved_resume));
+    rb->memset(&read_ahead, 0, sizeof(read_ahead));
     rb->memset(&system_cleanup, 0, sizeof(system_cleanup));
     system_cleanup.info = &info;
     system_cleanup.stats = &stats;
@@ -908,6 +1016,10 @@ static enum plugin_status play_file(const char *filename)
         rb->splash(HZ * 2, "IPVF audio unavailable");
         return PLUGIN_ERROR;
     }
+    if (audio.read_ahead_buffer != NULL)
+        read_ahead.buffer = UNCACHED_ADDR(audio.read_ahead_buffer);
+    read_ahead.capacity = audio.read_ahead_capacity;
+    stats.read_ahead_capacity_bytes = audio.read_ahead_capacity;
 
     rb->lcd_set_backdrop(NULL);
     rb->lcd_clear_display();
@@ -1057,20 +1169,36 @@ static enum plugin_status play_file(const char *filename)
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
         operation_started = USEC_TIMER;
 #endif
-        if (!read_exact(fd, record, record_bytes))
         {
+            bool had_read_ahead = read_ahead.active;
+            bool read_ok;
+
+            if (had_read_ahead)
+            {
+                read_ok = read_ahead_take(&read_ahead, frame, file_position,
+                                           record, record_bytes);
+                if (read_ok)
+                    stats.read_ahead_hits++;
+            }
+            else
+            {
+                read_ok = read_exact(fd, record, record_bytes);
+            }
+            if (!read_ok)
+            {
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
-            operation_us = USEC_TIMER - operation_started;
-            add_qualification_timing(&stats.read_us,
-                                     &stats.max_read_us, operation_us);
+                operation_us = USEC_TIMER - operation_started;
+                add_qualification_timing(&stats.read_us,
+                                         &stats.max_read_us, operation_us);
 #endif
 #ifdef IPVF_NATIVE_PIPELINE
-            if (render_slot_acquired)
-                render_abandon();
+                if (render_slot_acquired)
+                    render_abandon();
 #endif
-            IPVF_NOTE_QUALIFICATION_ERROR(&stats, IPVF_ERROR_READ, frame);
-            failed = true;
-            break;
+                IPVF_NOTE_QUALIFICATION_ERROR(&stats, IPVF_ERROR_READ, frame);
+                failed = true;
+                break;
+            }
         }
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
         operation_us = USEC_TIMER - operation_started;
@@ -1206,6 +1334,10 @@ static enum plugin_status play_file(const char *filename)
             bool rebuffer_ok = audio_reset_to(
                 audio_frame_boundary(&info, frame));
 
+            read_ahead_reset(&read_ahead);
+            if (rebuffer_ok && frame + 1 < info.frame_count)
+                rebuffer_ok = rb->lseek(fd, next_position, SEEK_SET) ==
+                              next_position;
             if (rebuffer_ok)
             {
                 rebuffer_ok = audio_write_record_block(
@@ -1216,12 +1348,7 @@ static enum plugin_status play_file(const char *filename)
                 rebuffer_ok = audio_prebuffer_records(
                     fd, &info, record, frame + 1, next_position,
                     next_sectors, IPVF_AUDIO_PREBUFFER_FRAMES,
-                    &prebuffer_end_frame, &stats);
-            }
-            if (rebuffer_ok && frame + 1 < info.frame_count)
-            {
-                rebuffer_ok = rb->lseek(fd, next_position, SEEK_SET) ==
-                              next_position;
+                    &prebuffer_end_frame, &stats, NULL);
             }
             if (rebuffer_ok)
                 rebuffer_ok = audio_start();
@@ -1414,15 +1541,11 @@ static enum plugin_status play_file(const char *filename)
                 frame1_sectors,
                 completed_seek ? IPVF_AUDIO_SEEK_PREBUFFER_FRAMES :
                                  IPVF_AUDIO_PREBUFFER_FRAMES,
-                &prebuffer_end_frame, &stats);
+                &prebuffer_end_frame, &stats, &read_ahead);
 #if IPVF_ENABLE_QUALIFICATION_TELEMETRY
             stats.prebuffer_us += USEC_TIMER - operation_started;
 #endif
-            if (!prebuffer_ok ||
-                (frame + 1 < info.frame_count &&
-                 rb->lseek(fd, frame1_position, SEEK_SET) !=
-                 frame1_position) ||
-                !audio_start())
+            if (!prebuffer_ok || !audio_start())
             {
                 IPVF_NOTE_QUALIFICATION_ERROR(&stats,
                                               IPVF_ERROR_PREBUFFER, frame);
@@ -1648,6 +1771,7 @@ static enum plugin_status play_file(const char *filename)
                 }
                 else
                 {
+                    read_ahead_reset(&read_ahead);
                     file_position = entry.offset;
                     current_sectors = entry.sectors;
                     frame = entry.frame;

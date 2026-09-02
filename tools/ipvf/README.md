@@ -556,3 +556,16 @@ completed with zero late frames, rebuffers, errors, or visible issues. This
 confirms both that deliberate stops no longer inflate the counter and that the
 one remaining empty callback is a brief real control-heavy boundary worth
 retaining in evidence rather than hiding.
+
+A bounded read-ahead path now reuses only the otherwise-unused tail of the
+plugin-owned audio allocation. Startup and completed-seek prebuffer scans retain
+a contiguous prefix of whole raw records and replay that prefix without reading
+it from storage a second time. The decoded-audio ring remains capped at its
+qualified 1 MiB, cache access uses the PP5020 uncached alias, and an allocation
+with no room for a complete record follows the prior seek-back/reread path.
+Teardown journal fields record tail capacity, loads, bytes, records, and replay
+hits. Hardware exposed 27,649,164 tail bytes and served 161 records from RAM
+across fresh/seek and resume runs. Fresh startup was 68 ticks versus the earlier
+66-tick baseline, resume startup was 53 ticks, and both runs had zero late
+frames, gaps, rebuffers, recovery events, or errors. Anonymous evidence is in
+`qualification/2026-09-01-read-ahead-runs.tsv`.

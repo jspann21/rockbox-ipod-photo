@@ -1732,3 +1732,33 @@
   prove that each request completed.
 - Anonymous evidence is retained in
   `qualification/2026-09-01-recovery-runs.tsv`.
+
+## 62. Bounded prebuffer read-ahead candidate
+
+- Startup and completed seeks previously decoded several seconds of future
+  audio by reading whole interleaved records, sought back to the first future
+  record, and then read the same bytes again for video playback.
+- The qualified decoded-audio ring is now explicitly capped at its existing
+  1-MiB maximum. Any 16-byte-aligned tail left in the plugin-owned audio
+  allocation is exposed as an optional raw-record cache; the ring, video
+  scratch, and canonical reference allocations are unchanged.
+- A prebuffer scan fills only a contiguous prefix of complete records. Playback
+  copies those records into the normal uncached record slot while the file
+  descriptor remains parked at the cached prefix end. If the first record does
+  not fit, or after a true starvation reset, the previous seek-back/reread path
+  remains active.
+- Runtime seeks discard stale cache ownership before publishing their new media
+  position. The true-starvation path explicitly restores the next-record file
+  position before its existing scan, covering a starvation that occurs while a
+  startup cache is still being consumed.
+- The bounded journal records available tail bytes, cache loads, loaded bytes,
+  loaded records, and replay hits. All focused host tests and the warning-free
+  A1099 WSL build pass.
+- Hardware exposed 27,649,164 eligible tail bytes. The fresh/seek run loaded
+  3,893,760 bytes over four cushions and replayed 138 records; the resume run
+  loaded 744,448 bytes and replayed all 23 records. Together, 161 record reads
+  moved from storage to RAM. Fresh startup was effectively unchanged at 68
+  ticks versus the earlier 66-tick baseline, while resume startup was 53 ticks.
+  Both runs logged zero late frames, mixer gaps, rebuffers, audio/video recovery
+  events, or errors. Anonymous evidence is retained in
+  `qualification/2026-09-01-read-ahead-runs.tsv`.

@@ -450,6 +450,8 @@ static bool ipodnative_audio_init(bool needs_video_reference)
     }
 #endif
     ring_bytes = floor_power_of_two(size);
+    if (ring_bytes > IPVF_AUDIO_RING_MAX_BYTES)
+        ring_bytes = IPVF_AUDIO_RING_MAX_BYTES;
     if (ring_bytes < IPVF_AUDIO_RING_MIN_BYTES)
         goto fail;
 
@@ -457,6 +459,23 @@ static bool ipodnative_audio_init(bool needs_video_reference)
     audio.capacity_frames = ring_bytes / IPVF_AUDIO_FRAME_BYTES;
     audio.frame_mask = audio.capacity_frames - 1;
     audio.low_water_frames = audio.capacity_frames;
+    aligned += ring_bytes;
+    size -= ring_bytes;
+    {
+        uintptr_t read_ahead_address = (aligned + 15u) & ~(uintptr_t)15u;
+        size_t read_ahead_skip;
+
+        if (read_ahead_address >= aligned)
+        {
+            read_ahead_skip = read_ahead_address - aligned;
+            if (read_ahead_skip <= size)
+            {
+                audio.read_ahead_buffer =
+                    (unsigned char *)read_ahead_address;
+                audio.read_ahead_capacity = size - read_ahead_skip;
+            }
+        }
+    }
     audio.old_frequency = rb->mixer_get_frequency();
 
     rb->pcm_play_lock();

@@ -81,7 +81,9 @@
     "frames\ttotal_frames\tactive_frame\tlate\taudio_gaps\t" \
     "audio_rebuffers\tfirst_rebuffer_frame\tlast_rebuffer_frame\t" \
     "audio_capacity_frames\taudio_low_water_frames\t" \
-    "audio_buffer_callbacks\tstartup_ticks\tindex_cached\tindex_entries\t" \
+    "audio_buffer_callbacks\tstartup_ticks\t" \
+    "read_ahead_capacity_bytes\tread_ahead_loads\tread_ahead_bytes\t" \
+    "read_ahead_records\tread_ahead_hits\tindex_cached\tindex_entries\t" \
     "index_valid\tindex_scans\taudio_recovery_blocks\t" \
     "video_recovery_frames\tseek_count\t" \
     "seek_reconstructed_frames\tmax_seek_ticks\terror\terror_frame\n"
@@ -167,6 +169,11 @@ struct ipvf_stats
     unsigned long audio_low_water_frames;
     unsigned long audio_buffer_callbacks;
     unsigned long startup_ticks;
+    unsigned long read_ahead_capacity_bytes;
+    unsigned long read_ahead_loads;
+    unsigned long read_ahead_bytes;
+    unsigned long read_ahead_records;
+    unsigned long read_ahead_hits;
     unsigned long index_cached;
     unsigned long index_entries;
     unsigned long index_valid;
@@ -257,6 +264,8 @@ struct ipvf_audio_state
     unsigned char *video_scratch;
     unsigned char *video_reference;
     unsigned char *buffer;
+    unsigned char *read_ahead_buffer;
+    size_t read_ahead_capacity;
     uint32_t capacity_frames;
     uint32_t frame_mask;
     volatile uint32_t written_frames;
