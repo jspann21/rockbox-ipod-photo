@@ -1722,6 +1722,9 @@ static int disk_callback(int btn, struct gui_synclist *lists)
                            dma_stats.configured_dma_mode ?
                            configured_mode : "PIO");
     }
+    simplelist_addline("DMA reads: >=%lu B; writes: %s",
+                       ata_get_dma_min_read_bytes(),
+                       ata_dma_writes_enabled() ? "enabled" : "PIO");
     simplelist_addline("DMA timeouts: %lu; PIO recovery ok/fail: %lu/%lu",
         (unsigned long)dma_stats.dma_finish_failures,
         (unsigned long)dma_stats.pio_recovery_successes,
@@ -2091,6 +2094,10 @@ static bool pp5020_perf_save_snapshot(void)
              recovery.configured_dma_mode);
     fdprintf(fd, "ata_identify_current_dma_mode=%#x\n",
              recovery.identify_current_dma_mode);
+    fdprintf(fd, "ata_dma_min_read_bytes=%lu\n",
+             ata_get_dma_min_read_bytes());
+    fdprintf(fd, "ata_dma_writes_enabled=%d\n",
+             ata_dma_writes_enabled());
     fdprintf(fd, "ata_dma_quarantined=%d\n",
              recovery.dma_quarantined);
     fdprintf(fd, "ata_dma_quarantine_reason=%d\n",

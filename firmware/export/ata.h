@@ -230,6 +230,8 @@ int ata_flush(void);
 #ifdef HAVE_ATA_DMA
 /* Returns the DMA mode most recently configured by set_features(). */
 int ata_get_dma_mode(void);
+unsigned long ata_get_dma_min_read_bytes(void);
+bool ata_dma_writes_enabled(void);
 #endif /* HAVE_ATA_DMA */
 
 #ifdef HAVE_ATA_DMA_RECOVERY

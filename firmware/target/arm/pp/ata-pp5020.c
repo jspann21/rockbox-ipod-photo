@@ -252,6 +252,11 @@ static ICODE_ATTR int ata_wait_intrq(void)
    and then call ata_dma_finish().
  */
 bool ata_dma_setup(void *addr, unsigned long bytes, bool write) {
+    /* Whole-cache maintenance has a fixed cost on PP5020. Targets may keep
+     * tiny aligned reads on PIO through a configured crossover. */
+    if (!write && bytes < ATA_DMA_MIN_READ_BYTES)
+        return false;
+
     /* Require cacheline alignment for reads to prevent interference. */
     if (!write && ((unsigned long)addr & 15))
         return false;

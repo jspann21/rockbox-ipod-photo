@@ -72,6 +72,10 @@
 
 #define READWRITE_TIMEOUT 5*HZ
 #define ATA_SLEEP_RETRY_TIMEOUT 5*HZ
+/* Keep one command within the universally supported 8-bit sector-count
+ * encoding. A zero count represents exactly 256 sectors; larger requests
+ * must be split or their count silently wraps on LBA28 devices. */
+#define ATA_MAX_SECTORS_PER_COMMAND 256
 
 #ifdef HAVE_ATA_POWER_OFF
 #define ATA_POWER_OFF_TIMEOUT 2*HZ
@@ -109,6 +113,7 @@ static long power_off_tick = 0;
 #endif
 
 static uint8_t  multisectors; /* number of supported multisectors */
+static bool ata_geometry_valid;
 
 #ifdef HAVE_ATA_DMA
 static int dma_mode = 0;
@@ -161,6 +166,7 @@ static int ata_power_on(void);
 static int perform_soft_reset(void);
 static int set_multiple_mode(int sectors);
 static int set_features(void);
+static int ata_parse_identify_geometry(void);
 
 static inline void keep_ata_active(void)
 {
@@ -474,7 +480,10 @@ static int ata_transfer_sectors(uint64_t start,
     int ret = -9; /* A positive-length request has not completed yet. */
     long timeout = 0;
     int count;
+    int command_count;
+    int command_remaining;
     void* buf;
+    uint64_t request_start = start;
     long spinup_start = current_tick;
     bool command_issued = false;
     bool woke_from_low_power = false;
@@ -485,7 +494,6 @@ static int ata_transfer_sectors(uint64_t start,
 #endif
 #ifdef HAVE_ATA_DMA_RECOVERY
     bool dma_recovery = false;
-    bool pio_recovery_issued = false;
     bool deadline_expired_before_command = false;
     bool saved_deadline_active = ata_wait_deadline_active;
     long saved_deadline = ata_wait_deadline;
@@ -541,6 +549,7 @@ static int ata_transfer_sectors(uint64_t start,
     }
 
  retry:
+    start = request_start;
     buf = inbuf;
     count = incount;
     command_issued = false;
@@ -553,30 +562,26 @@ static int ata_transfer_sectors(uint64_t start,
     while (TIME_BEFORE(current_tick, timeout)) {
         ret = -9;
         keep_ata_active();
-
-#ifdef HAVE_ATA_DMA_RECOVERY
-        if (dma_recovery && pio_recovery_issued) {
-            ret = -10;
-            goto error;
-        }
-#endif
+        command_count = MIN(count, ATA_MAX_SECTORS_PER_COMMAND);
+        command_remaining = command_count;
 
 #ifdef HAVE_ATA_DMA
         /* If DMA is supported and parameters are ok for DMA, use it */
+        usedma = false;
         bool dma_allowed = !dma_failed && dma_mode;
 #ifdef HAVE_ATA_DMA_RECOVERY
         dma_allowed = dma_allowed && !dma_quarantined;
 #endif
         if (dma_allowed &&
-            ata_dma_setup(inbuf, incount * log_sector_size, write))
+            ata_dma_setup(buf, command_count * log_sector_size, write))
             usedma = true;
 #endif
 
 #ifdef HAVE_LBA48
         if (ata_lba48)
         {
-            ATA_OUT8(ATA_NSECTOR, count >> 8);
-            ATA_OUT8(ATA_NSECTOR, count & 0xff);
+            ATA_OUT8(ATA_NSECTOR, command_count >> 8);
+            ATA_OUT8(ATA_NSECTOR, command_count & 0xff);
             ATA_OUT8(ATA_SECTOR, (start >> 24) & 0xff); /* 31:24 */
             ATA_OUT8(ATA_SECTOR, start & 0xff); /* 7:0 */
             ATA_OUT8(ATA_LCYL, (start >> 32) & 0xff); /* 39:32 */
@@ -596,7 +601,7 @@ static int ata_transfer_sectors(uint64_t start,
         else
 #endif
         {
-            ATA_OUT8(ATA_NSECTOR, count & 0xff); /* 0 means 256 sectors */
+            ATA_OUT8(ATA_NSECTOR, command_count & 0xff); /* 0 means 256 sectors */
             ATA_OUT8(ATA_SECTOR, start & 0xff);
             ATA_OUT8(ATA_LCYL, (start >> 8) & 0xff);
             ATA_OUT8(ATA_HCYL, (start >> 16) & 0xff);
@@ -612,11 +617,6 @@ static int ata_transfer_sectors(uint64_t start,
         }
 
         command_issued = true;
-#ifdef HAVE_ATA_DMA_RECOVERY
-        if (dma_recovery)
-            pio_recovery_issued = true;
-#endif
-
         /* wait at least 400ns between writing command and reading status */
         __asm__ volatile ("nop");
         __asm__ volatile ("nop");
@@ -665,7 +665,9 @@ static int ata_transfer_sectors(uint64_t start,
              * like the old polling loop. Account for a slow successful DMA at
              * completion so it receives the full configured idle interval. */
             keep_ata_active();
-            sectors_completed = incount;
+            buf += command_count * log_sector_size;
+            count -= command_count;
+            sectors_completed += command_count;
             if (ata_state == ATA_SPINUP) {
                 ata_state = ATA_ON;
                 spinup_time = current_tick - spinup_start;
@@ -674,7 +676,7 @@ static int ata_transfer_sectors(uint64_t start,
         else
 #endif /* HAVE_ATA_DMA */
         {
-            while (count) {
+            while (command_remaining) {
                 int sectors;
                 int wordcount;
                 int status;
@@ -711,10 +713,10 @@ static int ata_transfer_sectors(uint64_t start,
                 if (status & STATUS_ERR)
                     error = ATA_IN8(ATA_ERROR);
 
-                if (count >= multisectors)
+                if (command_remaining >= multisectors)
                     sectors = multisectors;
                 else
-                    sectors = count;
+                    sectors = command_remaining;
 
                 wordcount = sectors * log_sector_size / 2;
 
@@ -749,6 +751,7 @@ static int ata_transfer_sectors(uint64_t start,
 
                 buf += sectors * log_sector_size; /* Advance one chunk of sectors */
                 count -= sectors;
+                command_remaining -= sectors;
                 sectors_completed += sectors;
 
                 keep_ata_active();
@@ -780,6 +783,11 @@ static int ata_transfer_sectors(uint64_t start,
                 goto error;
 #endif
             goto retry;
+        }
+
+        if (count > 0) {
+            start += command_count;
+            continue;
         }
 
         if (command_issued && sectors_completed == incount)
@@ -1059,6 +1067,97 @@ static int identify(void)
     return 0;
 }
 
+/* Parse geometry into locals first, then publish one coherent snapshot.  ATA
+ * bridges are re-IDENTIFY'd after reset and rail power-on; retaining values
+ * from the previous response can otherwise mix an old addressing mode or
+ * sector size with the newly initialized device. */
+static int ata_parse_identify_geometry(void)
+{
+    uint8_t new_multisectors = identify_info[47] & 0xff;
+    uint64_t new_total_sectors = ((uint32_t)identify_info[61] << 16) |
+                                 identify_info[60];
+    uint32_t new_log_sector_size;
+    bool new_canflush;
+#ifdef HAVE_LBA48
+    bool new_lba48 = false;
+#endif
+
+    if (!new_multisectors && (identify_info[59] & 0x100) == 0x100)
+        new_multisectors = identify_info[59] & 0xff;
+    if (!new_multisectors)
+        new_multisectors = 1;
+
+#ifdef HAVE_LBA48
+    if (identify_info[83] & 0x0400 &&
+        new_total_sectors == 0x0fffffff) {
+        uint64_t lba48_sectors = ((uint64_t)identify_info[103] << 48) |
+                ((uint64_t)identify_info[102] << 32) |
+                ((uint64_t)identify_info[101] << 16) |
+                identify_info[100];
+
+        if (lba48_sectors != 0) {
+            new_total_sectors = lba48_sectors;
+            new_lba48 = true;
+        }
+    }
+#endif
+
+    if (new_total_sectors == 0)
+        return -1;
+
+    /* Logical sector size > 512 B? */
+    if ((identify_info[106] & 0xd000) == 0x5000) {
+        uint32_t sector_words = identify_info[117] |
+                                ((uint32_t)identify_info[118] << 16);
+        if (sector_words > UINT32_MAX / 2)
+            return -2;
+        new_log_sector_size = sector_words * 2;
+    }
+    else {
+        new_log_sector_size = 512;
+    }
+
+    if (new_log_sector_size < 512 || (new_log_sector_size & 1))
+        return -2;
+#ifndef MAX_VARIABLE_LOG_SECTOR
+    if (new_log_sector_size != SECTOR_SIZE)
+        return -2;
+#else
+    if (new_log_sector_size > MAX_VARIABLE_LOG_SECTOR)
+        return -2;
+#endif
+
+    new_canflush =
+        (identify_info[83] & ((1 << 13) | (1 << 12))) != 0 ||
+        identify_info[80] >= (1 << 5);
+
+    /* A reset in the middle of a request must not silently switch the
+     * command/addressing contract underneath the caller's validated range
+     * and buffer. Fail the recovery instead and let the request propagate an
+     * error. */
+    if (ata_geometry_valid &&
+        (total_sectors != new_total_sectors ||
+         log_sector_size != new_log_sector_size ||
+         multisectors != new_multisectors
+#ifdef HAVE_LBA48
+         || ata_lba48 != new_lba48
+#endif
+        ))
+        return -3;
+
+    multisectors = new_multisectors;
+    total_sectors = new_total_sectors;
+    log_sector_size = new_log_sector_size;
+    canflush = new_canflush;
+#ifdef HAVE_LBA48
+    ata_lba48 = new_lba48;
+#endif
+    ata_geometry_valid = true;
+
+    DEBUGF("ata: max %d sectors per DRQ\n", multisectors);
+    return 0;
+}
+
 static int perform_soft_reset(void)
 {
 /* If this code is allowed to run on a Nano, the next reads from the flash will
@@ -1114,6 +1213,11 @@ static int perform_soft_reset(void)
         goto out;
     }
 
+    if (ata_parse_identify_geometry()) {
+        result = -6;
+        goto out;
+    }
+
     if ((ret = set_features())) {
         result = -60 + ret;
         goto out;
@@ -1126,6 +1230,11 @@ static int perform_soft_reset(void)
 
     if (identify()) {
         result = -2;
+        goto out;
+    }
+
+    if (ata_parse_identify_geometry()) {
+        result = -7;
         goto out;
     }
 
@@ -1182,6 +1291,9 @@ static int ata_power_on(void)
     if (identify())
         return -5;
 
+    if (ata_parse_identify_geometry())
+        return -6;
+
     rc = set_features();
     if (rc)
         return -60 + rc;
@@ -1191,6 +1303,9 @@ static int ata_power_on(void)
 
     if (identify())
         return -2;
+
+    if (ata_parse_identify_geometry())
+        return -7;
 
     if (freeze_lock())
         return -4;
@@ -1457,64 +1572,15 @@ int STORAGE_INIT_ATTR ata_init(void)
             goto error;
         }
 
-        multisectors = identify_info[47] & 0xff;
-        if (!multisectors && (identify_info[59] & 0x100) == 0x100)
-            multisectors = identify_info[59] & 0xff;
-        if (!multisectors)
-            multisectors = 1; /* One transfer per REQ */
-
-        DEBUGF("ata: max %d sectors per DRQ\n", multisectors);
-
-        total_sectors = ((uint32_t)identify_info[61] << 16) |
-                        identify_info[60];
-
-#ifdef HAVE_LBA48
-        if (identify_info[83] & 0x0400 && total_sectors == 0x0FFFFFFF) {
-            uint64_t lba48_sectors = ((uint64_t)identify_info[103] << 48) |
-                    ((uint64_t)identify_info[102] << 32) |
-                    ((uint64_t)identify_info[101] << 16) |
-                    identify_info[100];
-            if (lba48_sectors != 0) {
-                total_sectors = lba48_sectors;
-                ata_lba48 = true; /* use BigLBA */
-            }
-        }
-#endif /* HAVE_LBA48 */
-
-        if (total_sectors == 0) {
+        rc = ata_parse_identify_geometry();
+        if (rc == -1) {
             rc = -44;
             goto error;
         }
-
-        /* Logical sector size > 512B ? */
-        if ((identify_info[106] & 0xd000) == 0x5000) { /* B14, B12 */
-            uint32_t sector_words = identify_info[117] |
-                                    ((uint32_t)identify_info[118] << 16);
-            if (sector_words > UINT32_MAX / 2) {
-                rc = -45;
-                goto error;
-            }
-            log_sector_size = sector_words * 2;
-        }
-        else {
-            log_sector_size = 512;
-        }
-
-        if (log_sector_size < 512 || (log_sector_size & 1)) {
+        if (rc) {
             rc = -45;
             goto error;
         }
-#ifndef MAX_VARIABLE_LOG_SECTOR
-        if (log_sector_size != SECTOR_SIZE) {
-            rc = -45;
-            goto error;
-        }
-#elif defined(MAX_VARIABLE_LOG_SECTOR)
-        if (log_sector_size > MAX_VARIABLE_LOG_SECTOR) {
-            rc = -45;
-            goto error;
-        }
-#endif
 
         rc = freeze_lock();
         if (rc) {
@@ -1548,6 +1614,12 @@ int STORAGE_INIT_ATTR ata_init(void)
     rc = identify();
     if (rc) {
         rc = -40 + rc;
+        goto error;
+    }
+
+    rc = ata_parse_identify_geometry();
+    if (rc) {
+        rc = rc == -1 ? -44 : -45;
         goto error;
     }
 
@@ -1635,6 +1707,28 @@ long ata_next_action_tick(void)
 int ata_get_dma_mode(void)
 {
     return dma_mode;
+}
+
+unsigned long ata_get_dma_min_read_bytes(void)
+{
+#ifdef ATA_DMA_MIN_READ_BYTES
+    return ATA_DMA_MIN_READ_BYTES;
+#else
+    return 0;
+#endif
+}
+
+bool ata_dma_writes_enabled(void)
+{
+#if defined(ATA_WRITE_POLICY) && defined(ATA_WRITE_PIO_ONLY) && \
+    ATA_WRITE_POLICY == ATA_WRITE_PIO_ONLY
+    return false;
+#elif defined(ATA_WRITE_POLICY) && defined(ATA_WRITE_DMA_IF_SSD) && \
+      ATA_WRITE_POLICY == ATA_WRITE_DMA_IF_SSD
+    return ata_disk_isssd();
+#else
+    return true;
+#endif
 }
 
 #ifdef HAVE_ATA_DMA_RECOVERY

@@ -240,9 +240,12 @@
  * provisional interrupt bit prevented an A1099 from reaching Rockbox, so
  * retain the producer/consumer polling path until a documented software IRQ
  * source is available. */
-/* First-pass behavior: retain write DMA only for SSD-classified adapters.
- * Set ATA_WRITE_POLICY to ATA_WRITE_PIO_ONLY for the later A/B build. */
-#define ATA_WRITE_POLICY ATA_WRITE_DMA_IF_SSD
+/* iFlash/CF-to-SD bridges do not provide a reliable enough SSD fingerprint
+ * to authorize write DMA. Keep conservative PIO writes as the production
+ * baseline; aligned reads retain UDMA1. */
+#define ATA_WRITE_POLICY ATA_WRITE_PIO_ONLY
+/* Avoid whole-cache maintenance for tiny metadata reads. */
+#define ATA_DMA_MIN_READ_BYTES 4096
 #define ATA_DMA_TIMEOUT_SECONDS 10
 #define ATA_RESET_TIMEOUT_SECONDS 30
 #endif
