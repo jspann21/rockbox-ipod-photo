@@ -496,17 +496,23 @@ only the physical click/eject/reconnect actions remain manual.
       `reference.py`.
 - [x] Walk every record, verify sizes/offsets/padding/EOF, decode every mode and
       all audio, and compare reconstructed frames with an optional fresh source.
+- [x] Make the one-step creator run that independent source reconstruction by
+      default and emit a compact JSON pass record including decoded-audio
+      identity. Invalid output can no longer finish as a successful creation.
 - [ ] Bind validation runs to corpus-manifest expected frame/audio identities
       and emit a manifest-level pass/fail result.
 - [ ] Emit machine-readable `encode-results.jsonl`, `size.csv`,
       `host-validation.jsonl`, and one Markdown summary. The lab now emits the
       first two plus `summary.csv`, `timing.csv`, `pareto.csv`, and provenance;
-      validator JSONL and generated Markdown remain.
-- [ ] Add deterministic mutation/fuzz inputs for headers, record sizes,
+      manifest-wide creator validation JSONL and one combined Markdown summary
+      remain.
+- [x] Add deterministic mutation/fuzz inputs for headers, record sizes,
       rectangles, LZ4 lengths/offsets, IMA headers, truncation, padding, and EOF.
-      The reusable device subset is complete: `make_recovery_cases.py` emits
-      strict-rejected malformed-audio, temporal-CRC, and index-CRC cases plus a
-      control from any suitable strict-valid temporal IPVF.
+      `mutation_corpus.py` verifies 34 host cases and emits JSONL plus a
+      Markdown summary. The reusable device subset remains intentionally
+      smaller: `make_recovery_cases.py` emits strict-rejected malformed-audio,
+      temporal-CRC, and index-CRC cases plus a control from any suitable
+      strict-valid temporal IPVF.
 - [x] Keep the existing small unit suite; expand broad testing through the
       corpus/validator rather than creating a second format implementation.
 
@@ -590,6 +596,11 @@ changing the proven player.
       at 24000/1001, 150 at 30 fps, and 300 at 60 fps.
 - [ ] Sweep alternate time-based and scene-cut-aware keyframe intervals before
       changing the qualified five-second default.
+      A read-only encoder audit found this is not a high-return default change:
+      hard cuts already fall back to keys, an extra cut key cannot improve
+      later records, and its main benefit would only be another seek/recovery
+      anchor. Keep it deferred unless measured seek behavior warrants a
+      cost-aware host experiment.
 - [x] Compare the current 32-candidate LZ4 search with official fast and HC
       levels 3/9/12. Explicit `--lz4-mode best` adaptively selects the built-in
       result or HC12, both using the same device block decoder.
@@ -723,6 +734,9 @@ there is one format and no compatibility/version branch.
 - [ ] Choose one:
   - [ ] widen and qualify Rockbox file offsets end-to-end; or
   - [ ] prefer transparent IPVF segmentation below approximately 1.9 GiB.
+- This work is deferred until normal use approaches the current file ceiling;
+  transparent segmentation has no present user-facing benefit for shorter
+  files.
 - [ ] Remember FAT32's own single-file limit; a wider Rockbox offset alone is
       not a universal long-movie solution.
 
@@ -1087,7 +1101,8 @@ Reference bitrates:
 - [x] Deterministic host corpus generation and sector-count lab pass.
 - [ ] Run manifest-driven strict reconstruction/audio validation for every
       corpus encode and retain its machine-readable report.
-- [ ] Malformed/mutation corpus passes.
+- [x] Malformed/mutation corpus passes: all 34 deterministic host cases are
+      rejected for their intended reason.
 - [ ] 30 fps general-movie corpus passes with zero gaps/drops.
 - [x] 60 fps support is labeled by measured capability: spatial records are the
       qualified 60-fps path; whole-frame motion and dense temporal XOR records
@@ -1110,17 +1125,15 @@ Completed milestone results now live once in their owning phases above instead
 of being repeated in a second chronological checklist. The highest-return open
 work is:
 
-1. Settle actual A1099 behavior around the 2-GiB Rockbox file ceiling, then
-   choose widened offsets or transparent segmentation (Phase 3).
+1. Bind every deterministic corpus encode to strict source reconstruction and
+   decoded-audio identity in one manifest-level report (Phase 0).
 2. Run the 30-minute endurance/drift gate with final audio, A/V, ring, teardown,
    and framebuffer evidence (Phase 7).
-3. Extend the three device-qualified recovery mutations into the complete
-   malformed/mutation corpus; production ring low-water, bounded recovery, and
-   the independent inspector are complete (Phases 0 and 3).
-4. Sweep scene-cut-aware/time-based keyframe policy and the exact seek/resume
-   interruption matrix (Phases 1 and 3).
-5. Profile IMA, LZ4, CPU boost, storage behavior, and battery before making any
+3. Finish the exact seek/resume interruption matrix (Phase 3).
+4. Profile IMA, LZ4, CPU boost, storage behavior, and battery before making any
    CPU-heavier mode a default (Phase 6).
+5. Revisit alternate keyframe policy or the 2-GiB file ceiling only when
+   measured use justifies changing the qualified defaults (Phases 1 and 3).
 
 ## Evidence and references
 

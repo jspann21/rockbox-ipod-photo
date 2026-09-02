@@ -1625,6 +1625,12 @@ def main() -> None:
         help=("balanced uses fast official HC12 when available and otherwise "
               "falls back to built-in LZ4; best exhaustively compares both"),
     )
+    ap.add_argument(
+        "--validation-report",
+        type=Path,
+        help=("independent validation report path (default: "
+              "OUTPUT.validation.json)"),
+    )
     ns = ap.parse_args()
     try:
         fps, color_depth, source_fps = profile_settings(
@@ -1671,9 +1677,70 @@ def main() -> None:
         f"profile={ns.profile}: {cadence}, color={color_depth}, "
         f"keys<={float(ns.key_seconds):g}s/{keyint} frames"
     )
+    report_path = ns.validation_report or ns.output.with_name(
+        ns.output.name + ".validation.json"
+    )
+    report_targets = {
+        report_path.resolve(),
+        report_path.with_name(report_path.name + ".tmp").resolve(),
+    }
+    if (ns.output.resolve() in report_targets or
+            ns.source.resolve() in report_targets):
+        ap.error(
+            "validation report and temporary report must not replace source "
+            "or output"
+        )
+    # Remove any earlier PASS before creation starts. A failed or interrupted
+    # run must never leave a report that appears to describe the new attempt.
+    report_path.unlink(missing_ok=True)
     encode(ns.source, ns.output, fps, keyint, ns.ffmpeg,
            ns.video_mode, ns.max_rects, ns.lz4_mode, color_depth,
            metadata=metadata, source_has_audio=source_has_audio)
+    try:
+        try:
+            from .validate import inspect_file
+        except ImportError:  # Direct script execution.
+            from validate import inspect_file
+        validation = inspect_file(
+            ns.output, ns.source, ns.ffmpeg, True, color_depth
+        )
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SystemExit(
+            f"independent validation failed for {ns.output}: {error}"
+        ) from error
+
+    report = {
+        "status": "pass",
+        "file_bytes": validation["file_bytes"],
+        "frames": validation["frames"],
+        "fps_num": validation["fps_num"],
+        "fps_den": validation["fps_den"],
+        "duration_seconds": validation["duration_seconds"],
+        "source_verified": validation["source_verified"],
+        "decoded_audio_crc": validation["decoded_audio_crc"],
+        "media_id": validation["media_id"],
+        "index_count": validation["index_count"],
+        "counts": validation["counts"],
+        "audio_modes": validation["audio_modes"],
+        "stored_video_bytes": validation["stored_video_bytes"],
+        "audio_bytes": validation["audio_bytes"],
+        "padding_bytes": validation["padding_bytes"],
+        "max_record_sectors": validation["max_record_sectors"],
+    }
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_temporary = report_path.with_name(report_path.name + ".tmp")
+    try:
+        report_temporary.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(report_temporary, report_path)
+    except BaseException:
+        report_temporary.unlink(missing_ok=True)
+        raise
+    print(
+        f"independent validation: PASS; report={report_path}"
+    )
 
 
 if __name__ == "__main__":

@@ -170,6 +170,7 @@ def inspect_file(
         audio_total = 0
         padding_total = 0
         max_record_sectors = 0
+        decoded_audio_crc = 0xFFFFFFFF
         calculated_media_id = 0xFFFFFFFF
         keyframe_entries: list[tuple[int, int, int, int]] = []
         record_info: dict[int, tuple[int, int, int]] = {}
@@ -228,6 +229,9 @@ def inspect_file(
                 _require(len(decoded_audio) == audio_count *
                          ipvf.AUDIO_FRAME_BYTES,
                          f"frame {frame}: decoded audio length mismatch")
+                decoded_audio_crc = rockbox_crc32(
+                    decoded_audio, decoded_audio_crc
+                )
 
             compressed = kind in (
                 ipvf.TYPE_KEY_LZ4,
@@ -387,6 +391,9 @@ def inspect_file(
         "stored_video_bytes": stored_video_total,
         "audio_bytes": audio_total,
         "audio_modes": dict(sorted(audio_modes.items())),
+        "decoded_audio_crc": (
+            f"{decoded_audio_crc:08x}" if verify_audio else None
+        ),
         "padding_bytes": padding_total,
         "record_bytes": media_end_offset - ipvf.DATA_OFFSET,
         "max_record_sectors": max_record_sectors,

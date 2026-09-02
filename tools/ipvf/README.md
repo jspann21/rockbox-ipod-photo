@@ -14,6 +14,13 @@ Install `ffmpeg`, then run:
 python3 tools/ipvf/encode.py input.mp4 output.ipvf
 ```
 
+That command now finishes by running the independent streaming inspector
+against both the completed IPVF and fresh FFmpeg output from the source. A
+successful run writes `output.ipvf.validation.json` with a compact pass record,
+decoded-audio identity, mode counts, sizes, index count, and record bounds. An
+encode that cannot pass independent reconstruction does not report success.
+Use `--validation-report` only when the report needs a different location.
+
 The default `everyday` profile preserves the source's exact rational cadence up
 to 30 fps (including 24000/1001 and 30000/1001) and retains full RGB565
 precision. The
@@ -320,6 +327,21 @@ python3 tools/ipvf/make_recovery_cases.py input.ipvf recovery-cases
 The generator first requires a strict-valid source, gives every media mutation
 a fresh content identity, and confirms that the independent inspector rejects
 each malformed output for the intended reason.
+
+Run the broader host malformed-file gate from a short strict-valid IPVF
+containing a stored IMA block, a spatial LZ4 record, and ordinary sector
+padding:
+
+```sh
+python3 tools/ipvf/mutation_corpus.py input.ipvf mutation-results
+```
+
+It generates and verifies 34 deterministic failures spanning header fields,
+metadata TLVs, bounds and EOF, record links and sizes, superblock/sector
+padding, rectangle geometry, LZ4 decoded sizes and offsets, IMA headers, media
+identity, and index contents. It writes `host-validation.jsonl` plus a short
+`SUMMARY.md`; success means every malformed file was rejected for its intended
+reason.
 
 When source-verifying an experimental reduced-color encode, pass its host color
 cleanup as well. Everyday and compact both use the validator's RGB565 default:

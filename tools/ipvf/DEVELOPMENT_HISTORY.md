@@ -1762,3 +1762,24 @@
   Both runs logged zero late frames, mixer gaps, rebuffers, audio/video recovery
   events, or errors. Anonymous evidence is retained in
   `qualification/2026-09-01-read-ahead-runs.tsv`.
+
+## 63. Automatic creator validation and malformed-file gate
+
+- The one-step creator now immediately opens its completed output through the
+  independent streaming inspector and compares every reconstructed frame with
+  fresh FFmpeg output from the source. It writes a compact JSON pass record
+  containing decoded-audio identity, frame/rate identity, mode counts, byte
+  totals, index count, and maximum record size.
+- The inspector now accumulates a deterministic CRC over all decoded stereo
+  PCM. This gives host qualification a compact audio-output identity while
+  retaining complete per-block IMA validation.
+- `mutation_corpus.py` generates 34 malformed files from one strict-valid
+  audio/LZ4 input and requires an intended rejection for each. Coverage spans
+  header fields, metadata TLVs, media and index bounds, links and payload
+  accounting, both padding regions, rectangle geometry, malformed LZ4 sizes
+  and back-references, IMA headers, media identity, index entries, truncation,
+  and trailing data.
+- The mutation run emits machine-readable JSONL and a generated Markdown
+  summary without source or content names. The focused 31-test host suite and
+  a one-second generated creator/validation/mutation workflow pass in WSL; all
+  34 malformed files are rejected for their intended reason.
