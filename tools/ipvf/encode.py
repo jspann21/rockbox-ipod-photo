@@ -16,6 +16,10 @@ import os
 import struct
 import subprocess
 import tempfile
+try:
+    import zlib
+except ImportError:  # Some custom Python builds omit this optional module.
+    zlib = None
 from fractions import Fraction
 from pathlib import Path
 from typing import BinaryIO
@@ -182,12 +186,34 @@ def _make_rockbox_crc32_table() -> tuple[int, ...]:
 ROCKBOX_CRC32_TABLE = _make_rockbox_crc32_table()
 
 
+# Reversing each input byte maps Rockbox's MSB-first polynomial to zlib's
+# reflected polynomial. bytes.translate and zlib do the per-byte work in C.
+_CRC_BIT_REVERSE = bytes(int(f"{byte:08b}"[::-1], 2) for byte in range(256))
+
+
+def _reverse_u32(value: int) -> int:
+    return int.from_bytes(
+        value.to_bytes(4, "little").translate(_CRC_BIT_REVERSE), "big"
+    )
+
+
 def rockbox_crc32(data: bytes, crc: int = 0xFFFFFFFF) -> int:
-    """Match Rockbox's non-reflected crc_32 with no final XOR."""
-    for byte in data:
-        crc = (ROCKBOX_CRC32_TABLE[((crc >> 24) ^ byte) & 0xFF] ^
-               ((crc << 8) & 0xFFFFFFFF))
-    return crc
+    """Match Rockbox's non-reflected crc_32, including incremental seeds.
+
+    zlib complements its input and output state; undo both complements as
+    well as bit reflection. This is NOT interchangeable with zlib.crc32(data).
+    """
+    if not data:
+        return crc
+    if zlib is None:
+        for byte in data:
+            crc = (ROCKBOX_CRC32_TABLE[((crc >> 24) ^ byte) & 0xFF] ^
+                   ((crc << 8) & UINT32_MAX))
+        return crc
+    reflected = zlib.crc32(
+        data.translate(_CRC_BIT_REVERSE), _reverse_u32(crc & UINT32_MAX) ^ UINT32_MAX
+    ) ^ UINT32_MAX
+    return _reverse_u32(reflected)
 
 
 def rockbox_crc32_file_range(
@@ -621,30 +647,40 @@ def lz4_decompress(data: bytes, expected_size: int | None = None) -> bytes:
     return bytes(out)
 
 
-def bbox_diff(prev: bytes, cur: bytes):
-    minx, miny = W, H
-    maxx = maxy = -1
-    for y in range(H):
-        row = y * W * 2
-        for x in range(W):
-            p = row + x * 2
-            if prev[p:p + 2] != cur[p:p + 2]:
-                if x < minx:
-                    minx = x
-                if x > maxx:
-                    maxx = x
-                if y < miny:
-                    miny = y
-                if y > maxy:
-                    maxy = y
-    if maxx < 0:
+def _bbox_diff_region(prev: bytes, cur: bytes, x0: int, y0: int,
+                      x1: int, y1: int):
+    """Tighten an LCD-word-aligned region using C-level row comparisons."""
+    minx, miny, maxx, maxy = x1, y1, x0 - 2, y0 - 1
+    for y in range(y0, y1):
+        start, end = (y * W + x0) * 2, (y * W + x1) * 2
+        before, after = prev[start:end], cur[start:end]
+        if before == after:
+            continue
+        miny = min(miny, y)
+        maxy = y
+        # Only changes outside the existing horizontal envelope can widen it.
+        # Compare whole two-pixel LCD words; pixel byte order is irrelevant.
+        for x in range(x0, minx, 2):
+            offset = (x - x0) * 2
+            if before[offset:offset + 4] != after[offset:offset + 4]:
+                minx = x
+                break
+        for x in range(x1 - 2, maxx, -2):
+            offset = (x - x0) * 2
+            if before[offset:offset + 4] != after[offset:offset + 4]:
+                maxx = x
+                break
+    if maxy < y0:
         return None
-    # The LCD2 RGB data port consumes two pixels per 32-bit write. Align delta
-    # rectangles to complete pixel pairs so a staging slot can be transferred
-    # directly while the CPU reads the following frame.
-    minx &= ~1
-    maxx = min(W - 1, maxx | 1)
-    return minx, miny, maxx - minx + 1, maxy - miny + 1
+    return minx, miny, maxx - minx + 2, maxy - miny + 1
+
+
+def bbox_diff(prev: bytes, cur: bytes):
+    if len(prev) != FRAME_BYTES or len(cur) != FRAME_BYTES:
+        raise ValueError("frames must match the native IPVF geometry")
+    if prev == cur:
+        return None
+    return _bbox_diff_region(prev, cur, 0, 0, W, H)
 
 
 def rect_payload(frame: bytes, rect):
@@ -686,14 +722,21 @@ def multi_rect_diff(
     if tile_pairs <= 0 or tile_rows <= 0:
         raise ValueError("tile dimensions must be positive")
 
-    pair_columns = W // 2
     changed = set()
+    tile_bytes = tile_pairs * 4
     for y in range(H):
         row = y * W * 2
-        for pair in range(pair_columns):
-            p = row + pair * 4
-            if prev[p:p + 4] != cur[p:p + 4]:
-                changed.add((pair // tile_pairs, y // tile_rows))
+        if prev[row:row + W * 2] == cur[row:row + W * 2]:
+            continue
+        ty = y // tile_rows
+        for tx, offset in enumerate(range(0, W * 2, tile_bytes)):
+            cell = (tx, ty)
+            if cell in changed:
+                continue
+            start = row + offset
+            end = row + min(W * 2, offset + tile_bytes)
+            if prev[start:end] != cur[start:end]:
+                changed.add(cell)
     if not changed:
         return []
 
@@ -717,27 +760,15 @@ def multi_rect_diff(
         min_ty = min(cell[1] for cell in cells)
         max_ty = max(cell[1] for cell in cells)
 
-        # Tighten the tile component to the actual changed LCD words.
-        min_pair = pair_columns
-        max_pair = -1
-        min_y = H
-        max_y = -1
-        for y in range(min_ty * tile_rows,
-                       min(H, (max_ty + 1) * tile_rows)):
-            row = y * W * 2
-            for pair in range(min_tx * tile_pairs,
-                              min(pair_columns,
-                                  (max_tx + 1) * tile_pairs)):
-                p = row + pair * 4
-                if prev[p:p + 4] != cur[p:p + 4]:
-                    min_pair = min(min_pair, pair)
-                    max_pair = max(max_pair, pair)
-                    min_y = min(min_y, y)
-                    max_y = max(max_y, y)
-        if max_pair >= 0:
-            components.append((min_pair * 2, min_y,
-                               (max_pair - min_pair + 1) * 2,
-                               max_y - min_y + 1))
+        # Preserve the original bounding-tile semantics, including changes
+        # belonging to other components inside that bounding region.
+        rect = _bbox_diff_region(
+            prev, cur, min_tx * tile_pairs * 2, min_ty * tile_rows,
+            min(W, (max_tx + 1) * tile_pairs * 2),
+            min(H, (max_ty + 1) * tile_rows),
+        )
+        if rect is not None:
+            components.append(rect)
 
     def payload_cost(rect) -> int:
         return 8 + rect[2] * rect[3] * 2
@@ -779,7 +810,10 @@ def multi_rect_diff(
 def xor_frames(prev: bytes, cur: bytes) -> bytes:
     if len(prev) != FRAME_BYTES or len(cur) != FRAME_BYTES:
         raise ValueError("frames must match the native IPVF geometry")
-    return bytes(a ^ b for a, b in zip(prev, cur))
+    # Explicit byte order and output length preserve leading zero bytes and
+    # keep this portable; big-integer conversion/XOR runs in native code.
+    return (int.from_bytes(prev, "little") ^
+            int.from_bytes(cur, "little")).to_bytes(FRAME_BYTES, "little")
 
 
 def translate_frame(previous: bytes, dx: int, dy: int) -> bytes:
@@ -804,9 +838,59 @@ def translate_frame(previous: bytes, dx: int, dy: int) -> bytes:
     return bytes(predicted)
 
 
+_motion_numpy = None
+
+
+def _numpy_motion_scores(previous: bytes, current: bytes,
+                         vectors: list[tuple[int, int]], sample_step: int,
+                         required: bool = False):
+    """Batch the existing byte-SAD samples, not a different motion metric.
+
+    NumPy is optional. Keep subtraction signed, reductions 64-bit, and return
+    Python ints for the normalized-score cross-products in the search. Limit
+    each batch to 65,536 sampled pixels, including for sample_step=1.
+    """
+    global _motion_numpy
+    if _motion_numpy is None:
+        try:
+            import numpy
+            _motion_numpy = numpy
+        except ImportError:
+            _motion_numpy = False
+    if _motion_numpy is False:
+        if required:
+            raise RuntimeError("numpy motion backend requires NumPy")
+        return {}
+    np = _motion_numpy
+    before = np.frombuffer(previous, dtype=np.uint8).astype(np.int16).reshape(-1, 2)
+    after = np.frombuffer(current, dtype=np.uint8).astype(np.int16).reshape(-1, 2)
+    xs = np.arange(0, W, sample_step, dtype=np.int64)
+    ys = np.arange(0, H, sample_step, dtype=np.int64)
+    batch_size = max(1, min(256, 65536 // (len(xs) * len(ys))))
+    result = {}
+    for start in range(0, len(vectors), batch_size):
+        batch_vectors = vectors[start:start + batch_size]
+        batch = np.asarray(batch_vectors, dtype=np.int64)
+        dx, dy = batch[:, 0, None, None], batch[:, 1, None, None]
+        x = np.maximum(dx, 0) + xs[None, None, :]
+        y = np.maximum(dy, 0) + ys[None, :, None]
+        valid = (x < np.minimum(W, W + dx)) & (y < np.minimum(H, H + dy))
+        # Mask before gathering: invalid samples must never index past a frame.
+        current_indices = np.where(valid, y * W + x, 0)
+        previous_indices = np.where(valid, (y - dy) * W + x - dx, 0)
+        difference = np.abs(after[current_indices] - before[previous_indices])
+        totals = np.sum(difference * valid[..., None], axis=(1, 2, 3),
+                        dtype=np.int64)
+        counts = np.sum(valid, axis=(1, 2), dtype=np.int64)
+        for vector, total, count in zip(batch_vectors, totals, counts):
+            result[vector] = int(total), int(count)
+    return result
+
+
 def estimate_translation(
     previous: bytes, current: bytes, max_shift: int = 16,
     sample_step: int = 12,
+    *, backend: str = "auto",
 ) -> tuple[int, int]:
     """Estimate a bounded integer translation with a coarse/refined RGB565 SAD."""
     if len(previous) != FRAME_BYTES or len(current) != FRAME_BYTES:
@@ -814,7 +898,17 @@ def estimate_translation(
     if not 0 <= max_shift < min(W, H) or sample_step <= 0:
         raise ValueError("invalid translation search bounds")
 
+    if backend not in ("auto", "python", "numpy"):
+        raise ValueError("motion backend must be auto, python, or numpy")
+    coarse = range(-max_shift, max_shift + 1, 2)
     score_cache: dict[tuple[int, int], tuple[int, int]] = {}
+    if backend != "python":
+        vectors = [(dx, dy) for dy in coarse for dx in coarse]
+        if (0, 0) not in vectors:
+            vectors.append((0, 0))
+        score_cache = _numpy_motion_scores(
+            previous, current, vectors, sample_step, backend == "numpy"
+        )
 
     def score(dx: int, dy: int) -> tuple[int, int]:
         cached = score_cache.get((dx, dy))
@@ -849,7 +943,6 @@ def estimate_translation(
                (right, abs(best[0]) + abs(best[1]), best)
 
     best = (0, 0)
-    coarse = range(-max_shift, max_shift + 1, 2)
     for dy in coarse:
         for dx in coarse:
             if better((dx, dy), best):
@@ -1139,13 +1232,45 @@ def profile_settings(
     return fps, color_depth, source_fps
 
 
+_rgb565_masks = None
+
+
+def quantize_rgb565(bgr0: bytes) -> bytes:
+    """Truncate BGR0 to RGB565BE without swscale's low-bit RGB conversion.
+
+    Treat each pixel as a separate 32-bit lane. Masks prevent shifted bits
+    crossing lanes; strided byte assignments compact to big-endian 16 bits.
+    All frame-sized operations run in native standard-library code. There is
+    no spatial averaging or dithering, and no optional dependency is needed.
+    """
+    if len(bgr0) != W * H * 4:
+        raise ValueError("BGR0 frame must match the native IPVF geometry")
+    global _rgb565_masks
+    if _rgb565_masks is None:
+        _rgb565_masks = tuple(int.from_bytes(
+            struct.pack("<I", mask) * (W * H), "little"
+        ) for mask in (0xF800, 0x07E0, 0x001F))
+    red, green, blue = _rgb565_masks
+    pixels = int.from_bytes(bgr0, "little")
+    packed = (((pixels >> 8) & red) | ((pixels >> 5) & green) |
+              ((pixels >> 3) & blue)).to_bytes(len(bgr0), "little")
+    output = bytearray(FRAME_BYTES)
+    output[0::2] = packed[1::4]
+    output[1::2] = packed[0::4]
+    return bytes(output)
+
+
 def ffmpeg_frames(
     source: Path,
     fps: int | Fraction,
     ffmpeg: str,
     color_depth: str = "rgb565",
+    quantizer: str = "ffmpeg",
 ):
     rate = frame_rate(fps)
+    if quantizer not in ("ffmpeg", "native"):
+        raise ValueError("quantizer must be ffmpeg or native")
+    frame_bytes = W * H * 4 if quantizer == "native" else FRAME_BYTES
     if color_depth not in COLOR_FILTERS:
         raise ValueError(f"unknown color depth: {color_depth}")
     filters = [
@@ -1167,7 +1292,7 @@ def ffmpeg_frames(
         "-vf",
         vf,
         "-pix_fmt",
-        "rgb565be",
+        "bgr0" if quantizer == "native" else "rgb565be",
         "-f",
         "rawvideo",
         "-",
@@ -1177,16 +1302,17 @@ def ffmpeg_frames(
     try:
         while True:
             chunks = bytearray()
-            while len(chunks) < FRAME_BYTES:
-                chunk = proc.stdout.read(FRAME_BYTES - len(chunks))
+            while len(chunks) < frame_bytes:
+                chunk = proc.stdout.read(frame_bytes - len(chunks))
                 if not chunk:
                     break
                 chunks.extend(chunk)
             if not chunks:
                 break
-            if len(chunks) != FRAME_BYTES:
+            if len(chunks) != frame_bytes:
                 raise RuntimeError("ffmpeg ended with a partial frame")
-            yield bytes(chunks)
+            yield (quantize_rgb565(bytes(chunks)) if quantizer == "native"
+                   else bytes(chunks))
     finally:
         proc.stdout.close()
         rc = proc.wait()
@@ -1281,6 +1407,9 @@ def choose_video_record(
     video_mode: str,
     max_rects: int,
     lz4_mode: str = DEFAULT_LZ4_MODE,
+    *,
+    size_search: bool = False,
+    motion_backend: str = "auto",
 ):
     """Choose a video record by final sector count, with bounded tie costs."""
     if video_mode not in ("current", "spatial", "motion", "auto"):
@@ -1295,16 +1424,19 @@ def choose_video_record(
     rect = bbox_diff(prev, cur)
     if rect is None:
         return TYPE_REPEAT, 0, b"", 0
-    delta = rect_payload(cur, rect)
-    if len(delta) < FRAME_BYTES:
+    if 8 + rect[2] * rect[3] * 2 < FRAME_BYTES:
         selected = _compress_record_if_smaller(
-            TYPE_RECTS, 1, delta, audio_size, lz4_mode
+            TYPE_RECTS, 1, rect_payload(cur, rect), audio_size, lz4_mode
         )
     else:
         selected = _compress_record_if_smaller(
             TYPE_KEY, 0, cur, audio_size, lz4_mode
         )
+    key_already_tested = selected[0] in (TYPE_KEY, TYPE_KEY_LZ4)
     selected_sectors = record_sectors(len(selected[2]), audio_size)
+    minimum_sectors = record_sectors(0, audio_size)
+    if selected_sectors == minimum_sectors:
+        return selected
 
     if video_mode in ("spatial", "motion", "auto"):
         rectangles = multi_rect_diff(prev, cur, max_rects=max_rects)
@@ -1322,8 +1454,11 @@ def choose_video_record(
                     selected = candidate
                     selected_sectors = candidate_sectors
 
+    if selected_sectors == minimum_sectors:
+        return selected
+
     if video_mode in ("motion", "auto"):
-        dx, dy = estimate_translation(prev, cur)
+        dx, dy = estimate_translation(prev, cur, backend=motion_backend)
         prediction = translate_frame(prev, dx, dy)
         residual = compress_lz4(xor_frames(prediction, cur), lz4_mode)
         motion_payload = struct.pack(
@@ -1336,6 +1471,9 @@ def choose_video_record(
             selected = TYPE_MOTION_LZ4, 0, motion_payload, FRAME_BYTES
             selected_sectors = motion_sectors
 
+    if selected_sectors == minimum_sectors:
+        return selected
+
     if video_mode == "auto":
         temporal = compress_lz4(xor_frames(prev, cur), lz4_mode)
         temporal_payload = struct.pack(
@@ -1345,6 +1483,20 @@ def choose_video_record(
         if (len(temporal_payload) < FRAME_BYTES and
                 temporal_sectors < selected_sectors):
             selected = TYPE_XOR_LZ4, 0, temporal_payload, FRAME_BYTES
+            selected_sectors = temporal_sectors
+
+    # Raw area alone does not predict compressed size. A full key can reuse
+    # matches outside a small rectangle, and beat that rectangle after LZ4.
+    # Opt in: the extra compression and full LCD update are not always worth it.
+    # A sector saved also pays for the extra 16-byte key-index entry.
+    if (size_search and not key_already_tested and
+            selected[0] not in (TYPE_KEY, TYPE_KEY_LZ4) and
+            selected_sectors > minimum_sectors):
+        candidate = _compress_record_if_smaller(
+            TYPE_KEY, 0, cur, audio_size, lz4_mode
+        )
+        if record_sectors(len(candidate[2]), audio_size) < selected_sectors:
+            selected = candidate
 
     return selected
 
@@ -1362,8 +1514,15 @@ def encode(
     *,
     metadata: dict[str, str] | None = None,
     source_has_audio: bool | None = None,
+    size_search: bool = False,
+    motion_backend: str = "auto",
+    quantizer: str = "ffmpeg",
 ) -> None:
     fps = frame_rate(fps)
+    if quantizer not in ("ffmpeg", "native"):
+        raise ValueError("quantizer must be ffmpeg or native")
+    if motion_backend not in ("auto", "python", "numpy"):
+        raise ValueError("motion backend must be auto, python, or numpy")
     # Validate metadata before creating temporary PCM or walking any video
     # frames. Header finalization must not be the first point where a bad tag
     # can reject an otherwise complete long encode.
@@ -1411,7 +1570,7 @@ def encode(
 
         with temporary.open("wb+") as f:
             f.write(bytes(DATA_OFFSET))
-            for cur in ffmpeg_frames(source, fps, ffmpeg, color_depth):
+            for cur in ffmpeg_frames(source, fps, ffmpeg, color_depth, quantizer):
                 force_key = prev is None or (keyint > 0 and n % keyint == 0)
                 audio_start = audio_boundary(n, fps)
                 audio_end = audio_boundary(n + 1, fps)
@@ -1431,6 +1590,7 @@ def encode(
                     choose_video_record(
                         prev, cur, len(audio_payload), force_key,
                         video_mode, max_rects, lz4_mode,
+                        size_search=size_search, motion_backend=motion_backend,
                     )
                 )
 
@@ -1545,7 +1705,7 @@ def encode(
         f"delta-lz4={counts[TYPE_RECTS_LZ4]} "
         f"xor-lz4={counts[TYPE_XOR_LZ4]} "
         f"motion-lz4={counts[TYPE_MOTION_LZ4]} mode={video_mode} "
-        f"lz4={lz4_mode} color={color_depth}"
+        f"lz4={lz4_mode} color={color_depth} quantizer={quantizer}"
     )
     print(
         f"  video={video_payload_total:,} bytes "
@@ -1626,6 +1786,26 @@ def main() -> None:
               "falls back to built-in LZ4; best exhaustively compares both"),
     )
     ap.add_argument(
+        "--quantizer",
+        choices=("ffmpeg", "native"),
+        default="ffmpeg",
+        help=("ffmpeg preserves existing pixels; native packs scaled BGR0 "
+              "directly to RGB565 without spatial averaging or dithering"),
+    )
+    ap.add_argument(
+        "--motion-backend",
+        choices=("auto", "python", "numpy"),
+        default="auto",
+        help=("auto accelerates identical motion scores with optional NumPy; "
+              "python disables it; numpy requires it"),
+    )
+    ap.add_argument(
+        "--size-search",
+        action="store_true",
+        help=("also compare full compressed keys against deltas; lossless, "
+              "but may take longer and require more full-screen LCD updates"),
+    )
+    ap.add_argument(
         "--validation-report",
         type=Path,
         help="optionally write the independent validation result as JSON",
@@ -1692,14 +1872,17 @@ def main() -> None:
         report_path.unlink(missing_ok=True)
     encode(ns.source, ns.output, fps, keyint, ns.ffmpeg,
            ns.video_mode, ns.max_rects, ns.lz4_mode, color_depth,
-           metadata=metadata, source_has_audio=source_has_audio)
+           metadata=metadata, source_has_audio=source_has_audio,
+           size_search=ns.size_search, motion_backend=ns.motion_backend,
+           quantizer=ns.quantizer)
     try:
         try:
             from .validate import inspect_file
         except ImportError:  # Direct script execution.
             from validate import inspect_file
         validation = inspect_file(
-            ns.output, ns.source, ns.ffmpeg, True, color_depth
+            ns.output, ns.source, ns.ffmpeg, True, color_depth,
+            quantizer=ns.quantizer,
         )
     except (OSError, RuntimeError, ValueError) as error:
         raise SystemExit(
@@ -1709,6 +1892,7 @@ def main() -> None:
     if report_path is not None:
         report = {
             "status": "pass",
+            "quantizer": ns.quantizer,
             "file_bytes": validation["file_bytes"],
             "frames": validation["frames"],
             "fps_num": validation["fps_num"],

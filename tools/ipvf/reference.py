@@ -259,13 +259,28 @@ def translate_frame(previous: bytes, dx: int, dy: int) -> bytes:
     return bytes(predicted)
 
 
+def quantize_rgb565(bgr0: bytes) -> bytes:
+    """Independent scalar oracle for the optional direct RGB565 quantizer."""
+    if len(bgr0) != W * H * 4:
+        raise ValueError("BGR0 frame must match the native IPVF geometry")
+    output = bytearray()
+    for blue, green, red, _alpha in struct.iter_unpack("BBBB", bgr0):
+        word = ((red >> 3) << 11) | ((green >> 2) << 5) | (blue >> 3)
+        output.extend(struct.pack(">H", word))
+    return bytes(output)
+
+
 def ffmpeg_frames(
     source: Path,
     fps: int | Fraction,
     ffmpeg: str,
     color_depth: str = "rgb565",
+    quantizer: str = "ffmpeg",
 ):
     rate = frame_rate(fps)
+    if quantizer not in ("ffmpeg", "native"):
+        raise ValueError("quantizer must be ffmpeg or native")
+    frame_bytes = W * H * 4 if quantizer == "native" else FRAME_BYTES
     if color_depth not in COLOR_FILTERS:
         raise ValueError(f"unknown color depth: {color_depth}")
     filters = [
@@ -277,7 +292,8 @@ def ffmpeg_frames(
         filters.append(COLOR_FILTERS[color_depth])
     command = [
         ffmpeg, "-nostdin", "-v", "error", "-i", str(source), "-an",
-        "-vf", ",".join(filters), "-pix_fmt", "rgb565be",
+        "-vf", ",".join(filters), "-pix_fmt",
+        "bgr0" if quantizer == "native" else "rgb565be",
         "-f", "rawvideo", "-",
     ]
     process = subprocess.Popen(command, stdout=subprocess.PIPE)
@@ -285,16 +301,17 @@ def ffmpeg_frames(
     try:
         while True:
             frame = bytearray()
-            while len(frame) < FRAME_BYTES:
-                block = process.stdout.read(FRAME_BYTES - len(frame))
+            while len(frame) < frame_bytes:
+                block = process.stdout.read(frame_bytes - len(frame))
                 if not block:
                     break
                 frame.extend(block)
             if not frame:
                 break
-            if len(frame) != FRAME_BYTES:
+            if len(frame) != frame_bytes:
                 raise RuntimeError("ffmpeg ended with a partial frame")
-            yield bytes(frame)
+            yield (quantize_rgb565(bytes(frame)) if quantizer == "native"
+                   else bytes(frame))
     finally:
         process.stdout.close()
         return_code = process.wait()

@@ -83,6 +83,7 @@ def inspect_file(
     ffmpeg: str = "ffmpeg",
     verify_audio: bool = True,
     color_depth: str = "rgb565",
+    *, quantizer: str = "ffmpeg",
 ) -> dict:
     file_size = path.stat().st_size
     source_frames = None
@@ -158,7 +159,7 @@ def inspect_file(
 
         if source is not None:
             source_frames = iter(ipvf.ffmpeg_frames(
-                source, rate, ffmpeg, color_depth
+                source, rate, ffmpeg, color_depth, quantizer
             ))
 
         counts: Counter[str] = Counter()
@@ -429,6 +430,9 @@ def main() -> None:
         default="rgb565",
         help="host color cleanup used when --source was encoded",
     )
+    parser.add_argument("--quantizer", choices=("ffmpeg", "native"),
+                        default="ffmpeg",
+                        help="pixel quantizer used when --source was encoded")
     parser.add_argument("--skip-audio-decode", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -437,7 +441,7 @@ def main() -> None:
 
     reports = [inspect_file(
         path, args.source, args.ffmpeg, not args.skip_audio_decode,
-        args.color_depth,
+        args.color_depth, quantizer=args.quantizer,
     ) for path in args.files]
     if args.json:
         print(json.dumps(reports, indent=2))
