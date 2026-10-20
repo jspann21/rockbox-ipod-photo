@@ -22,6 +22,7 @@
 
 #include <stdbool.h>
 #include <inttypes.h>
+#include <limits.h>
 #include "led.h"
 #include "cpu.h"
 #include "system.h"
@@ -919,11 +920,14 @@ static int freeze_lock(void)
 
 void ata_spindown(int seconds)
 {
-    sleep_timeout = seconds * HZ;
+    mutex_lock(&ata_mutex);
+    /* Keep the interval representable for wrap-safe signed tick comparisons. */
+    sleep_timeout = (long)MAX(0, MIN(seconds, INT_MAX / HZ)) * HZ;
     /* A failed-sleep retry belongs to the old timeout policy. Leaving an
      * already-expired retry armed after disabling or extending spindown would
      * make the exact-deadline storage loop wake continuously. */
     sleep_retry_tick = 0;
+    mutex_unlock(&ata_mutex);
     /* Exact-deadline ATA targets may currently be blocked with no timeout.
      * Re-evaluate whenever the runtime setting enables, disables, shortens, or
      * extends automatic sleep. */
@@ -935,12 +939,15 @@ bool ata_disk_is_active(void)
     return (ata_state >= ATA_SPINUP);
 }
 
-void ata_sleepnow(void)
+static void ata_sleepnow_internal(bool idle_only)
 {
     if (ata_state >= ATA_SPINUP) {
         logf("ata SLEEPNOW %ld", current_tick);
         mutex_lock(&ata_mutex);
-        if (ata_state == ATA_ON
+        if (ata_state == ATA_ON &&
+            (!idle_only || (ata_sleep_timed_out() &&
+             (!sleep_retry_tick ||
+              !TIME_BEFORE(current_tick, sleep_retry_tick))))
 #ifdef HAVE_ATA_DMA_IRQ
             && !ata_dma_is_in_progress()
 #endif
@@ -1065,6 +1072,12 @@ static int identify(void)
     }
 
     return 0;
+}
+
+void ata_sleepnow(void)
+{
+    /* Explicit callers request immediate standby, regardless of idle time. */
+    ata_sleepnow_internal(false);
 }
 
 static uint8_t ata_safe_multiple_count(uint8_t maximum, uint8_t current)
@@ -1825,10 +1838,14 @@ int ata_event(long id, intptr_t data)
         }
     }
     else if (id == Q_STORAGE_SLEEPNOW) {
-        ata_sleepnow();
+        /* The storage tick and its callbacks may race with new I/O. Recheck
+         * the idle/retry deadlines under the ATA lock before sending standby. */
+        ata_sleepnow_internal(true);
     }
     else if (id == Q_STORAGE_SLEEP) {
+        mutex_lock(&ata_mutex);
         last_disk_activity = current_tick - sleep_timeout + HZ / 5;
+        mutex_unlock(&ata_mutex);
     }
 #ifndef USB_NONE
     else if (id == SYS_USB_CONNECTED) {

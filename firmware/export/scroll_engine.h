@@ -33,6 +33,13 @@ struct scrollinfo;
 
 extern void scroll_init(void) INIT_ATTR;
 
+#if defined(IPOD_COLOR) && !defined(BOOTLOADER)
+/* Internal producer notification after publishing the first scrolling line. */
+void lcd_scroll_wakeup(void);
+#else
+static inline void lcd_scroll_wakeup(void) { }
+#endif
+
 extern void lcd_bidir_scroll(int threshold);
 extern void lcd_scroll_speed(int speed);
 extern void lcd_scroll_delay(int ms);

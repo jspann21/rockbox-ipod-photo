@@ -20,6 +20,7 @@
  *
  ****************************************************************************/
 #include "config.h"
+#include "panic.h"
 #if !defined(BOOTLOADER)
 #include "settings.h"
 #include "action.h"
@@ -807,13 +808,18 @@ void backlight_init(void)
     /* Leave all lights as set by the bootloader here. The settings load will
      * call the appropriate backlight_set_*() functions, only changing light
      * status if necessary. */
-#ifdef BACKLIGHT_DRIVER_CLOSE
-    backlight_thread_id =
-#endif
-    create_thread(backlight_thread, backlight_stack,
+    unsigned int thread = create_thread(backlight_thread, backlight_stack,
                   sizeof(backlight_stack), 0, backlight_thread_name
                   IF_PRIO(, PRIORITY_USER_INTERFACE)
                   IF_COP(, CPU));
+    if (thread == 0)
+    {
+        queue_delete(&backlight_queue);
+        panicf("Cannot create backlight thread");
+    }
+#ifdef BACKLIGHT_DRIVER_CLOSE
+    backlight_thread_id = thread;
+#endif
 }
 
 #ifdef BACKLIGHT_DRIVER_CLOSE

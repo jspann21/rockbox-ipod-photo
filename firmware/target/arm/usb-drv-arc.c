@@ -591,6 +591,13 @@ void usb_drv_init(void)
     REG_ENDPOINTLISTADDR = (unsigned int)qh_array;
     REG_DEVICEADDR = 0;
 
+    /* Configure every endpoint before RUN exposes the device to a host.
+     * A host already present during boot may reset/enumerate immediately. */
+    for(int ep_num=1;ep_num<USB_NUM_ENDPOINTS;ep_num++) {
+        init_endpoint(ep_num | USB_DIR_IN, USB_ENDPOINT_XFER_BULK, -1);
+        init_endpoint(ep_num | USB_DIR_OUT, USB_ENDPOINT_XFER_BULK, -1);
+    }
+
     /* enable USB interrupts */
     REG_USBINTR =
         USBINTR_INT_EN |
@@ -610,13 +617,6 @@ void usb_drv_init(void)
 
     /* now a bus reset will occur. see bus_reset() */
 
-    /* manual: 32.9.5.18 (Caution): Leaving an unconfigured endpoint control
-     * will cause undefined behavior for the data pid tracking on the active
-     * endpoint/direction. */
-    for(int ep_num=1;ep_num<USB_NUM_ENDPOINTS;ep_num++) {
-        init_endpoint(ep_num | USB_DIR_IN, USB_ENDPOINT_XFER_BULK, -1);
-        init_endpoint(ep_num | USB_DIR_OUT, USB_ENDPOINT_XFER_BULK, -1);
-    }
 }
 
 void usb_drv_exit(void)

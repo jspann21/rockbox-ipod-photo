@@ -170,11 +170,14 @@ void usb_init_device(void)
 
     usb_pin_init();
 
-    /* These set INT_LEV to the inserted level so it will fire if already
-     * inserted at the time they are enabled. */
+    /* Arm the next transition from the actual cable level. Initial cable
+     * detection is sampled directly by usb_start_monitoring(); it must not
+     * depend on manufacturing an insertion interrupt during boot. */
 #ifdef USB_STATUS_BY_EVENT
     GPIO_CLEAR_BITWISE(USB_GPIO_INT_EN, USB_GPIO_MASK);
-    GPIO_WRITE_BITWISE(USB_GPIO_INT_LEV, USB_GPIO_VAL, USB_GPIO_MASK);
+    unsigned long usb_level = USB_GPIO_INPUT_VAL & USB_GPIO_MASK;
+    GPIO_WRITE_BITWISE(USB_GPIO_INT_LEV, usb_level ^ USB_GPIO_MASK,
+                      USB_GPIO_MASK);
     USB_GPIO_INT_CLR = USB_GPIO_MASK;
     GPIO_SET_BITWISE(USB_GPIO_INT_EN, USB_GPIO_MASK);
     CPU_HI_INT_EN = USB_GPIO_HI_INT_MASK;
@@ -223,12 +226,12 @@ bool usb_plugged(void)
 }
 
 #ifdef USB_STATUS_BY_EVENT
-/* Cannot always tell power pin from USB pin */
-static int usb_status = USB_EXTRACTED;
-
 static int usb_timeout_event(struct timeout *tmo)
 {
-    usb_status_event(tmo->data == USB_GPIO_VAL ? USB_INSERTED : USB_EXTRACTED);
+    /* Report the present pin level, not an older edge captured before boot
+     * finished or before this debounce callback could run. */
+    usb_status_event(usb_plugged() ? USB_INSERTED : USB_EXTRACTED);
+    (void)tmo;
     return 0;
 }
 
@@ -236,7 +239,6 @@ void usb_insert_int(void)
 {
     static struct timeout usb_oneshot;
     unsigned long val = USB_GPIO_INPUT_VAL & USB_GPIO_MASK;
-    usb_status = (val == USB_GPIO_VAL) ? USB_INSERTED : USB_EXTRACTED;
     GPIO_WRITE_BITWISE(USB_GPIO_INT_LEV, val ^ USB_GPIO_MASK, USB_GPIO_MASK);
     USB_GPIO_INT_CLR = USB_GPIO_MASK;
     if (!timeout_register(&usb_oneshot, usb_timeout_event, HZ/5, val))
@@ -261,11 +263,9 @@ void usb_drv_int_enable(bool enable)
 /* detect host or charger (INSERTED or EXTRACTED) */
 int usb_detect(void)
 {
-#ifdef USB_STATUS_BY_EVENT
-    return usb_status;
-#else
+    /* In particular, monitoring may start with the cable already inserted
+     * and without a new GPIO edge. The pin is independent of USB core power. */
     return usb_plugged() ? USB_INSERTED : USB_EXTRACTED;
-#endif
 }
 
 #ifdef USB_FIREWIRE_HANDLING

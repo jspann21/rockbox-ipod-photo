@@ -321,7 +321,13 @@ static inline bool storage_thread_init(void)
                                       0, &storage_thread_name[1]
                                       IF_PRIO(, PRIORITY_USER_INTERFACE)
                                       IF_COP(, CPU));
-    return storage_thread_id != 0;
+    if (storage_thread_id == 0)
+    {
+        /* Do not leave a broadcast subscriber with no worker to ACK USB. */
+        queue_delete(&storage_queue);
+        return false;
+    }
+    return true;
 }
 
 int storage_init(void)

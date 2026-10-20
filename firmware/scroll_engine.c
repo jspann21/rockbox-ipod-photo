@@ -28,6 +28,7 @@
 #include "cpu.h"
 #include "kernel.h"
 #include "thread.h"
+#include "panic.h"
 #include "usb.h"
 #include "lcd.h"
 #include "font.h"
@@ -112,6 +113,17 @@ static void scroll_thread(void);
 static const char scroll_name[] = "scroll";
 static void scroll_thread(void) NORETURN_ATTR;
 
+#ifdef IPOD_COLOR
+static struct semaphore scroll_wakeup;
+static bool scroll_wakeup_ready;
+
+void lcd_scroll_wakeup(void)
+{
+    if (scroll_wakeup_ready)
+        semaphore_release(&scroll_wakeup);
+}
+#endif
+
 #ifdef HAVE_REMOTE_LCD
 static void scroll_thread(void)
 {
@@ -182,6 +194,12 @@ static void scroll_thread(void)
 {
     while (1)
     {
+#ifdef IPOD_COLOR
+        /* The semaphore retains an insertion between the empty check and
+         * this wait. A zero-line screen needs no periodic scroll work. */
+        while (lcd_scroll_info.lines == 0)
+            semaphore_wait(&scroll_wakeup, TIMEOUT_BLOCK);
+#endif
         sleep(lcd_scroll_info.ticks);
 #if defined(HAVE_LCD_ENABLE) || defined(HAVE_LCD_SLEEP)
         if (lcd_active())
@@ -194,13 +212,24 @@ static void scroll_thread(void)
 void scroll_init(void)
 {
     static long scroll_stack[(DEFAULT_STACK_SIZE*3)/sizeof(long)];
+#ifdef IPOD_COLOR
+    semaphore_init(&scroll_wakeup, 1, 0);
+    scroll_wakeup_ready = true;
+#endif
 #ifdef HAVE_REMOTE_LCD
     queue_init(&scroll_queue, true);
 #endif
-    create_thread(scroll_thread, scroll_stack,
+    unsigned int thread = create_thread(scroll_thread, scroll_stack,
                   sizeof(scroll_stack), 0, scroll_name
                   IF_PRIO(, PRIORITY_USER_INTERFACE)
                   IF_COP(, CPU));
+    if (thread == 0)
+    {
+#ifdef HAVE_REMOTE_LCD
+        queue_delete(&scroll_queue);
+#endif
+        panicf("Cannot create scroll thread");
+    }
 }
 #else /* BOOTLOADER */
 void scroll_init(void)

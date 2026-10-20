@@ -20,11 +20,14 @@
  ****************************************************************************/
 #include <stdio.h>
 #include <ctype.h>
+#include <limits.h>
+#include <stdlib.h>
 #include "config.h"
 #include "system.h"
 #include "kernel.h"
 #include "thread.h"
 #include "debug.h"
+#include "panic.h"
 #include "adc.h"
 #include "string.h"
 #include "storage.h"
@@ -105,6 +108,7 @@ enum charge_state_type charge_state = DISCHARGING;
 #endif /* CONFIG_CHARGING */
 
 static int shutdown_timeout = 0;
+static long shutdown_deadline;
 
 void handle_auto_poweroff(void);
 static int poweroff_timeout = 0;
@@ -743,15 +747,6 @@ static void collect_power_history(void)
  */
 static inline void power_thread_step(void)
 {
-    /* If the power off timeout expires, the main thread has failed
-       to shut down the system, and we need to force a power off */
-    if (shutdown_timeout) {
-        shutdown_timeout -= POWER_THREAD_STEP_TICKS;
-
-        if (shutdown_timeout <= 0)
-            power_off();
-    }
-
 #ifdef HAVE_RTC_ALARM
     power_thread_rtc_process();
 #endif
@@ -835,6 +830,11 @@ static void power_thread(void)
 
     while (1)
     {
+        /* Use elapsed time, including work and charger transitions, rather
+         * than counting only steady-state sleeps toward the shutdown limit. */
+        if (shutdown_timeout && !TIME_BEFORE(current_tick, shutdown_deadline))
+            power_off();
+
 #if CONFIG_CHARGING
         unsigned int pwr = power_input_status();
 #ifdef HAVE_BATTERY_SWITCH
@@ -871,9 +871,9 @@ static void power_thread(void)
 } /* power_thread */
 
 #if (BATTERY_CAPACITY_DEFAULT > 0) && !defined(BOOTLOADER)
-static bool battery_table_readln(int fd, char * buf, size_t bufsz,
+static int battery_table_readln(int fd, char * buf, size_t bufsz,
                         const char *name, char **value, int* linect) INIT_ATTR;
-static bool battery_table_readln(int fd, char * buf, size_t bufsz,
+static int battery_table_readln(int fd, char * buf, size_t bufsz,
                                     const char *name, char **value, int* linect)
 {
     /* reads a line from user battery level file skips comments
@@ -885,13 +885,16 @@ static bool battery_table_readln(int fd, char * buf, size_t bufsz,
     if (name)
     {
         /* DEBUGF("%s Searching for '%s'\n", __func__, name); */
-        lseek(fd, 0, SEEK_SET);
+        if (lseek(fd, 0, SEEK_SET) < 0)
+            return -1;
         *linect = 0;
     }
 
     while(1)
     {
         rd = read_line(fd, buf, bufsz);
+        if (rd < 0 || strlen(buf) >= bufsz - 1)
+            return -1;
         if (rd > 0)
         {
             /*DEBUGF("\nREAD '%s'\n", buf);*/
@@ -905,9 +908,9 @@ static bool battery_table_readln(int fd, char * buf, size_t bufsz,
             {
                 *value = buf;
                 if(found) /* expected more values but got a new setting instead */
-                    return false; /* error */
+                    return -1; /* error */
             }
-            else if (strcasecmp(name, setting) != 0)
+            else if (!found || strcasecmp(name, setting) != 0)
                 continue; /* not the correct setting */
         }
         break;
@@ -923,6 +926,10 @@ void init_battery_tables(void)
 #define PWRELEMS (ARRAYLEN(percent_to_volt_discharge))
 
 
+    unsigned short discharge[PWRELEMS];
+#if CONFIG_CHARGING
+    unsigned short charge[PWRELEMS];
+#endif
     unsigned short tmparr[PWRELEMS];
     char buf[MAX_PATH];
     unsigned int i, bl_op;
@@ -946,12 +953,20 @@ void init_battery_tables(void)
     if (fd < 0)
         return;
 
+    memcpy(discharge, device_battery_tables.discharge, sizeof(discharge));
+#if CONFIG_CHARGING
+    memcpy(charge, device_battery_tables.charge, sizeof(charge));
+#endif
+
     DEBUGF("%s  %s\n", __func__, BATTERY_LEVELS_USER);
     /* force order of reads to do error checking of values */
     for(bl_op = 0; bl_op < ARRAYLEN(bl_options); bl_op++)
     {
-        if(!battery_table_readln(fd, buf, sizeof(buf),
-           bl_options[bl_op], &value, &line_num))
+        int found = battery_table_readln(fd, buf, sizeof(buf),
+                                        bl_options[bl_op], &value, &line_num);
+        if (found < 0)
+            goto error_loading;
+        if (!found)
         {
             continue;
         }
@@ -966,11 +981,18 @@ void init_battery_tables(void)
             /* parse single short */
             DEBUGF("%s ", bl_options[bl_op]);
 
-            while (*value != '\0' && !isdigit(*value))
+            while (*value != '\0' && !isdigit((unsigned char)*value))
+            {
+                if (*value == '-')
+                    goto error_loading;
                 value++;
+            }
             if (*value)
             {
-                val = atoi(value);
+                unsigned long parsed = strtoul(value, &value, 10);
+                if (parsed == 0 || parsed > USHRT_MAX)
+                    goto error_loading;
+                val = parsed;
                 DEBUGF("value = %u\n", val);
                 if (bl_op == eDISKSAFE)
                 {
@@ -995,13 +1017,18 @@ void init_battery_tables(void)
             i = 0;
             while(i < PWRELEMS)
             {
-                while (*value != '\0' && !isdigit(*value))
-                    {value++;}
+                while (*value != '\0' && !isdigit((unsigned char)*value))
+                {
+                    if (*value == '-')
+                        goto error_loading;
+                    value++;
+                }
                 if (*value)
                 {
-                    tmparr[i] = atoi(value);
-                    while (isdigit(*value)) /* skip digits just read */
-                        {value++;}
+                    unsigned long parsed = strtoul(value, &value, 10);
+                    if (parsed == 0 || parsed > USHRT_MAX)
+                        goto error_loading;
+                    tmparr[i] = parsed;
                     if (tmparr[i] < val)
                     {
                         goto error_loading; /* value is not >= previous */
@@ -1010,8 +1037,8 @@ void init_battery_tables(void)
                     DEBUGF("%u, ", val);
                     i++;
                 }
-                else if (!battery_table_readln(fd, buf, sizeof(buf),
-                                            NULL, &value, &line_num))
+                else if (battery_table_readln(fd, buf, sizeof(buf),
+                                             NULL, &value, &line_num) <= 0)
                 {
                     goto error_loading; /* failed to get another line */
                 }
@@ -1023,19 +1050,34 @@ void init_battery_tables(void)
             if (bl_op == eCHARGE)
             {
 #if CONFIG_CHARGING
-                memcpy(device_battery_tables.charge, &tmparr, PWRELEMS);
+                memcpy(charge, tmparr, sizeof(charge));
 #endif
                 break;
             }
-            memcpy(device_battery_tables.discharge, &tmparr, PWRELEMS);
+            memcpy(discharge, tmparr, sizeof(discharge));
             break;
         } /* switch */
     } /* for */
+    /* Validate the combined result, including tables/thresholds omitted from
+     * the file. A later error must never leave an earlier table half applied. */
+    if (disksafe < shutoff || discharge[0] < shutoff
+#if CONFIG_CHARGING
+        || charge[0] < shutoff
+#endif
+       )
+        goto error_loading;
+
     close(fd);
 
+    int oldlevel = disable_irq_save();
+    memcpy(device_battery_tables.discharge, discharge, sizeof(discharge));
+#if CONFIG_CHARGING
+    memcpy(device_battery_tables.charge, charge, sizeof(charge));
+#endif
     *device_battery_tables.disksafe = disksafe;
     *device_battery_tables.shutoff = shutoff;
     device_battery_tables.isdefault = false;
+    restore_irq(oldlevel);
     battery_status_update();
 
     return;
@@ -1051,9 +1093,11 @@ error_loading:
 
 void powermgmt_init(void)
 {
-    create_thread(power_thread, power_stack, sizeof(power_stack), 0,
+    unsigned int thread_id = create_thread(power_thread, power_stack, sizeof(power_stack), 0,
                   power_thread_name IF_PRIO(, PRIORITY_SYSTEM)
                   IF_COP(, CPU));
+    if (thread_id == 0)
+        panicf("power thread creation failed");
 }
 
 /* Various hardware housekeeping tasks relating to shutting down the player */
@@ -1062,11 +1106,11 @@ void shutdown_hw(enum shutdown_type sd_type)
     charging_algorithm_close();
     audio_stop();
 
-    bool storage_active = storage_disk_is_active();
     bool battery_safe = battery_level_safe();
     if (battery_safe) { /* do not save on critical battery */
         font_unload_all();
     }
+    bool storage_active = storage_disk_is_active();
 
 /* Commit pending writes if needed. Even though we don't do write caching,
    things like flash translation layers may need this to commit scattered
@@ -1080,7 +1124,8 @@ void shutdown_hw(enum shutdown_type sd_type)
     }
 #endif
 
-    if (storage_active)
+    /* Font-cache saves or the flush itself may have woken storage. */
+    if (storage_disk_is_active())
         storage_spindown(1);
 
     audiohw_close();
@@ -1135,19 +1180,29 @@ static void sys_shutdown_common(void)
     /* If the main thread fails to shut down the system, we will force a
        power off after an 20 second timeout - 28 seconds if recording */
     if (shutdown_timeout == 0) {
+        int timeout = 0;
 #if (defined(IAUDIO_X5) || defined(IAUDIO_M5) || defined(COWON_D2)) && !defined(SIMULATOR)
         pcf50606_reset_timeout(); /* Reset timer on first attempt only */
 #endif
 #ifdef HAVE_RECORDING
         if (audio_status() & AUDIO_STATUS_RECORD)
-            shutdown_timeout += HZ*8;
+            timeout += HZ*8;
 #endif
 #ifdef IPOD_NANO2G
         /* The FTL alone may take half a minute to shut down cleanly. */
-        shutdown_timeout += HZ*60;
+        timeout += HZ*60;
 #else
-        shutdown_timeout += HZ*20;
+        timeout += HZ*20;
 #endif
+        /* Publish both fields together; a second request must not extend an
+         * already-running shutdown deadline. */
+        int oldlevel = disable_irq_save();
+        if (shutdown_timeout == 0)
+        {
+            shutdown_deadline = current_tick + timeout;
+            shutdown_timeout = timeout;
+        }
+        restore_irq(oldlevel);
     }
 }
 #endif /* BOOTLOADER */

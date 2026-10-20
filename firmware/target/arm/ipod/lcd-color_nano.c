@@ -308,10 +308,12 @@ void lcd_blit_yuv(unsigned char * const src[3],
                   int x, int y, int width, int height)
 {
     int z;
+#ifdef HAVE_PP5020_PERF
     int requested_width = width;
     int requested_height = height;
     int transmitted = 0;
     uint32_t started = USEC_TIMER;
+#endif
     unsigned char const * yuv_src[3];
 
     /* Validate the caller's geometry before 4:2:0 rounding. Rounding is
@@ -381,7 +383,9 @@ void lcd_blit_yuv(unsigned char * const src[3],
                             LCD_FAILURE_BLOCK))
             goto out;
         LCD2_BLOCK_CONFIG = 0;
+#ifdef HAVE_PP5020_PERF
         transmitted += width * h;
+#endif
         height -= h;
     }
 
@@ -391,6 +395,7 @@ out:
                                   transmitted, USEC_TIMER - started,
                                   !lcd_failure_pending);
 #endif
+    return;
 }
 
 /* Helper function writes 'count' consecutive pixels from src to LCD IF */
@@ -411,10 +416,12 @@ static bool lcd_write_line(int count, const unsigned long *src,
 void lcd_update_rect(int x, int y, int width, int height)
 {
     unsigned long *addr;
+#ifdef HAVE_PP5020_PERF
     int requested_width;
     int requested_height;
     int transmitted = 0;
     uint32_t started = USEC_TIMER;
+#endif
 
     if (width <= 0 || height <= 0 || x >= LCD_WIDTH || y >= LCD_HEIGHT)
         return;
@@ -435,8 +442,10 @@ void lcd_update_rect(int x, int y, int width, int height)
     if (height > LCD_HEIGHT - y)
         height = LCD_HEIGHT - y;
 
+#ifdef HAVE_PP5020_PERF
     requested_width = width;
     requested_height = height;
+#endif
 
     if (lcd_failure_pending)
     {
@@ -497,7 +506,9 @@ void lcd_update_rect(int x, int y, int width, int height)
                             LCD_FAILURE_BLOCK))
             goto out;
         LCD2_BLOCK_CONFIG = 0;
+#ifdef HAVE_PP5020_PERF
         transmitted += width * h;
+#endif
         height -= h;
     }
 
@@ -507,6 +518,7 @@ out:
                                   transmitted, USEC_TIMER - started,
                                   !lcd_failure_pending);
 #endif
+    return;
 }
 
 #if defined(IPOD_COLOR) && !defined(SIMULATOR)
@@ -516,10 +528,12 @@ bool lcd_update_rect_from_buffer(const fb_data *src, int stride,
                                  int x, int y, int width, int height)
 {
     const unsigned long *addr;
+#ifdef HAVE_PP5020_PERF
     int requested_width = width;
     int requested_height = height;
     int transmitted = 0;
     uint32_t started = USEC_TIMER;
+#endif
 
     /* Reject instead of clipping: clipping would silently change the source
      * origin, and odd geometry cannot be read as aligned 32-bit pixel pairs. */
@@ -571,7 +585,9 @@ bool lcd_update_rect_from_buffer(const fb_data *src, int stride,
                             LCD_FAILURE_BLOCK))
             goto out;
         LCD2_BLOCK_CONFIG = 0;
+#ifdef HAVE_PP5020_PERF
         transmitted += width * h;
+#endif
         height -= h;
     }
 

@@ -798,6 +798,11 @@ void usb_init(void)
     usb_thread_entry = create_thread(usb_thread, usb_stack,
                        sizeof(usb_stack), 0, usb_thread_name
                        IF_PRIO(, PRIORITY_SYSTEM) IF_COP(, CPU));
+    if (usb_thread_entry == 0)
+    {
+        queue_delete(&usb_queue);
+        panicf("Cannot create USB thread");
+    }
 
 #ifndef USB_STATUS_BY_EVENT
     tick_add_task(usb_tick);

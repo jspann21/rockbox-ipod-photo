@@ -733,7 +733,6 @@ static bool LCDFN(puts_scroll_worker)(int x, int y, const unsigned char *string,
         s->height = height;
         s->vp = vp;
         s->start_tick = current_tick + LCDFN(scroll_info).delay;
-        LCDFN(scroll_info).lines++;
     } else {
         /* not restarting, however we are about to assign new userdata;
          * therefore tell the scroller that it can release the previous userdata */
@@ -743,6 +742,16 @@ static bool LCDFN(puts_scroll_worker)(int x, int y, const unsigned char *string,
 
     s->scroll_func = scroll_func;
     s->userdata = data;
+
+    if (restart)
+    {
+        /* Publish only after the callback and userdata are initialized. */
+        LCDFN(scroll_info).lines++;
+#if defined(IPOD_COLOR) && !defined(BOOTLOADER)
+        if (LCDFN(scroll_info).lines == 1)
+            lcd_scroll_wakeup();
+#endif
+    }
 
     /* if only the text was updated render immediately */
     if (!restart)
