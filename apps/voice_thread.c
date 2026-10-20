@@ -597,6 +597,17 @@ void voice_thread_init(void)
             sizeof(voice_stack), 0, voice_thread_name
             IF_PRIO(, PRIORITY_VOICE) IF_COP(, CPU));
 
+    if (voice_thread_id == 0)
+    {
+        /* Voice is optional. Leave a failed start retryable without a live
+         * queue that cannot reply, or an allocation leaked on each retry. */
+        queue_delete(&voice_queue);
+        core_free(voice_buf_hid);
+        voice_buf_hid = 0;
+        voice_buf = NULL;
+        return;
+    }
+
     queue_enable_queue_send(&voice_queue, &voice_queue_sender_list,
                             voice_thread_id);
 }

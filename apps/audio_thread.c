@@ -34,6 +34,7 @@
 #endif
 #include "codec_thread.h"
 #include "voice_thread.h"
+#include "panic.h"
 #include "talk.h"
 #include "settings.h"
 
@@ -169,6 +170,12 @@ void INIT_ATTR audio_init(void)
                   sizeof(audio_stack), 0, audio_thread_name
                   IF_PRIO(, MIN(PRIORITY_BUFFERING, PRIORITY_USER_INTERFACE))
                   IF_COP(, CPU));
+
+    if (audio_thread_id == 0)
+    {
+        queue_delete(&audio_queue);
+        panicf("Cannot create audio thread");
+    }
 
     queue_enable_queue_send(&audio_queue, &audio_queue_sender_list,
                             audio_thread_id);

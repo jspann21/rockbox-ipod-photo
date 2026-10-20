@@ -432,7 +432,7 @@ static bool ipodnative_audio_init(bool needs_video_reference)
     if (skipped > size)
         goto fail;
     size -= skipped;
-#ifdef IPVF_NATIVE_PIPELINE
+    /* Seeking, rolling audio and simulator playback share these buffers. */
     if (size < IPVF_MAX_PAYLOAD + reference_bytes +
                IPVF_AUDIO_RING_MIN_BYTES ||
         aligned > (uintptr_t)-1 - IPVF_MAX_PAYLOAD ||
@@ -448,7 +448,6 @@ static bool ipodnative_audio_init(bool needs_video_reference)
         aligned += reference_bytes;
         size -= reference_bytes;
     }
-#endif
     ring_bytes = floor_power_of_two(size);
     if (ring_bytes > IPVF_AUDIO_RING_MAX_BYTES)
         ring_bytes = IPVF_AUDIO_RING_MAX_BYTES;

@@ -25,6 +25,7 @@
 #include "kernel.h"
 #include "codecs.h"
 #include "codec_thread.h"
+#include "panic.h"
 #include "pcm_mixer.h"
 #include "pcmbuf.h"
 #include "audio_thread.h"
@@ -663,6 +664,11 @@ void INIT_ATTR codec_thread_init(void)
             codec_thread, codec_stack, sizeof(codec_stack), 0,
             codec_thread_name IF_PRIO(, PRIORITY_PLAYBACK)
             IF_COP(, CPU));
+    if (codec_thread_id == 0)
+    {
+        queue_delete(&codec_queue);
+        panicf("Cannot create codec thread");
+    }
     queue_enable_queue_send(&codec_queue, &codec_queue_sender_list,
                             codec_thread_id);
 }
