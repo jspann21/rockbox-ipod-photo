@@ -19,6 +19,7 @@
  ****************************************************************************/
 
 #include "codeclib.h"
+#include <limits.h>
 #include <codecs/libffmpegFLAC/decoder.h>
 
 CODEC_HEADER
@@ -111,7 +112,11 @@ static bool flac_init(FLACContext* fc, int first_frame_offset)
     fc->decoded[6] = decoded6;
 
     /* Skip any foreign tags at start of file */
-    ci->seek_buffer(first_frame_offset);
+    /* The seek code and FLACContext store file positions as signed ints. */
+    if (ci->filesize < 4 || ci->filesize > INT_MAX || first_frame_offset < 0 ||
+        first_frame_offset > (int)ci->filesize - 4 ||
+        !ci->seek_buffer(first_frame_offset))
+        return false;
 
     fc->metadatalength = first_frame_offset;
 
@@ -127,6 +132,8 @@ static bool flac_init(FLACContext* fc, int first_frame_offset)
     fc->metadatalength += 4;
 
     while (!endofmetadata) {
+        if (fc->metadatalength > (int)ci->filesize - 4)
+            return false;
         if (ci->read_filebuf(buf, 4) < 4)
         {
             return false;
@@ -134,11 +141,17 @@ static bool flac_init(FLACContext* fc, int first_frame_offset)
 
         endofmetadata=(buf[0]&0x80);
         blocklength = (buf[1] << 16) | (buf[2] << 8) | buf[3];
-        fc->metadatalength+=blocklength+4;
+        fc->metadatalength += 4;
+        if (blocklength > (uint32_t)(ci->filesize - fc->metadatalength) ||
+            (!found_streaminfo && (buf[0] & 0x7f) != 0))
+            return false;
+        fc->metadatalength += blocklength;
 
         if ((buf[0] & 0x7f) == 0)       /* 0 is the STREAMINFO block */
         {
-            if (ci->read_filebuf(buf, blocklength) < blocklength) return false;
+            if (found_streaminfo || blocklength != 34 ||
+                ci->read_filebuf(buf, blocklength) != blocklength)
+                return false;
 
             fc->filesize = ci->filesize;
             fc->min_blocksize = (buf[0] << 8) | buf[1];
@@ -154,6 +167,8 @@ static bool flac_init(FLACContext* fc, int first_frame_offset)
             fc->max_framesize = (buf[7] << 16) | (buf[8] << 8) | buf[9];
             fc->samplerate = (buf[10] << 12) | (buf[11] << 4)
                              | ((buf[12] & 0xf0) >> 4);
+            if (fc->samplerate == 0)
+                return false;
             fc->channels = ((buf[12]&0x0e)>>1) + 1;
             fc->bps = (((buf[12]&0x01) << 4) | ((buf[13]&0xf0)>>4) ) + 1;
 
@@ -163,14 +178,18 @@ static bool flac_init(FLACContext* fc, int first_frame_offset)
                     return false;
             }
 
-            /* totalsamples is a 36-bit field, but we assume <= 32 bits are
-               used */
-            fc->totalsamples = (buf[14] << 24) | (buf[15] << 16)
+            /* Seeking and frame sample numbers currently support 32 bits. */
+            if (buf[13] & 0x0f)
+                return false;
+            fc->totalsamples = ((uint32_t)buf[14] << 24) | (buf[15] << 16)
                                | (buf[16] << 8) | buf[17];
 
             /* Calculate track length (in ms) and estimate the bitrate
                (in kbit/s) */
-            fc->length = ((int64_t) fc->totalsamples * 1000) / fc->samplerate;
+            int64_t length = (int64_t)fc->totalsamples * 1000 / fc->samplerate;
+            if (length > INT_MAX)
+                return false;
+            fc->length = fc->totalsamples ? MAX(length, 1) : 0;
 
             found_streaminfo=true;
         } else if ((buf[0] & 0x7f) == 3) { /* 3 is the SEEKTABLE block */
@@ -209,8 +228,9 @@ static bool flac_init(FLACContext* fc, int first_frame_offset)
     }
 
    if (found_streaminfo) {
-       fc->bitrate = ((int64_t) (fc->filesize-fc->metadatalength) * 8)
-                     / fc->length;
+       /* Zero samples means unknown duration, not an invalid stream. */
+       fc->bitrate = fc->length ? MIN(((int64_t)(fc->filesize-fc->metadatalength) * 8)
+                                     / fc->length, INT_MAX) : 0;
        return true;
    } else {
        return false;

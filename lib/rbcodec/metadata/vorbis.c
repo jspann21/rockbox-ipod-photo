@@ -212,7 +212,7 @@ static long file_read_string(struct ogg_file* file, char* buffer,
         else if (eos == -1)
         {
             /* No point in reading any more, skip remaining data */
-            if (ogg_file_read(file, NULL, size) < 0)
+            if (ogg_file_read(file, NULL, size) != size)
             {
                 read_bytes = -1;
             }
@@ -307,7 +307,7 @@ const signed char b64_codes[] =
 size_t base64_decode(const char *in, size_t in_len, unsigned char *out)
 {
     size_t i = 0;
-    int val = 0;
+    uint32_t val = 0;
     size_t len = 0;
 
     while (i < in_len)
@@ -326,14 +326,12 @@ size_t base64_decode(const char *in, size_t in_len, unsigned char *out)
             }
             break;
         }
-        int index = in[i] - B64_START_CHAR;
-#ifdef SIMULATOR
+        int index = (unsigned char)in[i] - B64_START_CHAR;
         if (index < 0 || index >= (int)ARRAYLEN(b64_codes) || b64_codes[index] < 0)
         {
             DEBUGF("Invalid base64 char: '%c', char code: %i.\n", in[i], in[i]);
-            break;
+            return 0;
         }
-#endif
         val = (val << 6) | b64_codes[index];
 
         if ((++i & 3) == 0)
@@ -398,7 +396,9 @@ long read_vorbis_tags(int fd, struct mp3entry *id3,
     }
     comment_size += 8 + len;
 
-    for (i = 0; i < comment_count && file.packet_remaining > 0; i++)
+    /* A comment may start exactly at a page boundary. Let ogg_file_read
+     * fetch the continuation page or reject a prematurely ended packet. */
+    for (i = 0; i < comment_count; i++)
     {
         char name[TAG_NAME_LENGTH];
         int32_t read_len;
@@ -423,7 +423,7 @@ long read_vorbis_tags(int fd, struct mp3entry *id3,
 
         len -= read_len;
 #ifdef HAVE_ALBUMART
-        int before_block_pos = lseek(fd, 0, SEEK_CUR);
+        off_t before_block_pos = lseek(fd, 0, SEEK_CUR);
 #endif
         read_len = file_read_string(&file, id3->path, sizeof(id3->path), -1, len);
 
@@ -437,21 +437,29 @@ long read_vorbis_tags(int fd, struct mp3entry *id3,
         if (!id3->has_embedded_albumart /* only use the first PICTURE */
             && !strcasecmp(name, "METADATA_BLOCK_PICTURE"))
         {
-            int after_block_pos = lseek(fd, 0, SEEK_CUR);
+            off_t after_block_pos = lseek(fd, 0, SEEK_CUR);
 
             char* buf = id3->path;
             size_t outlen = base64_decode(buf, MIN(read_len, (int32_t) sizeof(id3->path) - 1), buf);
 
             int picframe_pos;
-            parse_flac_album_art(buf, outlen, &id3->albumart.type, &picframe_pos);
-            if(id3->albumart.type != AA_TYPE_UNKNOWN)
+            enum mp3_aa_type art_type;
+            if (parse_flac_album_art(buf, outlen, &art_type, &picframe_pos) &&
+                art_type != AA_TYPE_UNKNOWN && before_block_pos >= 0 &&
+                after_block_pos > before_block_pos)
             {
                 //NOTE: This is not exact location due to padding in base64 (up to 3 chars)!!
                 // But it's OK with our jpeg decoder if we add or miss few bytes in jpeg header
                 const int picframe_pos_b64 = base64_encoded_size(picframe_pos + 4);
+                off_t encoded_size = after_block_pos - before_block_pos;
+                if (picframe_pos_b64 >= len ||
+                    picframe_pos_b64 >= encoded_size ||
+                    encoded_size - picframe_pos_b64 > INT_MAX ||
+                    get_long_be(buf + picframe_pos) == 0)
+                    continue;
 
                 id3->has_embedded_albumart = true;
-                id3->albumart.type |= AA_FLAG_VORBIS_BASE64;
+                id3->albumart.type = art_type | AA_FLAG_VORBIS_BASE64;
                 id3->albumart.pos = picframe_pos_b64 + before_block_pos;
                 id3->albumart.size = after_block_pos - id3->albumart.pos;
             }
@@ -480,7 +488,8 @@ long read_vorbis_tags(int fd, struct mp3entry *id3,
     /* Skip to the end of the block (needed by FLAC) */
     if (file.packet_remaining)
     {
-        if (ogg_file_read(&file, NULL, file.packet_remaining) < 0)
+        long remaining = file.packet_remaining;
+        if (ogg_file_read(&file, NULL, remaining) != remaining)
         {
             return 0;
         }

@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <inttypes.h>
+#include <limits.h>
 #include "platform.h"
 
 #include "metadata.h"
@@ -33,40 +34,35 @@
 
 bool parse_flac_album_art(unsigned char *buf, int bytes_read, enum mp3_aa_type *type, int *picframe_pos)
 {
-    *picframe_pos = 4; /* skip picture type */
-    int mime_length, description_length;
-
-    if (bytes_read <= *picframe_pos + 4) /* get_long_be expects 4 chars */
-    {
-        logf("flac picture length invalid!");
-        return false;
-    }
-
-    mime_length = get_long_be(&buf[(*picframe_pos)]);
-
-    char *mime = buf + *picframe_pos + 4;
-    *picframe_pos +=  4 + mime_length;
-
-    if (bytes_read < *picframe_pos)
-    {
-        logf("flac picture length invalid!");
-        return false;
-    }
-
     *type = AA_TYPE_UNKNOWN;
-    if (memcmp(mime, "image/", 6) == 0)
-    {
-        mime += 6;
-        if (strcmp(mime, "jpeg") == 0 || strcmp(mime, "jpg") == 0){
-            *type = AA_TYPE_JPG;
-        }else if (strcmp(mime, "png") == 0)
-            *type = AA_TYPE_PNG;
-    }
+    *picframe_pos = 0;
 
-    description_length  = get_long_be(&buf[(*picframe_pos)]);
+    /* Fixed fields occupy 32 bytes, including the picture data length.
+     * Bound unsigned lengths before adding them to a buffer offset. */
+    if (bytes_read < 32)
+        return false;
 
-    /* 16 = skip picture width,height,color-depth,color-used */
-    *picframe_pos += 4 + description_length + 16;
+    uint32_t mime_length = get_long_be(buf + 4);
+    if (mime_length > (uint32_t)bytes_read - 32)
+        return false;
+
+    unsigned int pos = 8 + mime_length;
+    uint32_t description_length = get_long_be(buf + pos);
+    pos += 4;
+    if (description_length > (uint32_t)bytes_read - pos - 20)
+        return false;
+
+    /* Skip description, width, height, depth and palette count. The caller
+     * may now safely read the four-byte picture length at this offset. */
+    *picframe_pos = pos + description_length + 16;
+
+    /* MIME strings are length-delimited, not NUL-terminated. */
+    if ((mime_length == 10 && memcmp(buf + 8, "image/jpeg", 10) == 0) ||
+        (mime_length == 9 && memcmp(buf + 8, "image/jpg", 9) == 0))
+        *type = AA_TYPE_JPG;
+    else if (mime_length == 9 && memcmp(buf + 8, "image/png", 9) == 0)
+        *type = AA_TYPE_PNG;
+
     return true;
 }
 
@@ -85,6 +81,10 @@ bool get_flac_metadata(int fd, struct mp3entry* id3)
     unsigned char* buf = (unsigned char *)id3->path;
     bool last_metadata = false;
     bool rc = false;
+    off_t file_size = filesize(fd);
+
+    if (file_size < 0)
+        return false;
 
     if (!skip_id3v2(fd, id3) || (read(fd, buf, 4) < 4))
     {
@@ -103,7 +103,7 @@ bool get_flac_metadata(int fd, struct mp3entry* id3)
 
         if (read(fd, buf, 4) != 4)
         {
-            return rc;
+            return false;
         }
 
         last_metadata = buf[0] & 0x80;
@@ -111,48 +111,53 @@ bool get_flac_metadata(int fd, struct mp3entry* id3)
         /* The length of the block */
         i = (buf[1] << 16) | (buf[2] << 8) | buf[3];
 
+        off_t block_start = lseek(fd, 0, SEEK_CUR);
+        if (block_start < 0 || block_start > file_size ||
+            i > (uint64_t)(file_size - block_start) ||
+            (!rc && type != 0))
+            return false;
+
         if (type == 0)       /* 0 is the STREAMINFO block */
         {
-            unsigned long totalsamples;
-
-            if (i >= sizeof(id3->path) || read(fd, buf, i) != (int)i)
+            if (rc || i != 34 || read(fd, buf, i) != (int)i)
             {
-                return rc;
+                return false;
             }
 
             id3->vbr = true;   /* All FLAC files are VBR */
-            id3->filesize = filesize(fd);
+            id3->filesize = file_size;
             id3->frequency = (buf[10] << 12) | (buf[11] << 4)
                 | ((buf[12] & 0xf0) >> 4);
-            rc = true;  /* Got vital metadata */
+            if (id3->frequency == 0)
+                return false;
 
-            /* totalsamples is a 36-bit field, but we assume <= 32 bits are used */
-            totalsamples = get_long_be(&buf[14]);
+            uint64_t totalsamples = ((uint64_t)(buf[13] & 0x0f) << 32) |
+                                    get_long_be(&buf[14]);
 
             if(totalsamples > 0)
             {
                 /* Calculate track length (in ms) and estimate the bitrate (in kbit/s) */
-                id3->length = ((int64_t) totalsamples * 1000) / id3->frequency;
-                id3->bitrate = (id3->filesize * 8) / id3->length;
+                uint64_t length = totalsamples * 1000 / id3->frequency;
+                if (length > ULONG_MAX)
+                    return false;
+                /* A valid sub-millisecond stream must not divide by zero. */
+                id3->length = MAX(length, 1);
+                id3->bitrate = MIN((uint64_t)id3->filesize * 8 / id3->length,
+                                  UINT_MAX);
             }
-            else if (totalsamples == 0)
+            else
             {
                 id3->length = 0;
                 id3->bitrate = 0;
             }
-            else
-            {
-                logf("flac length invalid!");
-                return false;
-            }
-
+            rc = true;  /* Got vital metadata */
         }
         else if (type == 4)  /* 4 is the VORBIS_COMMENT block */
         {
             /* The next i bytes of the file contain the VORBIS COMMENTS. */
-            if (read_vorbis_tags(fd, id3, i) == 0)
+            if (i == 0 || read_vorbis_tags(fd, id3, i) == 0)
             {
-                return rc;
+                return false;
             }
         }
 #ifdef HAVE_ALBUMART
@@ -162,41 +167,35 @@ bool get_flac_metadata(int fd, struct mp3entry* id3)
             {
                 unsigned int buf_size = MIN(sizeof(id3->path), i);
 
-                id3->albumart.pos = lseek(fd, 0, SEEK_CUR);
-
                 int bytes_read = read(fd, buf, buf_size);
-                buf[buf_size-1] = '\0';
-                i -= bytes_read;
-
-                int picframe_pos;
-                if (!parse_flac_album_art(buf, bytes_read, &id3->albumart.type, &picframe_pos))
+                if (bytes_read != (int)buf_size)
                     return false;
 
-                /* if we support the format and image length is in the buffer */
-                if(id3->albumart.type != AA_TYPE_UNKNOWN
-                   && (picframe_pos + 4) - buf_size > 0)
+                int picframe_pos;
+                enum mp3_aa_type art_type;
+                if (parse_flac_album_art(buf, bytes_read, &art_type, &picframe_pos) &&
+                    art_type != AA_TYPE_UNKNOWN)
                 {
-                    id3->has_embedded_albumart = true;
-                    id3->albumart.size = get_long_be(&buf[picframe_pos]);
-                    id3->albumart.pos += picframe_pos + 4;
+                    uint32_t art_size = get_long_be(buf + picframe_pos);
+                    if (art_size > 0 && art_size <= i - picframe_pos - 4)
+                    {
+                        id3->has_embedded_albumart = true;
+                        id3->albumart.type = art_type;
+                        id3->albumart.size = art_size;
+                        id3->albumart.pos = block_start + picframe_pos + 4;
+                    }
                 }
-            }
-
-            if (lseek(fd, i, SEEK_CUR) < 0)
-            {
-                return rc;
             }
         }
 #endif
-        else if (!last_metadata)
+
+        /* Always resume at the validated block boundary, including when an
+         * optional picture header exceeds the bounded scratch buffer. */
+        if (lseek(fd, block_start + i, SEEK_SET) < 0)
         {
-            /* Skip to next metadata block */
-            if (lseek(fd, i, SEEK_CUR) < 0)
-            {
-                return rc;
-            }
+            return false;
         }
     }
 
-    return true;
+    return rc;
 }
