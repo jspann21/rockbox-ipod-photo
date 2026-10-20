@@ -1147,7 +1147,7 @@
   capped at 30 fps, and the proven spatial selector stays the friendly default
   until long-duration drift/lifecycle qualification is complete.
 - The v5 evidence is archived under
-  `dist/ipvf-qualification-results-v5-20260831`. All qualification media, TSVs,
+  `archive/artifacts/dist/ipvf-qualification-results-v5-20260831`. All qualification media, TSVs,
   and the marker were removed from the device after collection, leaving the
   checked plugin installed with production logging disabled.
 
@@ -1197,7 +1197,7 @@
   duration-normalized size projections.
 - The first source was the complete 224.792-second, 1920x820, 24000/1001-fps
   H.264/AAC `suds` real-footage sample. Evidence is saved under
-  `dist/ipvf-profile-lab-suds-pass2-20260831`.
+  `archive/artifacts/dist/ipvf-profile-lab-suds-pass2-20260831`.
 - The native 24-fps reference was 9,454,592 bytes for 15 seconds, equivalent
   to 37.85 MB/minute or 4.54 GB for two hours. Native 20 and 15 fps reduced it
   by 15.5% and 34.9%, with normalized SSIM 0.9838 and 0.9628.
@@ -1800,3 +1800,41 @@
   60-fps spatial playback, cuts/fades, grain/noise, boundary cases, clipping,
   and shorter/longer audio. Evidence is retained in
   `qualification/2026-09-01-host-corpus-qualification.json`.
+
+## 65. Long-form audio continuity and balanced motion selection
+
+- A 227.44-second, 25-fps music video exposed a scheduling failure that the
+  shorter qualification clips did not: startup filled roughly four seconds of
+  decoded audio, but steady playback fed only the current record. Device
+  telemetry reached a zero-frame low-water mark and first rebuffered at frame
+  213, producing the repeated audible interruption. The encoded audio timeline
+  and complete source reconstruction were independently correct.
+- The first rolling-refill candidate removed audio gaps but allowed queued
+  video to accumulate behind the audio master clock. It also lowered the
+  prebuffer ownership boundary after already-buffered records, which could feed
+  their audio twice and create genuine A/V desynchronization.
+- The corrected player owns audio scanning through a separate monotonic record
+  cursor, refills in bounded low-water batches, and retains the complete raw
+  records in the existing circular read-ahead storage for later video use.
+  Cache misses use an explicit positioned fallback read. Seeking and true
+  starvation reset both cursors together.
+- Audio remains the master clock. Every dependent video record is decoded to
+  preserve the canonical reference, but a presentation already at least one
+  frame late is dropped instead of extending video delay. The next presented
+  frame is promoted to a full snapshot, and resume checkpoints map render
+  completions to the actual media frame rather than assuming one presentation
+  per decoded record.
+- The same source quantified the encoder tradeoff. Aggressive one-sector motion
+  produced 179,626,208 bytes and 4,084 motion records (71.83%); spatial produced
+  217,375,456 bytes, zero motion records, and an independently source-exact
+  result. Universal spatial would therefore cost 37,749,248 bytes, or 21.02%.
+- The friendly default now uses balanced motion at up to 30 fps: a motion
+  candidate must save at least ten sectors (5 KiB) against the selected spatial
+  record. On the long-form source this produces 182,950,112 bytes and 2,794
+  motion records (49.14%): 31.59% fewer full-frame reconstructions for a 1.85%
+  size increase while retaining 91.19% of motion's possible space saving.
+  Explicit `motion` retains the previous size-first selector; rates above
+  30 fps retain the spatial default.
+- The focused host suite passes, and both the A1099 target plugin and simulator
+  plugin compile. Full-device playback remains the final qualification gate;
+  host validation does not claim measured hardware smoothness.

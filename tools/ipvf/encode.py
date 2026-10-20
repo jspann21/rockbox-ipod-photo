@@ -27,6 +27,7 @@ DATA_OFFSET = 512
 RECORD_SECTOR_SIZE = 512
 RECORD_HEADER_SIZE = 16
 MAX_RECORD_SECTORS = 192
+MOTION_MIN_SECTOR_SAVING = 10
 MAGIC = b"IPVF"
 FLAG_RGB565BE = 1
 FLAG_SECTOR_RECORDS = 2
@@ -1283,9 +1284,9 @@ def choose_video_record(
     lz4_mode: str = DEFAULT_LZ4_MODE,
 ):
     """Choose a video record by final sector count, with bounded tie costs."""
-    if video_mode not in ("current", "spatial", "motion", "auto"):
+    if video_mode not in ("current", "spatial", "balanced", "motion", "auto"):
         raise ValueError(
-            "video_mode must be current, spatial, motion, or auto"
+            "video_mode must be current, spatial, balanced, motion, or auto"
         )
     if prev is None or force_key:
         return _compress_record_if_smaller(
@@ -1306,7 +1307,7 @@ def choose_video_record(
         )
     selected_sectors = record_sectors(len(selected[2]), audio_size)
 
-    if video_mode in ("spatial", "motion", "auto"):
+    if video_mode in ("spatial", "balanced", "motion", "auto"):
         rectangles = multi_rect_diff(prev, cur, max_rects=max_rects)
         if len(rectangles) > 1:
             multi_payload = rects_payload(cur, rectangles)
@@ -1322,7 +1323,7 @@ def choose_video_record(
                     selected = candidate
                     selected_sectors = candidate_sectors
 
-    if video_mode in ("motion", "auto"):
+    if video_mode in ("balanced", "motion", "auto"):
         dx, dy = estimate_translation(prev, cur)
         prediction = translate_frame(prev, dx, dy)
         residual = compress_lz4(xor_frames(prediction, cur), lz4_mode)
@@ -1330,9 +1331,12 @@ def choose_video_record(
             "<bbI", dx, dy, rockbox_crc32(residual)
         ) + residual
         motion_sectors = record_sectors(len(motion_payload), audio_size)
-        if ((video_mode == "motion" or (dx, dy) != (0, 0)) and
+        minimum_saving = (MOTION_MIN_SECTOR_SAVING
+                          if video_mode == "balanced" else 1)
+        if ((video_mode in ("balanced", "motion") or (dx, dy) != (0, 0)) and
                 len(motion_payload) < FRAME_BYTES and
-                motion_sectors < selected_sectors):
+                motion_sectors + minimum_saving <=
+                selected_sectors):
             selected = TYPE_MOTION_LZ4, 0, motion_payload, FRAME_BYTES
             selected_sectors = motion_sectors
 
@@ -1368,9 +1372,9 @@ def encode(
     # frames. Header finalization must not be the first point where a bad tag
     # can reject an otherwise complete long encode.
     encode_metadata(metadata)
-    if video_mode in ("motion", "auto") and keyint == 0:
+    if video_mode in ("balanced", "motion", "auto") and keyint == 0:
         raise ValueError("temporal mode requires a bounded keyframe interval")
-    if video_mode in ("motion", "auto") and fps > 30:
+    if video_mode in ("balanced", "motion", "auto") and fps > 30:
         raise ValueError("temporal mode is hardware-qualified only at <=30 fps")
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.name + ".tmp")
@@ -1609,8 +1613,9 @@ def main() -> None:
         choices=("current", "spatial", "motion", "auto"),
         help=("current=bounds only; spatial=bounded multi-rectangle; "
               "motion=spatial plus translated residuals; "
-              "auto=motion plus full-frame XOR+LZ4; default is motion at "
-              "up to 30 fps and spatial above 30 fps"),
+              "auto=motion plus full-frame XOR+LZ4; default uses balanced "
+              "motion (minimum 10-sector saving) up to 30 fps and spatial "
+              "above 30 fps"),
     )
     ap.add_argument(
         "--max-rects",
@@ -1641,12 +1646,12 @@ def main() -> None:
     if not MIN_FPS <= fps <= MAX_FPS:
         ap.error(f"--fps must be {MIN_FPS}..{MAX_FPS}")
     if ns.video_mode is None:
-        ns.video_mode = "motion" if fps <= 30 else "spatial"
+        ns.video_mode = "balanced" if fps <= 30 else "spatial"
     try:
         keyint = key_interval_frames(fps, ns.key_seconds)
     except ValueError as error:
         ap.error(str(error))
-    if ns.video_mode in ("motion", "auto") and fps > 30:
+    if ns.video_mode in ("balanced", "motion", "auto") and fps > 30:
         ap.error("temporal video modes are hardware-qualified only at <=30 fps")
     if not 1 <= ns.max_rects <= 255:
         ap.error("--max-rects must be 1..255")

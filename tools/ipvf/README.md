@@ -79,13 +79,14 @@ therefore remain time-bounded rather than changing length arbitrarily with FPS.
 It also rejects rates above 30 fps because hardware lower-bound testing proved
 that dense full-frame temporal reconstruction cannot meet the 60 fps budget.
 
-The one-command creator defaults to qualified `motion` mode at up to 30 fps.
-It evaluates the hardware-proven spatial representations plus a bounded
-whole-frame translation residual and selects the motion candidate only when it
-removes at least one complete sector. Above 30 fps it defaults to `spatial`.
-Use `--video-mode current` for the single-bounding-rectangle path or
-`--video-mode spatial` to disable dependencies. Explicit `--video-mode auto`
-also adds experimental dense temporal XOR+LZ4.
+The one-command creator defaults to balanced motion at up to 30 fps and to
+`spatial` above 30 fps. In the balanced default, motion must save at least ten
+complete sectors (5 KiB) against the best spatial record before it is selected;
+the old one-sector gate overvalued small file wins while ignoring full-frame
+device reconstruction cost. Use `--video-mode current` for the single-bounding-
+rectangle path, `--video-mode spatial` to disable dependencies, or explicit
+`--video-mode motion` for the old size-first one-sector gate. Explicit
+`--video-mode auto` also adds experimental dense temporal XOR+LZ4.
 
 Motion search memoizes every bounded translation score within a frame. This
 does not change candidate ordering or output bytes; on the repeatable 192-frame
@@ -505,8 +506,11 @@ among 1,081 frames and shrank from 27,835,040 to 24,687,264 bytes: 11.3% for
 the complete file including unchanged adaptive audio. Strict validation
 reconstructed every RGB565 frame exactly. On A1099, the motion file was
 indistinguishable from the spatial control during playback, volume changes,
-pause/resume, and repeated seeking. Motion is therefore the creator default at
-up to 30 fps; dense XOR remains the separate experimental `auto` extension.
+pause/resume, and repeated seeking. A later full-length music video exposed
+sustained decoder and storage pressure that the one-sector selector did not
+model. The creator therefore retains motion's large size wins but now requires
+a ten-sector saving before accepting its full-frame reconstruction cost; dense
+XOR remains the separate experimental `auto` extension.
 
 The follow-up memory/navigation batch reduced each of the three render-slot
 strides from 128 KiB to 96 KiB, recovering 96 KiB of plugin-buffer space while
